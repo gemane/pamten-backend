@@ -797,8 +797,24 @@ _BROWSE_PASSES = ("10-K", "20-F", "")
 #: registrants browse-edgar lists per pass: 5 was enough for a filtered pass,
 #: and the type-free pass must reach the exact name past the prefix namesakes
 #: (10 registrants start with "Nestle"); each list entry costs a submissions request
-_BROWSE_COUNT = {"": "20"}
-_BROWSE_COUNT_DEFAULT = "5"
+_BROWSE_COUNT = {"": 20}
+_BROWSE_COUNT_DEFAULT = 5
+
+#: The page sizes browse-edgar accepts. Until November 2026 it took any number;
+#: since then anything else is answered with HTTP 400 "Invalid count, Received:
+#: 5, Count must be one of: 10, 20, …" — and the scraper's 5 lost every name
+#: search of a rebuild: 540 requests, Petrobras' SEC part, the SEC identity of
+#: seven Wikidata persons (findings item 132). So no caller writes the number
+#: into its request: it says how many entries it uses, `browse_count` asks for
+#: the smallest page that holds them, and the caller cuts the answer to its own
+#: number.
+BROWSE_PAGE_SIZES = (10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 500)
+
+
+def browse_count(wanted: int) -> str:
+    """The `count` to send browse-edgar for ``wanted`` entries: the smallest
+    page size EDGAR accepts that holds them (its largest for more)."""
+    return str(next((n for n in BROWSE_PAGE_SIZES if n >= wanted), BROWSE_PAGE_SIZES[-1]))
 
 #: What the scraper reads of a filer: holder statements (both namings, the
 #: Dec-2024 rename), insider forms, 13F reports, the annual and quarterly
@@ -991,6 +1007,7 @@ def _browse_index(query: str, form_type: str) -> list[tuple[str, str | None]] | 
     registered name) filtered to ``form_type`` filers ("" for every
     registrant), in both of EDGAR's answer shapes; None when the request or
     its parse failed."""
+    wanted = _BROWSE_COUNT.get(form_type, _BROWSE_COUNT_DEFAULT)
     try:
         resp = _response(BROWSE_URL, {      # the retry (findings item 38)
             "company":     query,
@@ -998,7 +1015,7 @@ def _browse_index(query: str, form_type: str) -> list[tuple[str, str | None]] | 
             "type":        form_type,
             "dateb":       "",
             "owner":       "include",
-            "count":       _BROWSE_COUNT.get(form_type, _BROWSE_COUNT_DEFAULT),
+            "count":       browse_count(wanted),
             "search_text": "",
             "output":      "atom",
         })
@@ -1009,7 +1026,9 @@ def _browse_index(query: str, form_type: str) -> list[tuple[str, str | None]] | 
         root = ET.fromstring(resp.content)
     except (ET.ParseError, TypeError):
         return None
-    return _browse_registrants(root)
+    # the page may be larger than asked for (`browse_count`); each entry kept
+    # costs a submissions request, so the list stays as long as it always was
+    return _browse_registrants(root)[:wanted]
 
 
 # ── EDGAR search helpers ──────────────────────────────────────────────────────
@@ -1772,7 +1791,7 @@ def _ownership_feed_entries(company_cik: str):
                 "dateb":  "",
                 "owner":  "include",
                 "start":  str(page * OWNERSHIP_FEED_PAGE),
-                "count":  str(OWNERSHIP_FEED_PAGE),
+                "count":  browse_count(OWNERSHIP_FEED_PAGE),
                 "output": "atom",
             })
         except httpx.HTTPError as exc:
@@ -2858,7 +2877,7 @@ def _lookup_person_ciks(name: str) -> list[str]:
         try:
             resp = _response(BROWSE_URL, {      # the retry (findings item 38)
                 "company": query, "action": "getcompany", "type": "4",
-                "dateb": "", "owner": "include", "count": str(MAX_PERSON_CANDIDATES),
+                "dateb": "", "owner": "include", "count": browse_count(MAX_PERSON_CANDIDATES),
                 "output": "atom",
             })
         except httpx.HTTPError:

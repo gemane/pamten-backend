@@ -657,6 +657,18 @@ GET https://www.sec.gov/cgi-bin/browse-edgar
     &output=atom
 ```
 
+**`count` must be one of EDGAR's own page sizes** — 10, 20, 30, 40, 50, 60, 70,
+80, 90, 100 or 500. Until November 2026 the endpoint took any number; since then
+anything else is answered with HTTP 400 ("Invalid count, Received: 5, Count must
+be one of: …"), for a name query and a CIK query alike. The two name searches
+sent 5 — the number of candidates they use — and the 2026-11-21 rebuild lost
+all 540 of them: Petrobras' SEC part and the SEC identity of seven Wikidata
+persons (findings item 132). No caller writes the number into its request any
+more: it says how many entries it uses, `browse_count` asks for the smallest
+accepted page that holds them, and the caller cuts the answer to its own number
+(five registrants for a filtered company pass, twenty for the type-free one,
+`MAX_PERSON_CANDIDATES` for a person).
+
 The `owner=include` parameter is critical — without it, EDGAR only returns
 filings made BY the company, not filings ABOUT it. With it, the feed holds both,
 and the company's own (outbound) filings are dropped by their accession prefix.
