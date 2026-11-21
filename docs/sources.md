@@ -192,10 +192,28 @@ request per 100 appointments: dev's 280 UK companies took 292.
 
 **What is written** (decided 2026-11-13):
 
-- **Serving officers only.** Of 9,111 appointments at those 280 companies 7,871 had
-  ended (Barclays Investment Solutions: 301 listed, 6 serving). A resigned officer is
-  read only to **end a seat an earlier run wrote**, on `resigned_on`; history builds up
-  from the first run. Loading the past is a later decision.
+- **Serving officers by default.** Of 9,111 appointments at those 280 companies 7,871 had
+  ended (Barclays Investment Solutions: 301 listed, 6 serving). Without `--history` a
+  resigned officer is read only to **end the seat an earlier run wrote for that term**, on
+  `resigned_on`.
+- **The past with `--history`** (built 2026-11-21, findings item 121; off by default). Every
+  resigned person is written as a Person and a **closed seat**, `appointed_on` to
+  `resigned_on`, so a company's timeline shows who sat on its board before. The same
+  request per company; a resigned name with a title part costs its one extra request, as a
+  serving one does. Read on the live register for dev's 281 UK companies on 2026-11-21:
+  7,625 ended appointments of people → 7,605 closed seats of people who no longer serve
+  there, 20 earlier terms of people who serve again; about 5,000 more persons; 317 more
+  name requests; 824 of the ended appointments began before 1992 and have no start.
+  **Former officers are a change of scale for the data-protection assessment** — the legal
+  repository's DPIA has the paragraph that must be accepted before the first run.
+- **One term is told from another by its dates.** A person who resigned and was appointed
+  again has two records. A resignation ends the open seat only when it is that seat's own
+  term — it ended on or after the day the seat began (`ends_open_seat`). An earlier term
+  is a seat of its own with `--history` and nothing without it. Until 2026-11-21 it was
+  matched by person and role alone, so the second run wrote 20 earlier terms as closed
+  seats that the first run had not (Thomas Daryl Weldon at Penguin Random House). A person
+  who serves is never ended by a resigned record: resigned and appointed again without a
+  day between is one tenure, and with `--history` it starts at the earlier record.
 - **People only.** A corporate officer (`corporate-secretary`, `corporate-director`,
   `corporate-nominee-…`, or any record that states an `identification`) is a company —
   mostly company-secretary firms — and a seat runs from a person: 466 left out on dev.

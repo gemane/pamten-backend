@@ -1,4 +1,5 @@
-"""Companies House officers: the people who hold a seat at a UK company now.
+"""Companies House officers: the people who hold a seat at a UK company — and,
+with ``history``, those who held one.
 
 The PSC snapshot names who CONTROLS a UK company; who RUNS it — directors,
 secretaries, LLP members — is a separate register, read here from the
@@ -21,10 +22,27 @@ Companies House REST API (no free bulk file):
 
 What is taken, and what is not (user, 2026-11-13):
 
-- **Current appointments only.** Of 9,111 appointments at dev's 280 UK
+- **Current appointments by default.** Of 9,111 appointments at dev's 280 UK
   companies 7,871 had ended (Barclays Investment Solutions: 301 listed, 6
-  serving). A resigned officer is read only to END a seat a previous run
-  wrote, on the day the register states; history builds from the first run.
+  serving). Without ``history`` a resigned officer is read only to END the
+  seat a previous run wrote for that very term, on the day the register
+  states.
+- **The ended appointments with ``history``** (`ch-officers --history`, the
+  user 2026-11-21): every resigned person's term is written as a closed seat
+  — appointed on, resigned on — so a company's timeline shows who sat on its
+  board before. The same request per company; a name with a title part costs
+  its one extra request, as a serving one does. Corporate officers stay out.
+- **A term is told from the one before it by its dates.** A person who
+  resigned and was appointed again has two records. Until 2026-11-21 a
+  resigned record was matched to the open seat by person and role alone, so
+  the SECOND run wrote the earlier term as a closed seat and the first run
+  had not (Thomas Daryl Weldon at Penguin Books: 1997–2005, and serving since
+  2010; 20 such on dev — findings item 121). Now a resignation ends the open
+  seat only when it is that seat's own term (`ends_open_seat`), and an
+  earlier term is written with ``history`` or not at all. A person who serves
+  is never ended by a resigned record: resigned and appointed again without a
+  day between is one tenure, and with ``history`` it starts at the earlier
+  record.
 - **People only.** A corporate officer (a company-secretary firm, a nominee
   company: 462 of the 9,111) is a company, and a seat runs from a person.
 - **Name, role, the dates, month and year of birth, nationality** — the birth
@@ -252,14 +270,17 @@ def fetch_name_elements(client: httpx.Client, oid: str, sleep=time.sleep) -> dic
     return None
 
 
-def add_name_elements(client: httpx.Client, items: list[dict], known: dict, sleep=time.sleep) -> int:
-    """Give every serving person whose list name has a title part the
-    register's own split (`item["name_elements"]`), asked once per officer id
-    for the run (``known``). Returns how many were asked for. Resigned and
-    corporate officers are not: nobody writes their names."""
+def add_name_elements(client: httpx.Client, items: list[dict], known: dict, sleep=time.sleep,
+                      history: bool = False) -> int:
+    """Give every person whose name is written and whose list name has a title
+    part the register's own split (`item["name_elements"]`), asked once per
+    officer id for the run (``known``). Returns how many were asked for.
+    Corporate officers are not asked for, and resigned ones only with
+    ``history``: without it nobody writes their names."""
     asked = 0
     for item in items:
-        if is_corporate(item) or item.get("resigned_on") or not has_title_part(item.get("name")):
+        if is_corporate(item) or (item.get("resigned_on") and not history) \
+                or not has_title_part(item.get("name")):
             continue
         oid = officer_id(item)
         if not oid:
@@ -331,14 +352,29 @@ def _upsert_officer(session, rec: dict, source_id: str, now: str) -> str:
     return pid
 
 
+def ends_open_seat(rec: dict, open_since: str | None) -> bool:
+    """Whether a resigned record is the term of the seat held open since
+    ``open_since`` — it ended on or after the day that seat began — and not a
+    term before it (findings item 121). An undated seat is any term's."""
+    return not open_since or not rec.get("until") or rec["until"] >= open_since[:10]
+
+
 def write_company_officers(entity_id: str, number: str, items: list[dict], source_id: str,
-                           credibility: int) -> dict:
+                           credibility: int, history: bool = False) -> dict:
     """Write a company's serving officers and end the seats of those who left.
 
     A serving person → the Person (`choff:{id}`) and a HAS_ROLE seat dated by
     `appointed_on`. A resigned one → nothing new: `resigned_on` ends the seat
-    this source holds open for that person in that role, and only that.
-    Returns {"written", "ended", "corporate", "resigned", "unreadable"}."""
+    this source holds open for that person in that role — when it is that
+    seat's own term (`ends_open_seat`) — and only that.
+
+    With ``history`` every resigned person is written too: the Person and a
+    closed seat, appointed on to resigned on. A term that touches the open
+    seat ends it (`graph_writer._upsert_role` matches a seat over a touching
+    period); one that does not is a seat of its own.
+    Returns {"written", "ended", "past", "corporate", "resigned", "unreadable"}:
+    ``ended`` the open seats a resignation closed, ``past`` the closed seats
+    the history wrote."""
     from datetime import datetime, timezone
 
     from app.database import db
@@ -346,7 +382,7 @@ def write_company_officers(entity_id: str, number: str, items: list[dict], sourc
     from app.roles import canonical_role
     from app.scraper.edge_schema import READ_FIELD
     from app.scraper.graph_writer import _upsert_role
-    out = {"written": 0, "ended": 0, "corporate": 0, "resigned": 0, "unreadable": 0}
+    out = {"written": 0, "ended": 0, "past": 0, "corporate": 0, "resigned": 0, "unreadable": 0}
     url = OFFICERS_PAGE.format(number=number)
     now = datetime.now(timezone.utc).isoformat()
     serving, left = [], []
@@ -363,25 +399,50 @@ def write_company_officers(entity_id: str, number: str, items: list[dict], sourc
         else:
             serving.append(rec)
     with db.get_session() as session:
-        held = {(r["pid"], canonical_role(r["role"])) for r in session.run(
+        held = {(r["pid"], canonical_role(r["role"])): r.get("since") for r in session.run(
             "MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $eid}) WHERE r.source_id = $sid AND r.until IS NULL "
-            "RETURN p.id AS pid, r.role AS role", eid=entity_id, sid=source_id)}
+            "RETURN p.id AS pid, r.role AS role, r.since AS since", eid=entity_id, sid=source_id)}
         people = [(_upsert_officer(session, rec, source_id, now), rec) for rec in serving]
-        ended = []
-        for rec in left if held else []:
+        # who serves now, and since when: a resigned record of theirs is an
+        # earlier term, never the end of this one
+        serves: dict = {}
+        for pid, rec in people:
+            key = (pid, canonical_role(rec["role"]))
+            serves[key] = min(filter(None, [serves.get(key), rec["since"]]), default=None)
+        ended, past, continued = [], [], []
+        for rec in left if (held or history) else []:
             pid = person_id(rec["officer_id"])
-            if (pid, canonical_role(rec["role"])) not in held:
+            key = (pid, canonical_role(rec["role"]))
+            if key not in held and key not in serves:
                 pid = resolve_current_id(session, pid) or pid
-            if (pid, canonical_role(rec["role"])) in held:
+                key = (pid, canonical_role(rec["role"]))
+            if key in serves:
+                if not history:
+                    continue
+                if ends_open_seat(rec, serves[key]):
+                    # resigned and appointed again without a day between: one
+                    # tenure, which began with the earlier record
+                    continued.append((pid, rec))
+                else:
+                    past.append((pid, rec))
+            elif key in held and ends_open_seat(rec, held[key]):
                 ended.append((pid, rec))
+            elif history:
+                past.append((_upsert_officer(session, rec, source_id, now), rec))
     for pid, rec in people:
         _upsert_role(pid, entity_id, rec["role"], source_id, since=rec["since"], source_url=url,
                      credibility_score=credibility, read_from=READ_FIELD)
         out["written"] += 1
-    for pid, rec in ended:
-        _upsert_role(pid, entity_id, rec["role"], source_id, since=rec["since"], until=rec["until"],
-                     source_url=url, credibility_score=credibility, read_from=READ_FIELD)
-        out["ended"] += 1
+    for pid, rec in continued:
+        # no end: the assertion teaches the open seat its earlier start
+        _upsert_role(pid, entity_id, rec["role"], source_id, since=rec["since"], source_url=url,
+                     credibility_score=credibility, read_from=READ_FIELD)
+    # oldest first, so a term is in place before the one after it is matched
+    for kind, rows in (("past", sorted(past, key=lambda x: x[1]["until"])), ("ended", ended)):
+        for pid, rec in rows:
+            _upsert_role(pid, entity_id, rec["role"], source_id, since=rec["since"], until=rec["until"],
+                         source_url=url, credibility_score=credibility, read_from=READ_FIELD)
+            out[kind] += 1
     return out
 
 
@@ -399,12 +460,14 @@ def companies_in_graph(only: list[str] | None = None, limit: int | None = None) 
     return out[:limit] if limit else out
 
 
-def run_ch_officers(only: list[str] | None = None, limit: int | None = None, dry_run: bool = False) -> dict:
+def run_ch_officers(only: list[str] | None = None, limit: int | None = None, dry_run: bool = False,
+                    history: bool = False) -> dict:
     """Read the serving officers of every UK company in the graph and write
-    them (`write_company_officers`). A manual run: no schedule calls it.
+    them (`write_company_officers`); with ``history`` the resigned ones too, as
+    closed seats. A manual run: no schedule calls it.
 
     `dry_run` reads and counts, writing nothing. Returns {"status", "companies",
-    "read", "unknown", "failed", "written", "ended", "corporate", "resigned",
+    "read", "unknown", "failed", "written", "ended", "past", "corporate", "resigned",
     "unreadable", "names_asked"}; status `no_api_key` without COMPANIES_HOUSE_API_KEY, `disabled`
     when the source is switched off in the catalogue."""
     from app.config import settings
@@ -420,8 +483,8 @@ def run_ch_officers(only: list[str] | None = None, limit: int | None = None, dry
         return {"status": "disabled"}
     companies = companies_in_graph(only, limit)
     out = {"status": "dry-run" if dry_run else "ok", "companies": len(companies), "read": 0, "unknown": 0,
-           "failed": 0, "written": 0, "ended": 0, "corporate": 0, "resigned": 0, "unreadable": 0,
-           "names_asked": 0}
+           "failed": 0, "written": 0, "ended": 0, "past": 0, "corporate": 0, "resigned": 0,
+           "unreadable": 0, "names_asked": 0}
     # a dry run writes nothing — not a run-log row either
     logged = contextlib.nullcontext({}) if dry_run else \
         record_run("ch-officers", "all" if not only else ",".join(sorted(only)))
@@ -445,17 +508,20 @@ def run_ch_officers(only: list[str] | None = None, limit: int | None = None, dry
                 counts = {"corporate": sum(1 for i in items if is_corporate(i)),
                           "unreadable": sum(1 for r in recs if r is None),
                           "resigned": sum(1 for r in recs if r and r["until"]),
-                          "written": sum(1 for r in recs if r and not r["until"]), "ended": 0}
+                          "written": sum(1 for r in recs if r and not r["until"]), "ended": 0,
+                          # an upper bound: a resignation that ends an open seat is not a past one
+                          "past": sum(1 for r in recs if r and r["until"]) if history else 0}
             else:
                 try:
-                    out["names_asked"] += add_name_elements(http, items, names)
+                    out["names_asked"] += add_name_elements(http, items, names, history=history)
                 except Exception as exc:  # noqa: BLE001 — a name's title part is not worth a company
                     log.warning("Companies House: name parts at %s not read: %s", company["number"], exc)
                 counts = write_company_officers(company["id"], company["number"], items, source_id,
-                                                meta["credibility"])
+                                                meta["credibility"], history=history)
             for key, n in counts.items():
                 out[key] += n
         run["total"] = out["written"]
         run["note"] = (f"{out['read']} of {out['companies']} companies, {out['written']} seats, "
-                       f"{out['ended']} ended, {out['failed']} failed")
+                       f"{out['ended']} ended, {out['failed']} failed"
+                       + (f", {out['past']} past seats (history)" if history else ""))
     return out

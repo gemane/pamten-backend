@@ -1977,6 +1977,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       have seated 31 fund entities. Keep the independent evidence (the proxy names the
       person) as the condition and use the joint filing only to answer the one question it
       can — did this person file.
+- [ ] **Match a record to what is stored by everything that identifies it — a period as
+      well as a person and a role.** The officers import ended "the seat this source holds
+      open for that person in that role" when the register showed a resignation. A person
+      who resigned and was appointed again has two records, so the SECOND run matched the
+      old resignation to the new seat and wrote the earlier term as a closed seat — the
+      first run had written nothing of it, and the two runs disagreed (20 seats on dev,
+      findings item 121). And the reverse trap sits next to it: an end that touches the
+      open seat's start (resigned and re-appointed the same day) would have closed a seat
+      its holder serves in. Ask of every "end it" rule: which term is this the end of, and
+      does the holder appear as serving in the very same answer?
 
 ## 9. Documentation
 

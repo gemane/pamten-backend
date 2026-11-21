@@ -206,3 +206,103 @@ def test_a_name_another_source_or_a_merge_chose_is_left_alone(it_db):
     _run_named([_titled(), ITEMS[0]], None)
     assert _name(it_db, "wd:Q1")["n"] == "Jane M. Smith-Jones"
     assert _name(it_db, "choff:julie")["n"] == "Dr Julie Merrick"
+
+
+# ── the history, and a term told from the one before it (findings item 121) ──
+
+def _all_seats(it_db):
+    return sorted((r["pid"], r["role"], str(r["since"])[:10], str(r["until"])[:10] if r["until"] else None)
+                  for r in it_db.run_command(
+        f"MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {{id: '{CO}'}}) RETURN p.id AS pid, r.role AS role, "
+        "r.since AS since, r.until AS until"))
+
+
+WELDON = [_item("weldon", "WELDON, Thomas Daryl", appointed="2010-01-01"),
+          _item("weldon", "WELDON, Thomas Daryl", appointed="1997-02-10", resigned_on="2005-07-29")]
+
+
+def test_with_the_history_a_resigned_person_is_a_person_and_a_closed_seat(it_db):
+    _seed(it_db)
+    out, _ = _run(ITEMS, history=True)
+    assert (out["written"], out["past"], out["ended"], out["resigned"], out["corporate"]) == (2, 1, 0, 1, 1)
+    assert ("choff:gone", "Director", "2014-10-16", "2018-06-30") in _all_seats(it_db)
+    people = {r["id"]: r["full"] for r in it_db.run_command("MATCH (p:Person) RETURN p.id AS id, p.full_name AS full")}
+    assert people == {"choff:jane": "Jane Mary Smith", "choff:omar": "Omar Khan", "choff:gone": "Peter Old"}
+    note = it_db.run_command("MATCH (r:ScrapeRun) RETURN r.error AS note")[0]["note"]     # the run's note
+    assert "1 past seats (history)" in note
+    # a second run writes nothing twice
+    out, _ = _run(ITEMS, history=True)
+    assert len(_all_seats(it_db)) == 3 and it_db.run_command("MATCH (p:Person) RETURN count(p) AS n")[0]["n"] == 3
+
+
+def test_without_the_history_a_rerun_does_not_write_the_earlier_term(it_db):
+    """Item 121: the first run wrote the serving term, and the SECOND wrote
+    the term before it as a closed seat — matched to the open seat by person
+    and role, whatever its dates."""
+    _seed(it_db)
+    for _ in range(2):
+        out, _ = _run(WELDON)
+        assert (out["written"], out["ended"], out["past"]) == (1, 0, 0)
+        assert _all_seats(it_db) == [("choff:weldon", "Director", "2010-01-01", None)]
+
+
+def test_with_the_history_both_terms_are_seats_and_the_serving_one_stays_open(it_db):
+    _seed(it_db)
+    for _ in range(2):
+        out, _ = _run(WELDON, history=True)
+        assert (out["written"], out["past"], out["ended"]) == (1, 1, 0)
+        assert _all_seats(it_db) == [("choff:weldon", "Director", "1997-02-10", "2005-07-29"),
+                                     ("choff:weldon", "Director", "2010-01-01", None)]
+
+
+@pytest.mark.parametrize("history", [False, True])
+def test_resigned_and_appointed_again_the_same_day_is_one_seat_that_stays_open(it_db, history):
+    """No day between the two records: one tenure. The resigned record must not
+    end the seat its holder serves in — and with the history it gives the seat
+    its earlier start."""
+    _seed(it_db)
+    items = [_item("weldon", "WELDON, Thomas Daryl", appointed="2010-01-01"),
+             _item("weldon", "WELDON, Thomas Daryl", appointed="1997-02-10", resigned_on="2010-01-01")]
+    for _ in range(2):
+        out, _ = _run(items, history=history)
+        assert (out["written"], out["ended"], out["past"]) == (1, 0, 0)
+        assert _all_seats(it_db) == [("choff:weldon", "Director", "1997-02-10" if history else "2010-01-01", None)]
+
+
+@pytest.mark.parametrize("history", [False, True])
+def test_a_resignation_from_the_open_seat_ends_it_with_or_without_the_history(it_db, history):
+    _seed(it_db)
+    _run(ITEMS, history=history)
+    later = [_item("jane", "SMITH, Jane Mary", resigned_on="2026-09-30"), *ITEMS[1:]]
+    out, _ = _run(later, history=history)
+    assert out["ended"] == 1
+    assert ("choff:jane", "Director", "2014-10-16", "2026-09-30") in _all_seats(it_db)
+    assert len([s for s in _all_seats(it_db) if s[0] == "choff:jane"]) == 1
+
+
+def test_the_history_follows_a_merged_person(it_db):
+    """A resigned officer whose node a merge moved is written on the survivor."""
+    _seed(it_db)
+    _run(ITEMS, history=True)
+    it_db.run_command("CREATE (:Person {id: 'wd:Q1', full_name: 'Peter Old', aliases: []})")
+    from app.merged_ids import record_merge_sql
+    it_db.run_command("MATCH (p:Person {id: 'choff:gone'}) DETACH DELETE p")
+    record_merge_sql("choff:gone", "wd:Q1", "Person")
+    _run(ITEMS, history=True)
+    assert ("wd:Q1", "Director", "2014-10-16", "2018-06-30") in _all_seats(it_db)
+    assert it_db.run_command("MATCH (p:Person {id: 'choff:gone'}) RETURN count(p) AS n")[0]["n"] == 0
+
+
+def test_a_resignation_ends_the_seat_of_its_own_term_and_not_with_an_earlier_one(it_db):
+    """The person has left for good: the register lists the term that just
+    ended and the one before it. Only the open seat's own term ends it; the
+    earlier one is not written without the history."""
+    _seed(it_db)
+    _run(WELDON)
+    left = [_item("weldon", "WELDON, Thomas Daryl", appointed="2010-01-01", resigned_on="2026-03-31"), WELDON[1]]
+    out, _ = _run(left)
+    assert (out["written"], out["ended"], out["past"]) == (0, 1, 0)
+    assert _all_seats(it_db) == [("choff:weldon", "Director", "2010-01-01", "2026-03-31")]
+    out, _ = _run(left, history=True)
+    assert _all_seats(it_db) == [("choff:weldon", "Director", "1997-02-10", "2005-07-29"),
+                                 ("choff:weldon", "Director", "2010-01-01", "2026-03-31")]
