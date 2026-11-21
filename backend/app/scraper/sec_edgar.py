@@ -209,6 +209,18 @@ def collect_lost_requests():
         _lost_requests.reset(token)
 
 
+def _refusal(exc: BaseException) -> str | None:
+    """EDGAR's own words when it refused the request — a 4xx that is neither
+    "not there" nor "slow down" — else None (the network, a 5xx)."""
+    from app.source_calls import REFUSED, status_kind
+    if not isinstance(exc, httpx.HTTPStatusError) or status_kind(exc.response.status_code) != REFUSED:
+        return None
+    try:
+        return " ".join((exc.response.text or "").split())[:160]
+    except Exception:  # noqa: BLE001 - a body that cannot be read is no reason to lose the line
+        return ""
+
+
 def _request_lost(url: str, params: dict | None, exc: BaseException, retried: bool) -> None:
     """Log and count a request that ended in an error; a 404 is not one."""
     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404:
@@ -216,8 +228,18 @@ def _request_lost(url: str, params: dict | None, exc: BaseException, retried: bo
     shown = str(httpx.URL(url, params=params)) if params else url
     what = (f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError)
             else type(exc).__name__)
-    log.warning("SEC EDGAR: request lost (%s%s) on %s", what,
-                ", after the retry" if retried else "", shown)
+    refusal = _refusal(exc)
+    if refusal is None:
+        log.warning("SEC EDGAR: request lost (%s%s) on %s", what,
+                    ", after the retry" if retried else "", shown)
+    else:
+        # Not the network: EDGAR read the request and said no. Its reason is in
+        # the body ("Invalid count, Received: 5, Count must be one of: …",
+        # findings item 132) and a retry will get the same answer, so it is an
+        # error, with the reason, on the same "request lost" line the logs are
+        # searched for.
+        log.error("SEC EDGAR: request lost (%s%s) on %s — REFUSED by EDGAR: %s", what,
+                  ", after the retry" if retried else "", shown, refusal or "no reason given")
     bucket = _lost_requests.get()
     if bucket is not None:
         bucket.append(shown)

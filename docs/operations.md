@@ -188,7 +188,7 @@ scrapes (runs by source, companies scraped for the **first time** vs
 **refreshed** — told apart by the run's recorded `reason` — records written, SEC
 enrichments, failures), imports (GLEIF/PSC runs), and graph totals with the
 change since the previous stored digest, and **source calls** — how often each
-outside source was asked (by answer: ok, 4xx, 429, 5xx, no response) and what the
+outside source was asked (by answer: ok, 4xx = not there, refused, 429, 5xx, no response) and what the
 shared bucket did per prefix (hit = a source fetch saved, miss, put), from the
 `SourceCall` rows. `--email` sends it to `REPORT_EMAIL`
 (falling back to `ADMIN_EMAIL`) through the configured email backend. Every run
@@ -246,8 +246,8 @@ still to set up on the production box):
    ping failure never fails the job. Healthchecks.io, or its open-source
    self-hosted twin on the dev box, is the intended checker.
 4. **`manage.py alerts`** — what is wrong right now, mailed only when there is
-   something (`--email`, to `REPORT_EMAIL` / `ADMIN_EMAIL`). Four checks, each
-   skipped when its setting is empty:
+   something (`--email`, to `REPORT_EMAIL` / `ADMIN_EMAIL`). Six checks, the
+   first four skipped when their setting is empty:
    - `imports`: an import run that failed in the last 24 h, or a run stuck
      `running` past the run log's stale threshold;
    - `backup`: the marker `backup-database.sh` writes after verify + offsite
@@ -259,7 +259,36 @@ still to set up on the production box):
    - `health`: `GET ALERT_HEALTH_URL` — the **outside** check when run on the
      dev box against production. Reported on change only (down, then
      recovered), remembered in `ALERT_STATE_FILE`, so a five-minute cron does
-     not mail every five minutes.
+     not mail every five minutes;
+   - `refused`: a source that **refused** requests since yesterday (UTC) — a
+     4xx that is not "not there" (404, 410) and not "slow down" (429), counted
+     apart as the `refused` kind of the source calls. `ALERT_REFUSED_WARN` (5)
+     or more is a warning, `ALERT_REFUSED_CRIT` (50) or more critical. A day's
+     scraping has hundreds of 404s and none of these;
+   - `probes`: one known request to each endpoint the scrapers depend on
+     (`app/source_contracts.py`, about a dozen requests): EDGAR's ticker
+     list, company-name and person-name search, a filer's submissions, the
+     13D/G feed and the full-text search; a GLEIF record and a parent
+     relationship; a Wikidata item by a stated id, by name and its labels;
+     a company's officers at Companies House (only with its key). Each goes
+     through the scraper's own function, so the parameters probed are the
+     ones a scrape sends, and is held to the one thing the scraper reads. A
+     probe that fails is asked once more after five seconds; one that fails
+     twice is a critical alert with the reason — for EDGAR, the request that
+     was lost. Off with `ALERT_SOURCE_PROBES=false`.
+
+   **Why the last two exist.** A source changes without telling us. EDGAR's
+   search page accepted any `count` until November 2026 and then answered
+   HTTP 400 to everything outside its own page sizes; our two name searches
+   sent 5 and were dead for up to a week, until a rebuild ran them (540
+   requests, findings item 132). Either check reports that the next morning.
+   Where a source does announce changes, read them there:
+   GLEIF ("GLEIF API Changes" and "(Breaking) Changes in Golden Copy Exports"
+   on gleif.org), Wikidata (breaking changes are announced in advance, with
+   BREAKING in the subject, on the wikidata-tech and mediawiki-api-announce
+   mailing lists), Companies House (the "API Changes" category of its
+   developer forum). EDGAR's search page has no such channel. A new source
+   gets a probe with its scraper (`docs/new-source-checklist.md`).
 
    It exits 0 whenever the checks ran — an alert is an answer, not a failure;
    the checks crashing is what the dead man's switch on the wrapper reports.
@@ -350,6 +379,10 @@ A lost **single** request (one Form 4, one filing index) leaves an SEC run
 `SEC EDGAR: request lost (…) on <url>` and the row's `error` reads
 `N request(s) lost to the network`, so a rebuild can tell a gap the network
 made from one the code made (findings item 45).
+A request EDGAR **refused** (HTTP 400, 403 …) is on the same line at ERROR
+level with EDGAR's reason — `… — REFUSED by EDGAR: Invalid count, Received: 5,
+Count must be one of: …` — because that is the source changing, not the
+network, and a retry gets the same answer (findings item 132).
 
 The endpoint is **public**: what the platform ingests, against which company and
 when, is the kind of thing an ownership-transparency project should be open

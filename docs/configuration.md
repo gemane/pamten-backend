@@ -37,6 +37,8 @@ Every environment variable the backend reads (`app/config.py`). A local `.env` n
 | `ALERT_DISK_PATHS` / `ALERT_DISK_WARN_PCT` / `ALERT_DISK_CRIT_PCT` | mount points to watch (default `/`), warn at 85 %, critical at 95 % |
 | `ALERT_BACKUP_MARKER` / `ALERT_BACKUP_MAX_AGE_HOURS` / `ALERT_BACKUP_EXPECT_OFFSITE` | the marker `backup-database.sh` writes; alert when older than 26 h, missing, or not offsite |
 | `ALERT_STATE_FILE` | where the health check remembers its last state (`~/data/alerts-state.json`) |
+| `ALERT_REFUSED_WARN` / `ALERT_REFUSED_CRIT` | requests a source refused since yesterday (a 4xx other than 404/410/429): warn at 5, critical at 50 |
+| `ALERT_SOURCE_PROBES` | `manage.py alerts` asks each source endpoint one known question (`app/source_contracts.py`); `false` = skip |
 | `SEC_CACHE_DIR` | *(empty)* | Local layer of the EDGAR filing cache (immutable Archives files only; never searches). Needs a persistent disk — leave unset on Render |
 | `OBJECT_STORE_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | *(empty)* | The shared S3-compatible object store (`app/objectstore.py`) — one bucket for every environment, a prefix per purpose; `edgar/` is the filing cache's shared layer, `geocode/` the address cache's (so a rebuild does not re-ask Nominatim for every address). Any S3 API (Hetzner, Scaleway, AWS); keys are secrets, env only |
 | `SCRAPER_OPENCORPORATES_ENABLED` | `false` | OpenCorporates source switch |

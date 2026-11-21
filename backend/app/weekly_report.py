@@ -203,7 +203,7 @@ def _new_relationships(week: str) -> dict:
 
 
 #: kinds that are a network call answered (or not) by the source itself
-NETWORK_KINDS = ("ok", "4xx", "429", "5xx", "error")
+NETWORK_KINDS = ("ok", "4xx", "refused", "429", "5xx", "error")
 #: kinds of a bucket operation (app/objectstore.py)
 BUCKET_KINDS = ("hit", "miss", "put", "delete", "list", "error")
 

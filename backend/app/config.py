@@ -126,6 +126,9 @@ class Settings(BaseSettings):
     ALERT_BACKUP_MAX_AGE_HOURS:       int  = 26
     ALERT_BACKUP_EXPECT_OFFSITE:      bool = True
     ALERT_STATE_FILE:                 str  = "~/data/alerts-state.json"   # the health check's last state
+    ALERT_REFUSED_WARN:               int  = 5            # requests a source refused (4xx, not 404/429) since yesterday
+    ALERT_REFUSED_CRIT:               int  = 50
+    ALERT_SOURCE_PROBES:              bool = True         # one known request per source endpoint (app/source_contracts.py)
     ADMIN_PASSWORD:                   str | None = None
     # ── Transactional email (verification + password reset) ───────────────────
     # Provider-agnostic sender. EMAIL_BACKEND selects the transport: "smtp" sends

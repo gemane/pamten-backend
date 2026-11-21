@@ -552,7 +552,8 @@ def cmd_source_calls(args):
 
 def cmd_alerts(args):
     """What is wrong right now: failed/stale imports, a stale or missing backup,
-    disk nearly full, /health down (on change). Prints the list; --email mails it
+    disk nearly full, /health down (on change), a source refusing requests, a
+    source endpoint that no longer answers as the scrapers read it. Prints the list; --email mails it
     to REPORT_EMAIL (or ADMIN_EMAIL) only when there is something. Exits 0 when
     the checks ran — an alert is an answer, not a failure. Manual-first; the
     cron lines are in docs/operations.md (Monitoring)."""
@@ -1603,7 +1604,7 @@ def _build_parser():
 
     p_al = subparsers.add_parser('alerts', help='What is wrong right now: failed/stale imports, stale backup, '
                                          'disk nearly full, /health down (see docs/operations.md)')
-    p_al.add_argument('--only', help='Comma-separated subset of checks: imports,backup,disk,health')
+    p_al.add_argument('--only', help='Comma-separated subset of checks: imports,backup,disk,health,refused,probes')
     p_al.add_argument('--email', action='store_true', help='Mail the alerts (only when there are any)')
     p_al.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
     p_al.set_defaults(func=cmd_alerts)
