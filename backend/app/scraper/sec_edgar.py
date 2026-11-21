@@ -2340,6 +2340,14 @@ def _restate_against_newest_denominator(filings: list[dict]) -> None:
 
 # ── Executives from Form 3/4 (structured XML) ────────────────────────────────
 
+#: The forms the insider window reads. Form 5 is the annual statement of the
+#: transactions an insider did not have to report on a Form 4 (gifts, small
+#: acquisitions) and has the same XML; a director whose newest filing about
+#: the issuer is a Form 5 was not listed — WesBanco's Michael J Crawford
+#: (Form 5 of 2026-02-10, isDirector) had no seat (findings item 119).
+INSIDER_FORMS = ("3", "4", "5", "3/A", "4/A", "5/A")
+
+
 def _parse_form34_xml(xml_text: str) -> dict | None:
     """
     Parse a Form 3 or Form 4 XML document.
@@ -2485,7 +2493,7 @@ def fetch_executives(cik: str) -> list:
     for page in pages.values():
         for form, acc, doc, filed in zip(page.get("form") or [], page.get("accessionNumber") or [],
                                          page.get("primaryDocument") or [], page.get("filingDate") or []):
-            if form in ("3", "4", "3/A", "4/A") and filed and filed >= window_start:
+            if form in INSIDER_FORMS and filed and filed >= window_start:
                 forms.append(form)
                 accessions.append(acc)
                 primary_docs.append(doc)
@@ -2498,7 +2506,7 @@ def fetch_executives(cik: str) -> list:
     # are still read past that, because a person's Form 3 is usually older
     # than their newest Form 4 and it is the one filing that dates the seat.
     for i, form in enumerate(forms):
-        if form not in ("3", "4", "3/A", "4/A"):
+        if form not in INSIDER_FORMS:
             continue
         is_form3 = form.startswith("3")
         filed = filing_dates[i] if i < len(filing_dates) else ""
@@ -2597,7 +2605,7 @@ def _form34_window_start(forms: list, filing_dates: list) -> str | None:
     """The first filing day inside the insider window: FORM4_WINDOW_DAYS before
     the issuer's newest Form 3/4 (ISO, comparable as text), or None when there
     is none or its date does not parse."""
-    newest = next((d for f, d in zip(forms, filing_dates) if f in ("3", "4", "3/A", "4/A") and d), None)
+    newest = next((d for f, d in zip(forms, filing_dates) if f in INSIDER_FORMS and d), None)
     try:
         return (datetime.fromisoformat(newest).date() - timedelta(days=FORM4_WINDOW_DAYS)).isoformat()
     except (TypeError, ValueError):
