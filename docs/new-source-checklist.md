@@ -1938,6 +1938,17 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       code that cuts the answer, and pin the sent value with a test against the source's
       list. After a rebuild, group the lost requests by HTTP status before reading them as
       network loss: hundreds of 400s on one endpoint are the source changing, not the line.
+- [ ] **A probe for every endpoint the source's scraper depends on**
+      (`app/source_contracts.py`): one request for a record that does not go away, sent
+      through the scraper's own function and held to the one thing the scraper reads.
+      EDGAR changed what its search page accepts and nobody heard of it for a week
+      (findings item 132); the daily `probes` check and the `refused` count in
+      `manage.py alerts` are what would have said so the next morning. A source whose
+      host is new goes into `SOURCE_HOSTS`, or neither check sees it. And note in
+      `docs/operations.md` where the source announces its changes, if it does. A check that
+      reaches a source must be off in every test by default (`_no_source_probes` in
+      `tests/conftest.py`): the integration suite calls a plain `alerts.collect()`, and
+      the first CI run of the probes sent twelve real requests and failed on them.
 
 ## 9. Documentation
 

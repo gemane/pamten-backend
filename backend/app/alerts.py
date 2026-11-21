@@ -1,7 +1,7 @@
 """Operational alerts — the things an operator must hear about between digests.
 
 The weekly digest says what happened; this says what is wrong, and only when
-something is. Four checks, each a pure function over what it is handed (rows,
+something is. Six checks, each a pure function over what it is handed (rows,
 a file, disk figures, an HTTP answer), so the rules are testable without a
 box to break:
 
@@ -16,6 +16,13 @@ box to break:
   outside check, when run on the dev box against production. Reported on
   CHANGE only (down, then recovered), remembered in a state file, so a
   five-minute cron does not mail every five minutes.
+
+- **refused**: requests a source REFUSED since yesterday — a 4xx that is not
+  "not there" (`app/source_calls.py` counts them apart). A handful is a warning,
+  dozens are critical: the source stopped accepting something we send.
+- **probes**: one known request to each endpoint the scrapers depend on
+  (`app/source_contracts.py`), so a changed source is heard of the next
+  morning even when nobody scraped.
 
 `manage.py alerts` prints them and, with `--email`, mails them when there are
 any. It exits 0 whenever the checks ran: an alert is an answer, not a failure
@@ -34,7 +41,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-CHECKS = ("imports", "backup", "disk", "health")
+CHECKS = ("imports", "backup", "disk", "health", "refused", "probes")
 
 #: run-log sources that are imports; a failed one is worth a mail on its own
 IMPORT_SOURCES = frozenset({"gleif-update", "ch-psc-update", "gleif-rr", "gleif-lei-cdf",
@@ -177,6 +184,31 @@ def save_state(path: str, state: dict) -> None:
     p.write_text(json.dumps(state, indent=1))
 
 
+# ── sources ──────────────────────────────────────────────────────────────────
+
+def check_refused(by_source: dict[str, dict[str, int]], warn: int, crit: int) -> list[Alert]:
+    """Sources that refused requests in the window (`source_calls.totals`):
+    ``warn`` or more is a warning, ``crit`` or more critical. The bucket's own
+    counts are not a source's."""
+    from app.source_calls import BUCKET, REFUSED
+    out: list[Alert] = []
+    for source, kinds in sorted(by_source.items()):
+        n = int(kinds.get(REFUSED) or 0)
+        if source.startswith(BUCKET + ":") or n < warn:
+            continue
+        out.append(Alert("refused", "crit" if n >= crit else "warn",
+                         f"{source} refused {n:,} requests since yesterday (HTTP 4xx other than 404/429; "
+                         f"{int(kinds.get('ok') or 0):,} answered) — a request it no longer accepts, "
+                         f"a key or a block; `manage.py alerts --only probes` asks each endpoint"))
+    return out
+
+
+def check_probes(failed: list) -> list[Alert]:
+    """One critical alert per probe that failed twice (`source_contracts.run`)."""
+    return [Alert("probes", "crit", f"{probe.source}: {probe.name} — {why}"[:300])
+            for probe, why in failed]
+
+
 # ── the run ──────────────────────────────────────────────────────────────────
 
 def collect(only: set[str] | None = None, now: datetime | None = None) -> list[Alert]:
@@ -212,6 +244,19 @@ def collect(only: set[str] | None = None, now: datetime | None = None) -> list[A
             save_state(settings.ALERT_STATE_FILE, new_state)
             return found
         guarded("health", _health)
+    if "refused" in want:
+        def _refused():
+            from app.source_calls import totals
+            day = now.date()
+            return check_refused(totals((day - timedelta(days=1)).isoformat(),
+                                        (day + timedelta(days=1)).isoformat()),
+                                 settings.ALERT_REFUSED_WARN, settings.ALERT_REFUSED_CRIT)
+        guarded("refused", _refused)
+    if "probes" in want and settings.ALERT_SOURCE_PROBES:
+        def _probes():
+            from app import source_contracts
+            return check_probes(source_contracts.run())
+        guarded("probes", _probes)
     return alerts
 
 

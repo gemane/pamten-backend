@@ -65,14 +65,27 @@ def source_for_host(host: str | None) -> str | None:
     return None
 
 
+#: 4xx answers that mean "that record is not here" — an answer to the question
+NOT_THERE = frozenset({404, 410})
+#: the kind of every other 4xx (but 429)
+REFUSED = "refused"
+
+
 def status_kind(status: int) -> str:
-    """A response's kind. 429 apart: a source telling us to slow down is the one
-    4xx worth seeing on its own."""
+    """A response's kind. 429 apart: a source telling us to slow down is worth
+    seeing on its own. So is `refused`: a 4xx that is not "not there" (400, 401,
+    403, 405, 422 …) says the REQUEST is not accepted — a parameter the source
+    stopped taking, a key it no longer knows, an address it blocks. A day's
+    scraping has hundreds of 404s and none of these; EDGAR's `Invalid count`
+    (HTTP 400, findings item 132) sat among the 404s as one more "4xx" for a
+    week. `app/alerts.py` reports them (`check_refused`)."""
     if status == 429:
         return "429"
     if status < 400:
         return "ok"
-    return "4xx" if status < 500 else "5xx"
+    if status >= 500:
+        return "5xx"
+    return "4xx" if status in NOT_THERE else REFUSED
 
 
 def count(source: str, kind: str, n: int = 1) -> None:

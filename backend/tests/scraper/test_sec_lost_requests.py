@@ -86,6 +86,32 @@ class TestTheLossIsTold:
         assert lost == [URL]
         assert _lost_lines(caplog) and "after the retry" not in _lost_lines(caplog)[0]
 
+    @pytest.mark.parametrize("status", [400, 403])
+    def test_a_refusal_is_an_error_with_edgars_reason(self, status, caplog):
+        # not the network: EDGAR read the request and said no (findings item 132)
+        caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
+        resp = httpx.Response(status, text="Invalid count,\n Received: 5",
+                              request=httpx.Request("GET", URL))
+        client = MagicMock()
+        client.get.return_value = resp
+        with patch.object(sec_edgar, "_get_client", return_value=client), \
+             patch.object(settings, "SEC_CACHE_DIR", None), \
+             patch("app.objectstore.enabled", return_value=False), patch("time.sleep"), \
+             sec_edgar.collect_lost_requests() as lost, pytest.raises(httpx.HTTPStatusError):
+            sec_edgar._get_text(URL)
+        assert lost == [URL]                                   # still counted for the scrape
+        [rec] = [r for r in caplog.records if "request lost" in r.getMessage()]
+        assert rec.levelno == logging.ERROR
+        assert rec.getMessage() == (f"SEC EDGAR: request lost (HTTP {status}) on {URL} — "
+                                    "REFUSED by EDGAR: Invalid count, Received: 5")
+
+    @pytest.mark.parametrize("answer", [500, httpx.ConnectError("down")])
+    def test_the_network_and_a_5xx_stay_a_warning(self, answer, caplog):
+        caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
+        _fetch(answer)
+        [rec] = [r for r in caplog.records if "request lost" in r.getMessage()]
+        assert rec.levelno == logging.WARNING and "REFUSED" not in rec.getMessage()
+
     def test_a_404_is_an_answer_not_a_loss(self, caplog):
         caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
         got, lost = _fetch(404)

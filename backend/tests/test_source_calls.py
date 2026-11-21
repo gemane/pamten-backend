@@ -47,7 +47,9 @@ class TestHosts:
         assert source_calls.source_for_host(host) == source
 
     @pytest.mark.parametrize("status, kind", [
-        (200, "ok"), (304, "ok"), (404, "4xx"), (429, "429"), (500, "5xx"), (503, "5xx")])
+        (200, "ok"), (304, "ok"), (404, "4xx"), (410, "4xx"), (429, "429"), (500, "5xx"), (503, "5xx"),
+        # the request itself is not accepted (findings item 132: EDGAR's HTTP 400)
+        (400, "refused"), (401, "refused"), (403, "refused"), (405, "refused"), (422, "refused")])
     def test_status_kind(self, status, kind):
         assert source_calls.status_kind(status) == kind
 

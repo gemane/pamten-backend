@@ -2,10 +2,15 @@
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 
+from unittest.mock import patch
+
+from app import alerts as alerts_mod
 from app.alerts import (
-    Alert, check_backup, check_disk, check_health, check_imports, format_text,
-    read_backup_marker, subject,
+    Alert, check_backup, check_disk, check_health, check_imports, check_probes,
+    check_refused, format_text, read_backup_marker, subject,
 )
+from app.config import settings
+from app.source_contracts import Probe
 
 NOW = datetime(2026, 9, 30, 7, 0, tzinfo=timezone.utc)
 
@@ -119,3 +124,70 @@ class TestRendering:
 
     def test_nothing_to_report(self):
         assert format_text([], NOW).endswith("nothing to report\n")
+
+
+class TestRefused:
+    """A source that refuses requests (a 4xx that is not "not there") — EDGAR's
+    HTTP 400 to `count=5`, 540 in one rebuild (findings item 132)."""
+
+    def test_a_day_of_404s_is_silent(self):
+        assert check_refused({"sec-edgar": {"ok": 12891, "4xx": 596, "5xx": 9}}, 5, 50) == []
+
+    def test_below_the_threshold_is_silent(self):
+        assert check_refused({"gleif": {"ok": 800, "refused": 4}}, 5, 50) == []
+
+    def test_a_handful_is_a_warning(self):
+        [a] = check_refused({"wikidata": {"ok": 1380, "refused": 5}}, 5, 50)
+        assert (a.check, a.level) == ("refused", "warn")
+        assert "wikidata refused 5 requests" in a.message and "1,380 answered" in a.message
+
+    def test_dozens_are_critical(self):
+        [a] = check_refused({"sec-edgar": {"ok": 18321, "4xx": 576, "refused": 540}}, 5, 50)
+        assert a.level == "crit" and "sec-edgar refused 540 requests" in a.message
+
+    def test_each_source_is_judged_alone_and_the_bucket_is_not_one(self):
+        found = check_refused({"gleif": {"refused": 60}, "sec-edgar": {"refused": 2},
+                               "bucket:edgar": {"refused": 99}, "wikidata": {"refused": 7}}, 5, 50)
+        assert [(a.level, a.message.split()[0]) for a in found] == [("crit", "gleif"), ("warn", "wikidata")]
+
+
+class TestProbes:
+    def test_each_failed_probe_is_a_critical_alert_with_its_reason(self):
+        probe = Probe("sec-edgar", "company-name search", lambda: None)
+        [a] = check_probes([(probe, "HTTP 400: Invalid count")])
+        assert (a.check, a.level) == ("probes", "crit")
+        assert a.message == "sec-edgar: company-name search — HTTP 400: Invalid count"
+
+    def test_nothing_failed_nothing_said(self):
+        assert check_probes([]) == []
+
+
+class TestCollectAsksTheSources:
+    def test_refused_reads_yesterday_and_today(self):
+        with patch("app.source_calls.totals", return_value={"sec-edgar": {"refused": 540}}) as totals:
+            [a] = alerts_mod.collect({"refused"}, NOW)
+        assert totals.call_args.args == ("2026-09-29", "2026-10-01")      # end exclusive
+        assert a.check == "refused" and a.level == "crit"
+
+    def test_probes_run_and_report(self):
+        probe = Probe("gleif", "an LEI record", lambda: None)
+        with patch.object(settings, "ALERT_SOURCE_PROBES", True), \
+             patch("app.source_contracts.run", return_value=[(probe, "no legal name")]):
+            [a] = alerts_mod.collect({"probes"}, NOW)
+        assert a.message == "gleif: an LEI record — no legal name"
+
+    def test_probes_can_be_switched_off(self):
+        with patch.object(settings, "ALERT_SOURCE_PROBES", False), \
+             patch("app.source_contracts.run", side_effect=AssertionError("must not run")):
+            assert alerts_mod.collect({"probes"}, NOW) == []
+
+    def test_a_crashed_probe_run_is_a_warning_not_a_lost_run(self):
+        with patch.object(settings, "ALERT_SOURCE_PROBES", True), \
+             patch("app.source_contracts.run", side_effect=RuntimeError("boom")):
+            [a] = alerts_mod.collect({"probes"}, NOW)
+        assert a.level == "warn" and "probes check could not run" in a.message
+
+    def test_both_are_part_of_a_plain_run(self):
+        assert {"refused", "probes"} <= set(alerts_mod.CHECKS)
+        assert type(settings).model_fields["ALERT_SOURCE_PROBES"].default is True   # on outside the tests
+
