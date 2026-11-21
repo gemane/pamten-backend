@@ -111,6 +111,18 @@ parser. Anything that does not map is either a new property (document it) or noi
       summed to 102.3 % (findings item 116, 2026-11-14). When a document states several
       percentages for one holder, ask what each is a percentage OF before picking one, and
       store the security's name with the figure whenever the document has more than one.
+- [ ] **A header cell says what a column is only together with the cells around it — and a
+      table can say it per row.** The ownership-table reader lent a percent column the
+      class of the column to its left when its own header named none (right for "Class A
+      Shares | Percent of class"). Under a heading of its own — "LLC Units Beneficially
+      Owned", "Issued CPS" — that made Malibu Boats' 98.6 % of the LLC units 98.6 % of the
+      Class A stock; and a "Title of Class" column, which names the class on every row or
+      once above a group of rows, was not read at all, so Liberty Global's three rows per
+      holder became three holders named "c/o Liberty Global Ltd." and "Clarendon House"
+      (findings item 117, 2026-11-21). Replay a reader change over every document of the
+      kind you hold (663 cached tables here), old against new, and read every changed row:
+      the first version of this fix merged Vanguard into GAMCO at Lennar and undid a
+      verified fix at LENSAR, and only the replay showed it.
 - [ ] **A writer that looks its parties up in the graph depends on the order of the scrapes
       — and a guard on a populated database cannot see it.** The ownership-table writer
       finds a holder among the nodes the graph holds. Checked on dev, where every node

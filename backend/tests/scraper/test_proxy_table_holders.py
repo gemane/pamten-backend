@@ -334,3 +334,228 @@ def test_no_submissions_means_the_feed():
 def test_an_exit_is_matched_to_a_row_by_the_whole_name(a, b, same):
     from app.scraper.sec_writer import _same_holder
     assert _same_holder(a, b) is same
+
+
+# ── a row of another security, a class named per row (findings item 117) ────
+
+def _named(table: dict) -> dict:
+    return {r["name"]: (r["stake_pct"], r["share_class"]) for r in table["rows"] if (r["stake_pct"] or 0) >= 5}
+
+
+def test_malibu_units_of_the_operating_company_are_not_class_a():
+    """"LLC Units Beneficially Owned" spans its own "Number | %": the percent
+    took "Class A" from the group left of it, and the issuer's own 98.6 % of
+    the LLC read as 98.6 % of its Class A stock."""
+    named = _named(_table("malibu_boats_def14a_2026.html"))
+    assert named["Malibu Boats, Inc."] == (98.6, "Llc Units")
+    assert named["Pzena Investment Management LLC"] == (8.8, "Class A")
+    assert _big(_table("malibu_boats_def14a_2026.html"))["Pzena Investment Management LLC"]["voting_power_pct"] == 8.6
+
+
+def test_penguin_a_group_the_reader_has_no_word_for_is_another_security():
+    """"Issued CPS" over "Amount | Percentage of Shares Beneficially Owned",
+    beside "Common Stock" over the same pair: SK Telecom holds all of the
+    convertible preferred and none of the common."""
+    named = _named(_table("penguin_solutions_def14a_2025.html"))
+    assert named["SK Telecom Co., Ltd."] == (100.0, "Issued CPS")
+    assert named["BlackRock, Inc."] == (14.4, "Common Stock")
+
+
+def test_restaurant_brands_exchangeable_units_are_not_the_common_shares():
+    named = _named(_table("restaurant_brands_def14a_2026.html"))
+    assert named["3G Funds"] == (90.7, "Partnership Exchangeable Units")
+    assert named["Capital World Investors"] == (12.7, "Common Shares")
+    # Pershing Square holds both: the common is its stake
+    assert named["Pershing Square Funds"] == (6.7, "Common Shares")
+
+
+def test_universal_display_the_class_stands_on_a_row_above_its_holders():
+    """"Title of Class" is a column whose cell — "Common Stock", later "Series
+    A Nonconvertible Preferred Stock" — stands alone above a group of rows."""
+    named = _named(_table("universal_display_def14a_2026.html"))
+    assert named["American Biomimetics Corporation"] == (100.0, "Series A")
+    assert named["BlackRock, Inc."] == (8.6, "Common Stock")
+
+
+def test_liberty_global_one_holder_over_three_class_rows():
+    """Each holder takes three rows — Class A, B, C — and the name cell goes on
+    with "c/o Liberty Global Ltd.", the address, a title. They read as holders
+    of their own: "c/o Liberty Global Ltd." 67.8 %, "Clarendon House" 13.6 %,
+    "Chairman, Chief Executive Officer &" 22.2 %."""
+    table = _table("liberty_global_def14a_2026.html")
+    named = _named(table)
+    assert named["John C. Malone"] == (67.8, "Class B")
+    assert named["Michael T. Fries"] == (22.2, "Class B")
+    assert named["ACR Alpine Capital Research, LLC"] == (13.5, "Class A")
+    assert named["Dimensional Fund Advisors LP"] == (5.0, "Class A")       # the row after ACR: its own holder
+    names = {r["name"] for r in table["rows"]}
+    assert not {n for n in names if n.startswith(("c/o", "Clarendon", "Chairman", "Executive", "Director"))}
+
+
+def test_novagold_a_nominee_table_is_no_ownership_table():
+    """"Name, Province … | Age | Independence | … | 2025 AGM Votes in Favor (%)
+    | Meets Share Ownership Guidelines": every director had 85–99 %."""
+    table = _table("novagold_def14a_2026.html")
+    assert max(r["stake_pct"] or 0 for r in table["rows"]) < 30
+    assert _named(table)["Paulson & Co. Inc."] == (9.24, None)
+    assert not [r["name"] for r in table["rows"] if "Dorward-King" in r["name"]]
+
+
+def _grouped(groups: list[tuple[str, int]], header: list[str], *rows: list[str]) -> str:
+    """A table with a row of spanning headings over the header row."""
+    top = "".join(f'<td colspan="{span}">{text}</td>' for text, span in groups)
+    cells = "".join(f"<td>{h}</td>" for h in header)
+    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
+    return f"<html><body><p>as of March 2, 2026</p><table><tr>{top}</tr><tr>{cells}</tr>{body}</table></body></html>"
+
+
+def test_a_holder_of_the_stock_and_of_another_security_holds_the_stock():
+    table = read_holder_table(_grouped(
+        [("", 1), ("Common Stock", 2), ("Issued CPS", 2)],
+        ["Name of Beneficial Owner", "Amount Beneficially Owned", "Percentage of Shares Beneficially Owned",
+         "Amount Beneficially Owned", "Percentage of Shares Beneficially Owned"],
+        ["Alpha Holdings LLC", "1,000", "30.0%", "200", "100.0%"],
+        ["Beta Capital LP", "500", "15.0%", "—", "—"]))
+    assert _named(table) == {"Alpha Holdings LLC": (30.0, "Common Stock"), "Beta Capital LP": (15.0, "Common Stock")}
+
+
+def test_a_heading_that_names_nothing_still_lends_the_class_left_of_the_percent():
+    """Molson Coors' shape under one spanning heading: "Beneficial Ownership"
+    over "Class A Shares | Percent of class" names no security, so the percent
+    is of the shares column left of it — inside its own group."""
+    table = read_holder_table(_grouped(
+        [("", 1), ("Beneficial Ownership", 4)],
+        ["Name of Beneficial Owner", "Class A Shares", "Percent of class (%)", "Class B Shares", "Percent of class (%)"],
+        ["Alpha Holdings LLC", "1,000", "30.0%", "5,000", "60.0%"]))
+    assert _named(table) == {"Alpha Holdings LLC": (60.0, "Class B")}
+
+
+def test_a_one_group_table_is_not_another_security():
+    """One spanning heading the reader has no word for, and no security named
+    beside it: a one-class table, as nearly every table is."""
+    table = read_holder_table(_grouped(
+        [("", 1), ("Shares Beneficially Owned", 2)],
+        ["Name of Beneficial Owner", "Number", "Percent"],
+        ["Alpha Holdings LLC", "1,000", "30.0%"]))
+    assert _named(table) == {"Alpha Holdings LLC": (30.0, None)}
+
+
+def test_two_holders_of_two_classes_in_a_class_column_stay_two_holders():
+    """Lennar's 2026 proxy: GAMCO (Class B) stands right above The Vanguard
+    Group (Class A). A class the holder above has no figure for does not make
+    the next NAME that holder's second row."""
+    table = read_holder_table(_html(
+        ["Name", "Title of Class", "Amount and Nature of Beneficial Ownership", "Percent Of Class"],
+        ["GAMCO Investors, Inc. One Corporate Center Rye, NY 10580", "Class B Common Stock", "1,724,170", "5.5%"],
+        ["The Vanguard Group 100 Vanguard Blvd. Malvern, PA 19355", "Class A Common Stock", "27,368,807", "12.6%"]))
+    assert sorted(v for v in _named(table).values()) == [(5.5, "Class B"), (12.6, "Class A")]
+
+
+def test_a_row_without_a_name_is_the_holders_next_class():
+    """Forward Air's 2026 proxy: the common on the holder's row, the Series B
+    Preferred on a row with no name — 14.3 % of the common is the stake, not
+    the preferred's 36.4 %."""
+    table = read_holder_table(_html(
+        ["Name and Address of Beneficial Owner", "Class of Shares or Units", "Total", "Percent of Class"],
+        ["Ridgemont Group", "Company Common Stock", "5,109,278", "14.3 %"],
+        ["", "Company Series B Preferred Units", "3,185,799", "36.4 %"],
+        ["BlackRock, Inc.", "Company Common Stock", "4,000,000", "10.4 %"],
+        ["", "Company Series B Preferred Units", "—", "—"]))
+    assert _named(table) == {"Ridgemont Group": (14.3, "Common Stock"), "BlackRock, Inc.": (10.4, "Common Stock")}
+
+
+def test_a_class_heading_over_the_percent_columns_is_no_class_column():
+    """Universal Health Services: "Title of Class" spans a column per class."""
+    table = read_holder_table(_grouped(
+        [("", 1), ("Title of Class", 4)],
+        ["Name and Address of Beneficial Owner", "Class A Common Stock Shares", "Class A Common Stock %",
+         "Class C Common Stock Shares", "Class C Common Stock %"],
+        ["Alan B. Miller", "5,112,384", "77.8%", "661,688", "100%"],
+        ["BlackRock, Inc.", "400,000", "7.7%", "—", "—"]))
+    assert _named(table) == {"Alan B. Miller": (100.0, "Class C"), "BlackRock, Inc.": (7.7, "Class A")}
+
+
+def test_a_one_word_class_cell_and_a_section_heading_with_a_figure():
+    """Bancroft Fund names its classes "Common" and "Preferred"; United States
+    Antimony's "More than 5% owners:" heading stood in the class column and
+    read as a percent column, which hid the class column."""
+    html = ("<html><body><p>as of March 2, 2026</p><table>"
+            "<tr><td>Title of Class</td><td>Name and Address of Beneficial Owner</td>"
+            "<td>Amount of Shares</td><td>Percent of Class</td></tr>"
+            "<tr><td>More than 5% owners:</td></tr>"
+            "<tr><td>Common</td><td>Saba Capital Management, L.P.</td><td>361,294</td><td>6.2%</td></tr>"
+            "<tr><td>Preferred</td><td>Americo Investment Advisors Inc.</td><td>60,000</td><td>5.5%</td></tr>"
+            "</table></body></html>")
+    assert _named(read_holder_table(html)) == {"Saba Capital Management, L.P.": (6.2, "Common Stock"),
+                                               "Americo Investment Advisors Inc.": (5.5, "Preferred Stock")}
+
+
+@pytest.mark.parametrize("columns, stake, named", [
+    # units of the operating company beside the stock: the stock is the stake
+    ([("Class A Common Stock %", 6.7), ("LLC Units Beneficially Owned %", 98.6)], 6.7, "Class A"),
+    ([("Common Shares % of Class", 6.7), ("% of Class of Partnership Exchangeable Units", 3.6)], 6.7, "Common Shares"),
+    # … and all a row states when it states nothing else
+    ([("% of Class of Partnership Exchangeable Units", 90.7)], 90.7, "Partnership Exchangeable Units"),
+    ([("Other security: Issued CPS (2) | Percentage of Shares Beneficially Owned", 100.0)], 100.0, "Issued CPS"),
+    ([("Common Stock Percentage", 14.4),
+      ("Other security: Issued CPS | Percentage of Shares Beneficially Owned", 100.0)], 14.4, "Common Stock"),
+    # units that ARE the issuer's equity stay a class of their own
+    ([("Common Units Percent of Class", 30.0), ("Preferred Units Percent of Class", 80.0)], 30.0, "Common Units"),
+])
+def test_the_stake_is_a_percent_of_the_stock(columns, stake, named):
+    got = holder_stake(columns, several_classes=True)
+    assert (got["stake_pct"], got["share_class"]) == (stake, named)
+
+
+def test_two_headings_that_name_no_security_are_one_class():
+    """"Before the Offering" and "After the Offering" over "Number | Percent"
+    each: two groups, no security named anywhere — not two other securities."""
+    table = read_holder_table(_grouped(
+        [("", 1), ("Shares Beneficially Owned Before the Offering", 2),
+         ("Shares Beneficially Owned After the Offering", 2)],
+        ["Name of Beneficial Owner", "Number", "Percent", "Number", "Percent"],
+        ["Alpha Holdings LLC", "1,000", "30.0%", "1,000", "24.0%"]))
+    assert _named(table) == {"Alpha Holdings LLC": (30.0, None)}
+
+
+def test_the_class_cell_above_the_first_holders_is_no_heading_of_the_percent_column():
+    """Universal Display's "Common Stock" stands in the header rows, in the
+    class column: lent to the percent column as its heading it would follow
+    every later class ("Series A … Preferred Stock Common Stock Percentage")."""
+    from bs4 import BeautifulSoup
+    from app.scraper.proxy_statement import _holder_rows
+    soup = BeautifulSoup((FIXTURES / "universal_display_def14a_2026.html").read_text(), "lxml")
+    rows = {r["name"]: r for r in _holder_rows(soup.find("table"))}
+    [(heading, pct)] = rows["American Biomimetics Corporation"]["columns"]
+    assert pct == 100.0 and heading.startswith("Series A") and "Common" not in heading
+
+
+def test_a_section_heading_in_the_class_column_is_no_class_and_ends_no_holder():
+    """United States Antimony: "Directors and Executive Officers" stands in
+    the class column between two groups of rows. Read as a class it made the
+    next holder's row the second row of the holder above the heading — Edward
+    Robinson's 18.1 % of the Series C became 0.6 % of the common."""
+    html = ("<html><body><p>as of March 2, 2026</p><table>"
+            "<tr><td>Title of Class of Stock</td><td>Name and Address of Beneficial Owner</td>"
+            "<td>Amount and Nature of Beneficial Ownership</td><td>Percent of Class</td></tr>"
+            "<tr><td>Series C Preferred</td><td>Edward Robinson</td><td>32,203</td><td>18.1%</td></tr>"
+            "<tr><td>Directors and Executive Officers</td></tr>"
+            "<tr><td>Common Stock</td><td>Dr. Blaise Aguirre</td><td>8,879,854</td><td>6.0%</td></tr>"
+            "</table></body></html>")
+    assert _named(read_holder_table(html)) == {"Edward Robinson": (18.1, "Series C"),
+                                               "Dr. Blaise Aguirre": (6.0, "Common Stock")}
+
+
+def test_a_section_heading_does_not_become_the_class_of_the_rows_below_it():
+    """The class stands once above its holders (Universal Display's shape) and
+    a section heading follows in the same column: the holders below it are
+    still holders of that class, and of no class named after the heading."""
+    html = ("<html><body><p>as of March 2, 2026</p><table>"
+            "<tr><td>Title of Class</td><td>Name of Beneficial Owner</td>"
+            "<td>Number of Shares Beneficially Owned</td><td>Percentage Ownership</td></tr>"
+            "<tr><td>Common Stock</td></tr>"
+            "<tr><td></td><td>Alpha Holdings LLC</td><td>1,000</td><td>30.0%</td></tr>"
+            "<tr><td>Directors and Executive Officers</td></tr>"
+            "<tr><td></td><td>Beta Capital LP</td><td>200</td><td>6.0%</td></tr>"
+            "</table></body></html>")
+    assert _named(read_holder_table(html)) == {"Alpha Holdings LLC": (30.0, None), "Beta Capital LP": (6.0, None)}
