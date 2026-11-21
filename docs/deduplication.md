@@ -150,6 +150,31 @@ entries of a group carry an identity-verification day, the days differ in
 twice, the floor of this measure — in 3.7 % under two or three months, and in
 7.1 % under five or more.
 
+**What the two companies say** (`app/person_evidence.py`, step 3 of item 124).
+Under a common name two entries of one birth month are also linked when their
+two different companies
+
+- **share an owner or officer** — the same node, or two entries of one name and
+  birth month (the co-owner's own duplicates) — who is tied to at most 50
+  companies (a fund manager at both is no sign of one person);
+- **own one another**;
+- **share a registered office** (`address_normalized`) that is no agent's: not at
+  one of the 23,847 UK postcodes with more than 20 live companies
+  (`app/scraper/data/uk_mass_office_postcodes.txt`, from the Basic Company Data
+  of 2026-07-01 — 48 % of all UK companies sit at one), and not an address the
+  graph itself holds more than 20 entities at.
+
+Asked only for a pair whose birth dates agree, and only where it decides (not
+under a rare name). A company with more than 200 ties and a person tied to
+more than 50 companies are not read. Measured on the full register for the
+368,860 groups of a name with more than three birth months: this evidence
+joins 72,587 groups completely (20 %) and makes 246,566 merges. Against the
+identity-verification day, pairs it links differ in 0.93 % (a shared owner
+0.55 %, an ownership 0.74 %, an office 1.64 %) — under the floor of 1.80 %
+that pairs of a name with ONE birth month show, i.e. no measurable error. The
+merge log's reason names the evidence ("their companies share an owner or
+officer").
+
 **Evidence links two people, not a group.** One company shared by two of ten
 namesakes used to make the whole group "high". Now the members are joined
 pair by pair (`_components`): those a shared company links are emitted as a
