@@ -311,3 +311,67 @@ def test_a_split_that_could_not_be_read_leaves_the_title_part_out():
         ch.add_name_elements(None, [item], {})
     assert "name_elements" not in item
     assert ch.read_officer(item)["full_name"] == "Julie Merrick"
+
+
+# ── the history, and a term told from the one before it (findings item 121) ──
+
+@pytest.mark.parametrize("until, open_since, same_term", [
+    ("2026-09-30", "2014-10-16", True),       # resigned from the seat held since 2014
+    ("2005-07-29", "2010-01-01", False),      # an earlier term: Weldon at Penguin Books, 1997–2005
+    ("2010-01-01", "2010-01-01", True),       # resigned the day the open seat began: it touches
+    ("2009-12-31", "2010-01-01", False),
+    ("2005-07-29", None, True),               # an undated seat is any term's
+    ("2012-03-01", "2012-03", True),          # the seat's start at month precision
+])
+def test_a_resignation_ends_the_open_seat_only_when_it_is_that_seats_term(until, open_since, same_term):
+    assert ch.ends_open_seat({"until": until}, open_since) is same_term
+
+
+def test_with_the_history_resigned_people_with_a_title_part_are_asked_too():
+    from unittest.mock import patch
+    left = _titled("left", resigned_on="2020-01-01")
+    firm = {**_titled("firm"), "officer_role": "corporate-secretary", "resigned_on": "2020-01-01"}
+    with patch.object(ch, "fetch_name_elements", return_value=dict(SPLIT)) as fetch:
+        assert ch.add_name_elements(None, [left, firm], {}, history=True) == 1
+    assert [c.args[1] for c in fetch.call_args_list] == ["left"]
+    assert left["name_elements"] == SPLIT and "name_elements" not in firm
+
+
+def _dry(history):
+    from unittest.mock import patch
+
+    from app.config import settings
+    items = [_item(), _item(resigned_on="2020-01-01"), _item(resigned_on="2021-01-01"),
+             _item(officer_role="corporate-secretary", resigned_on="2019-01-01")]
+    with patch.object(settings, "COMPANIES_HOUSE_API_KEY", "k"), \
+         patch.object(ch, "companies_in_graph", return_value=[{"id": "gb-coh:1", "name": "A Ltd", "number": "1"}]), \
+         patch.object(ch, "fetch_officers", return_value=items), \
+         patch.object(ch, "write_company_officers", side_effect=AssertionError("write")):
+        return ch.run_ch_officers(dry_run=True, history=history)
+
+
+def test_a_dry_run_counts_the_past_seats_only_with_the_history():
+    assert (_dry(False)["past"], _dry(False)["resigned"]) == (0, 2)
+    out = _dry(True)
+    assert (out["written"], out["past"], out["resigned"], out["corporate"]) == (1, 2, 2, 1)
+
+
+def test_the_run_hands_the_history_to_the_names_and_the_writer():
+    from unittest.mock import patch
+
+    from app.config import settings
+    counts = {"written": 1, "ended": 0, "past": 3, "corporate": 0, "resigned": 3, "unreadable": 0}
+    for history in (False, True):
+        with patch.object(settings, "COMPANIES_HOUSE_API_KEY", "k"), \
+             patch("app.scraper.sources.get_source_enabled", return_value=True), \
+             patch.object(ch, "companies_in_graph", return_value=[{"id": "gb-coh:1", "name": "A Ltd", "number": "1"}]), \
+             patch.object(ch, "fetch_officers", return_value=[_item()]), \
+             patch.object(ch, "add_name_elements", return_value=0) as names, \
+             patch.object(ch, "write_company_officers", return_value=dict(counts)) as write, \
+             patch("app.scraper.run_log.record_run") as run, \
+             patch("app.scraper.graph_writer._ensure_source", return_value="ch-officers"):
+            row: dict = {}
+            run.return_value.__enter__.return_value = row
+            out = ch.run_ch_officers(history=history)
+        assert names.call_args.kwargs["history"] is history and write.call_args.kwargs["history"] is history
+        assert out["past"] == 3 and ("past seats (history)" in row["note"]) is history

@@ -162,7 +162,7 @@ def cmd_ch_officers(args):
     _apply_direct_db_url(args)
     from app.scraper.ch_officers import run_ch_officers
     only = [n for n in (args.company or "").split(",") if n.strip()] or None
-    res = run_ch_officers(only=only, limit=args.limit, dry_run=args.dry_run)
+    res = run_ch_officers(only=only, limit=args.limit, dry_run=args.dry_run, history=args.history)
     if res["status"] == "no_api_key":
         print("ch-officers reads the Companies House API: set COMPANIES_HOUSE_API_KEY "
               "(developer.company-information.service.gov.uk, a REST key of a live application)")
@@ -173,7 +173,10 @@ def cmd_ch_officers(args):
     verb = "would write" if args.dry_run else "wrote"
     print(f"Companies House officers: {res['read']} of {res['companies']} companies read "
           f"({res['unknown']} unknown to the register, {res['failed']} failed); {verb} {res['written']} seats, "
-          f"ended {res['ended']}; left out {res['resigned']} resigned, {res['corporate']} corporate, "
+          f"ended {res['ended']}; "
+          + (f"{verb} {res['past']} past seats of {res['resigned']} resigned officers; left out "
+             if args.history else f"left out {res['resigned']} resigned, ")
+          + f"{res['corporate']} corporate, "
           f"{res['unreadable']} unreadable; {res['names_asked']} names with a title part asked for their split")
     if res["failed"]:
         sys.exit(1)
@@ -1538,6 +1541,9 @@ def _build_parser():
     p_cho.add_argument('--company', help='Only these company numbers (comma-separated)')
     p_cho.add_argument('--limit', type=int, help='Only the first N companies (a trial run)')
     p_cho.add_argument('--dry-run', action='store_true', help='Read and count, write nothing')
+    p_cho.add_argument('--history', action='store_true',
+                       help='Also write every resigned person as a closed seat (appointed on to resigned on); '
+                            'off by default — the serving officers only')
     p_cho.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_cho.set_defaults(func=cmd_ch_officers)
