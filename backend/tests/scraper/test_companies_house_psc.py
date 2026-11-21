@@ -358,6 +358,26 @@ class TestPscFields:
         assert m.owner_props["search_text"] == "Jean Carol Randle"
         assert "description" not in m.owner_props        # absent, never '' (2026-10-25)
 
+    def test_a_verified_individual_carries_the_day_as_a_match_key(self):
+        """`identity_verified_on`, for the dedupe only (findings item 124):
+        the day and nothing else of the verification details — not the agent,
+        not the supervisory body, not the preferred name."""
+        def mapped(details):
+            rec = {"company_number": "01234567", "data": {
+                "kind": "individual-person-with-significant-control", "name": "Mrs Jean Carol Randle",
+                "name_elements": {"forename": "Jean", "surname": "Randle"},
+                "links": {"self": "/company/01234567/persons-with-significant-control/individual/abc"},
+                "natures_of_control": [], **({"identity_verification_details": details} if details else {})}}
+            return psc_record(rec, "src", 97).owner_props
+        props = mapped({"identity_verified_on": "2023-03-01T00:00:00Z", "preferred_name": "Jean Randle",
+                        "authorised_corporate_service_provider_name": "CONNELLY & CO. LIMITED ACSP",
+                        "appointment_verification_end_on": "9999-12-31T00:00:00Z"})
+        assert props["match_keys"] == ["v:2023-03-01"]
+        assert "CONNELLY" not in str(props) and "preferred" not in str(props)
+        # no day, no field — never an empty list
+        assert "match_keys" not in mapped(None)
+        assert "match_keys" not in mapped({"appointment_verification_start_on": "2025-12-23T00:00:00Z"})
+
     def test_birth_date(self):
         assert _birth_date({"date_of_birth": {"year": 1951, "month": 8}}) == "1951-08"
         assert _birth_date({"date_of_birth": {"year": 1951}}) == "1951"

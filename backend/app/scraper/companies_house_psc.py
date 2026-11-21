@@ -28,7 +28,7 @@ import zipfile
 from dataclasses import dataclass
 from typing import IO
 
-from app import addresses
+from app import addresses, person_keys
 from app.scraper.gleif_reference import (canonical_register_number,
                                           general_register_for_country, make_register_id,
                                           register_for_name, register_for_number_format,
@@ -537,12 +537,17 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
         name, first, last = parts
         owner_id, owner_label = psc_slug_id(self_link), "Person"
         nationality = _nationality(data.get("nationality"))
+        keys = person_keys.union([person_keys.verification_key(
+            (data.get("identity_verification_details") or {}).get("identity_verified_on"))])
         owner_props = {
             "first_name": first, "last_name": last, "full_name": name,
             "search_text": name,
             "birth_date": _birth_date(data),      # no description: absent, never ''
             # the list only when the record states one: an empty list is a blank
             "aliases": [], **({"nationalities": [nationality]} if nationality else {}),
+            # what tells this person from a namesake, for the dedupe only
+            # (app/person_keys.py); a record that states none adds no field
+            **({"match_keys": keys} if keys else {}),
             # The corporate branch passes it to `_entity`; this one built its
             # props without it, and 7 dev persons had no source (2026-10-25).
             "source_id": source_id,

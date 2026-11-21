@@ -175,6 +175,28 @@ that pairs of a name with ONE birth month show, i.e. no measurable error. The
 merge log's reason names the evidence ("their companies share an owner or
 officer").
 
+**What the register itself says: match keys** (`app/person_keys.py`, step 5 of
+item 124). A PSC record may state the day Companies House verified the
+person's identity (1,140,028 of the 14 million entries in October 2026; it is
+becoming mandatory). The import keeps the day — and nothing else of the
+verification details — as `Person.match_keys` token `v:<day>`, and two entries
+of one common name and birth month that share it are linked ("the same
+identity-verification day"). The 1.1 million verifications fall on about 307
+equally likely days, so of the common-name pairs it links about 0.002 % are
+expected to be two people. **A different day is no evidence and no veto**: one
+person is verified again when an agent files for them — the days differ in
+4.0 % of the groups of a name only one person bears. A merged person carries
+the keys of both entries, and a split gives each its own back. The keys are
+private to the dedupe (see `docs/data-model.md`).
+
+**The officer id as a bridge** (step 4, no code of its own). The register
+writes a person of significant control once per company statement, but links
+an OFFICER across companies by its own id (`choff:{id}`). Most owners are also
+directors of their company: each owner entry shares that company with the
+officer of the same name and birth month, and the chain of two shared
+companies makes the two entries and the officer one person. It works wherever
+`ch-officers` has read the companies.
+
 **Evidence links two people, not a group.** One company shared by two of ten
 namesakes used to make the whole group "high". Now the members are joined
 pair by pair (`_components`): those a shared company links are emitted as a

@@ -2007,6 +2007,21 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       (findings item 124, step 3). The 23,847 postcodes are a data file computed from the
       full company register; the graph count stays as the net for other countries. When a
       rule needs a population statistic, ask whether the development data can supply it.
+- [ ] **A property kept for one internal use is made unreadable where nodes become
+      responses, not at each route.** `Person.match_keys` holds what the dedupe tells
+      namesakes apart by. Two dozen reads hand a whole node to the client
+      (`dict(record["p"])`), and the first test of "no read serves it" found two that took
+      their rows another way — the search's SQL rows and the timeline's parties (findings
+      item 124, step 5). So it is dropped where a stored node becomes a dict
+      (`database.PRIVATE_PROPERTIES`, `public_props`), read only by a query that names it,
+      and a test walks every public GET route with the value planted. Before adding a
+      private field, find every way a node leaves the database — and let a walk, not a
+      list of routes you remembered, be the proof.
+- [ ] **Test what a signal means when it DISAGREES before using it as a veto.** Two register
+      entries with different identity-verification days looked like two people. Among
+      names only one person bears the days differ in 4 % of the groups — one person,
+      verified again by an agent. As a veto it would have held back one true merge in
+      twenty-five; as evidence when it AGREES it is wrong in 0.002 % (item 124, step 5).
 
 ## 9. Documentation
 

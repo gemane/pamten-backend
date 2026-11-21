@@ -241,6 +241,7 @@ _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     ("Entity", "source_statement_ids", "LIST"),
     # Person
     ("Person", "nationalities", "LIST"),
+    ("Person", "match_keys",    "LIST"),   # dedupe-only tokens (app/person_keys.py); never served
     # OWNS — the stake and the counts behind it
     ("OWNS", "stake_percent",      "DOUBLE"),
     ("OWNS", "voting_power_pct",   "DOUBLE"),

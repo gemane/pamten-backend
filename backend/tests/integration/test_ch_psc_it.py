@@ -22,6 +22,8 @@ def _psc_zip(tmp_path):
             "name_elements": {"forename": "Michael", "middle_name": "Charles",
                               "surname": "Saunders", "title": "Mr"},   # … and the parts
             "nationality": "British", "date_of_birth": {"year": 1951, "month": 8},
+            "identity_verification_details": {"identity_verified_on": "2023-03-01T00:00:00Z",
+                                              "preferred_name": "Michael Charles Saunders"},
             "natures_of_control": ["ownership-of-shares-75-to-100-percent",
                                    "voting-rights-75-to-100-percent"],
             "notified_on": "2016-04-06",
@@ -77,6 +79,10 @@ def test_imports_person_and_corporate_pscs(it_db, tmp_path):
     # dated by the snapshot (when the register said it), starting at the notification
     assert (person[0]["since"], person[0]["sd"]) == ("2016-04-06", "2026-10-16")
     assert person[0]["f"] == "Michael" and person[0]["l"] == "Saunders"
+    # the identity-verification day, kept as a dedupe-only key (findings item 124);
+    # the beneficial owner beside him states none and gets no field
+    keys = {r["n"]: r["k"] for r in it_db.run_command("MATCH (p:Person) RETURN p.full_name AS n, p.match_keys AS k")}
+    assert keys == {"Michael Charles Saunders": ["v:2023-03-01"], "Ana Perez": None}
     assert "Mr" not in person[0]["st"].split()
     assert not it_db.run_sql("SELECT FROM Person WHERE full_name LIKE 'Mr %'")
 
