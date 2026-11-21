@@ -1919,7 +1919,48 @@ its kind where the header gives no letter ("Common Stock", "Convertible
 Preferred Stock"), so the panel never adds a preferred-only holder to the
 holders of an unnamed class (LENSAR: 100 % of the Series A beside 8.4 and 5.1 %
 of the common); a one-class table names none, as the 13D/G holders of the same
-class carry none. A voting-power column
+class carry none.
+
+**What a percent column is a percent OF** (findings item 117). A column that
+names no security takes that of the shares column left of it (Molson Coors'
+"Class A Shares | Percent of class") — but only inside its own group: a percent
+under a heading that spans it is a percent of what that heading names. Units of
+the operating company under an Up-C or an UPREIT ("LLC Units", "Partnership
+Exchangeable Units", "OP Units") are a security of their own, and a heading the
+reader has no word for, beside a group it has one for, is another security
+named by its heading (Penguin Solutions' "Issued CPS"). Like a preferred,
+neither is the stake of a row that also states a percent of the stock, and
+either is kept, with its name, when it is all the row states. Read with the
+class of the group to the left, Malibu Boats' own 98.6 % of the LLC was 98.6 %
+of its Class A, SK Telecom's 100 % of Penguin's convertible preferred was
+100 % of the common, and 3G's 90.7 % of Restaurant Brands' exchangeable units
+was 90.7 % of the common shares.
+
+**A class named per row.** A "Title of Class" column names the class of each
+row instead: its cell stands beside the figures (Liberty Global, Lennar,
+Forward Air) or alone on a row above a group of holders (Universal Display:
+"Common Stock", then "Series A Nonconvertible Preferred Stock"). The class in
+force goes in front of the percent column's header, so the row is read as a
+table with a column per class is. Where a holder takes a row per class, the
+name cell goes on below the name with "c/o …", an address or a title: a row
+that brings a class the holder has no figure for yet continues that holder
+when it has no name, starts with "c/o" or a title, ends in "&" or a comma, or
+follows a row that already continued it. A NAME beside a new class is a new
+holder (Lennar: GAMCO on Class B right above Vanguard on Class A). Before,
+Liberty Global read as "c/o Liberty Global Ltd." 67.8 %, "Clarendon House"
+13.6 % and "Chairman, Chief Executive Officer &" 22.2 %; now John C. Malone
+holds 67.8 % of Class B. A "Title of Class" heading that spans the percent
+columns is a heading over a column per class, not a class column (Universal
+Health Services, LENSAR).
+
+**A percent that is no stake.** A nominee table states the votes each director
+got last year ("2025 AGM Votes in Favor (%)", NovaGold: every director at
+85–99 %); a section heading states a threshold ("More than 5% owners:"). Neither
+is a percent column.
+A section heading that stands in the class column, alone on its row
+("Directors and Executive Officers"), is no class either.
+
+A voting-power column
 is `voting_power_pct`; the table's **record date** ("Shares Beneficially Owned
 as of April 2, 2026" in the header, else "as of …" in the text before it) is
 the start, as a lower bound (`since_basis` first_reported) and `event_date`.

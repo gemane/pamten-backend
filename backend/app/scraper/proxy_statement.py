@@ -159,6 +159,26 @@ _VOTING = re.compile(r"voting\s+power", re.IGNORECASE)
 _VOTING_TOTAL = re.compile(r"total|aggregate|combined|all classes", re.IGNORECASE)
 _PERCENT = re.compile(r"percent|%", re.IGNORECASE)
 _OWNED = re.compile(r"beneficial|owned|ownership|outstanding|to be voted", re.IGNORECASE)
+#: a percent that is no percent of a class: the votes a director nominee got
+#: last year. NovaGold's nominee table ("Name, Province … | Age | … | 2025 AGM
+#: Votes in Favor (%) | Meets Share Ownership Guidelines") read as an ownership
+#: table gave every director 85–99 % of the company (findings item 117)
+#: … nor is a section heading that states a figure: "More than 5% owners:"
+#: stood in the class column of United States Antimony's table as a percent
+#: column of its own
+_NOT_A_STAKE = re.compile(r"votes?\s+(in\s+favou?r|for\b|cast\b|withheld)|\bAGM\b|\battendance\b"
+                          r"|\d\s*%", re.IGNORECASE)
+#: the column that names each row's class: "Title of Class", "Class of Stock"
+_CLASS_COLUMN = re.compile(r"\btitle\s+of\s+(class|securit)|\bclass\s+of\s+(stock|shares|securities)\b",
+                           re.IGNORECASE)
+#: what a name cell is when it continues the holder above it instead of naming
+#: a new one: "c/o Liberty Global Ltd.", "Clarendon House, 2 Church Street",
+#: "Executive Vice President &", "Director"
+_CONTINUES = re.compile(
+    r"^c/o\b|[&,]$|^(executive|senior|chief|vice|director|officer|president|chairman|chairwoman|chair"
+    r"|general\s+counsel|counsel|secretary|treasurer|founder)\b", re.IGNORECASE)
+#: a class cell that is one word: "Common", "Preferred" (Bancroft Fund)
+_BARE_KIND = re.compile(r"^(common|preferred|ordinary)$", re.IGNORECASE)
 # A second voting class named anywhere in the filing (findings item 47): all
 # six multi-class 2026 proxies probed say "Class B common stock" / "Class B
 # Stock"; none of the four single-class ones does.
@@ -355,21 +375,62 @@ def holder_name(text: str) -> str:
 def _holder_rows(table) -> list[dict] | None:
     """One ownership table → [{"name", "percents": [float…]}], every percent
     column read under its header; None when it is no ownership table (no name
-    column, no percent column, no ownership words in the header)."""
+    column, no percent column, no ownership words in the header).
+
+    A table may name the class per ROW instead of per column (findings item
+    117) — a "Title of Class" column whose cell stands beside each figure
+    (Liberty Global: one holder over three rows, Class A / B / C) or alone on
+    a row above a group of holders (Universal Display: "Common Stock", then
+    "Series A Nonconvertible Preferred Stock"). The class then goes in front
+    of the percent column's header, so a row is read as a table with a column
+    per class is. In the first shape the name cell goes on below the name
+    with an address or a title; a row that brings a class the holder has no
+    figure for yet is the holder's next row, not a new holder."""
     grid = _grid(table)
     first = _first_data_row(grid)
     if first is None:
         return None
     header = [c for row in grid[:first] for c in row]
     names = [c for c in header if _NAME_HEADER.search(c[2])]
-    percents = [c for c in header if _PERCENT.search(c[2])]
+    percents = [c for c in header if _PERCENT.search(c[2]) and not _NOT_A_STAKE.search(c[2])]
     if not names or not percents or not _OWNED.search(" ".join(c[2] for c in header)):
         return None
     name_col = names[0]
+    # a column of its own: "Title of Class" spanning the percent columns is a
+    # heading over a column per class (Universal Health Services, LENSAR)
+    class_col = next((c for c in header if _CLASS_COLUMN.search(c[2]) and c is not name_col
+                      and not _PERCENT.search(c[2]) and not any(_overlaps(c, p) for p in percents)), None)
+
+    def row_class(row) -> str | None:
+        if class_col is None:
+            return None
+        text = next((c[2] for c in row if _overlaps(c, class_col) and c is not class_col
+                     and not _VALUE.match(c[2]) and not _overlaps(c, name_col)), None)
+        if text is None or _security(text):
+            return text
+        if _BARE_KIND.match(text.strip()):
+            return f"{text} Stock"
+        # alone on its row and no security the reader knows: a section heading
+        # standing in the class column ("Directors and Executive Officers:",
+        # United States Antimony), not a class
+        if not any(c[0] >= name_col[1] and _VALUE.match(c[2]) for c in row):
+            return None
+        # beside figures, a class the reader has no word for is still a class
+        return f"{_OTHER_SECURITY}: {text} |"
+
+    # the class column's own cells are no heading of the percent columns
+    above = [c for c in header if class_col is None or not _overlaps(c, class_col)]
+    headers = {col: _column_header(above, col) for col in percents}
+    securities = {_security(headers[c]) for c in percents if not _VOTING.search(c[2])}
+    if class_col is not None:
+        securities |= {t if t.startswith(_OTHER_SECURITY) else _security(t)
+                       for t in (row_class(r) for r in grid) if t}
     # a table with a column per security (Class A beside Class B, common
     # beside a preferred series) names the security on every row it writes
-    securities = {_security(_column_header(header, c)) for c in percents if not _VOTING.search(c[2])}
     several = len(securities - {None}) > 1
+    # the class in force: a class cell in the header rows (Universal Display's
+    # "Common Stock" stands above the first holder), then each one met
+    in_force = next((t for r in grid[:first] for t in [row_class(r)] if t), None)
     rows: list[dict] = []
     current: dict | None = None
     for row in grid[first:]:
@@ -377,22 +438,43 @@ def _holder_rows(table) -> list[dict] | None:
             continue
         name_cell = next((c for c in row if _overlaps(c, name_col) and not _VALUE.match(c[2])), None)
         has_data = any(c[0] >= name_col[1] and _VALUE.match(c[2]) for c in row)
-        if name_cell is not None:
+        here = row_class(row)
+        if here:
+            in_force = here
+        # … once a row has continued the holder (no name, "c/o …", a title),
+        # whatever the name cell goes on with below is the same holder's
+        # ("Clarendon House, 2 Church Street" under "c/o Liberty Global Ltd.")
+        continues = (here is not None and current is not None and here not in current["classes"]
+                     and (name_cell is None or current["chain"] or bool(_CONTINUES.search(name_cell[2]))))
+        if continues:
+            current["chain"] = True
+        if name_cell is not None and not continues:
             name = holder_name(name_cell[2])
             if not name or _NOT_AN_OWNER.search(name) or not has_data:
                 current = None
                 continue
             current = {"name": name, "percents": [], "raw": _clean_name(name_cell[2]),
-                       "several_classes": several}
+                       "several_classes": several, "classes": set(), "chain": False}
             rows.append(current)
         if current is not None:
+            if here:
+                current["classes"].add(here)
             for col in percents:
                 cells = [c[2] for c in row if c[0] >= name_col[1] and _overlaps(c, col)]
                 pct = _parse_pct(" ".join(cells))[0] if cells else None
                 if pct is not None:
                     current["percents"].append(pct)
-                    current.setdefault("columns", []).append((_column_header(header, col), pct))
+                    head = f"{in_force} {headers[col]}" if in_force else headers[col]
+                    current.setdefault("columns", []).append((head, pct))
+    for r in rows:
+        r.pop("classes", None)
+        r.pop("chain", None)
     return rows
+
+
+#: how `_column_header` and a class cell mark a security the reader has no
+#: word for: "Other security: <its heading> | <the column's own header>"
+_OTHER_SECURITY = "Other security"
 
 
 def _column_header(header: list, column: tuple[int, int, str]) -> str:
@@ -401,12 +483,26 @@ def _column_header(header: list, column: tuple[int, int, str]) -> str:
     A header that names no security takes that of the shares column left of
     it: Molson Coors' "Class A Shares | Percent of class (%)", QXO's "Shares of
     Convertible Preferred Stock Beneficially Owned | Percentage of Class
-    Outstanding" (findings item 116)."""
-    text = " ".join(c[2] for c in header if _overlaps(c, column))
+    Outstanding" (findings item 116).
+
+    Only inside its own group, though (findings item 117). A percent column
+    under a heading that spans it — Penguin Solutions' "Issued CPS" over
+    "Amount | Percentage of Shares Beneficially Owned", beside "Common Stock"
+    over the same pair — is a percent of what THAT heading names: read with
+    the class of the group left of it, SK Telecom's 100 % of the convertible
+    preferred was 100 % of the common. A heading the reader has no word for is
+    marked as another security, which `holder_stake` keeps apart."""
+    above = [c for c in header if _overlaps(c, column)]
+    text = " ".join(c[2] for c in above)
     if _security(text):
         return text
-    left = [c for c in header if c[1] <= column[0] and _security(c[2])]
-    return f"{max(left, key=lambda c: c[1])[2]} {text}" if left else text
+    group = min((c for c in above if c[0] < column[0]), key=lambda c: c[0], default=None)
+    left = [c for c in header if c[1] <= column[0] and _security(c[2])
+            and (group is None or c[0] >= group[0])]
+    if left:
+        return f"{max(left, key=lambda c: c[1])[2]} {text}"
+    named_elsewhere = any(_security(c[2]) for c in header if c[1] <= (group or column)[0])
+    return f"{_OTHER_SECURITY}: {group[2]} | {text}" if group is not None and named_elsewhere else text
 
 
 def read_holder_rows(html: str) -> list[dict]:
@@ -502,22 +598,37 @@ def _share_class(header: str) -> str | None:
 #: (Victory Capital: Amundi's 27.8 %, beside 4.9 % of the common), "Total
 #: Shares of Voting Stock" (Arbor Realty)
 _SECURITY_KIND = re.compile(
-    r"\b((?:convertible\s+)?preferred|common|ordinary|capital|voting)\s+(stock|shares|units)\b", re.IGNORECASE)
+    r"\b((?:convertible\s+)?preferred|common|ordinary|capital|voting)\s+(stock|shares|units)\b"
+    # units of the operating company under an Up-C or an UPREIT, exchangeable
+    # for the issuer's shares: "LLC Units" (Malibu Boats), "Partnership
+    # Exchangeable Units" (Restaurant Brands), "OP Units" (findings item 117)
+    r"|\b(?:(?:llc|op|lp|ltip|partnership|membership|exchangeable|operating|holdco|opco)\s+)+units\b",
+    re.IGNORECASE)
 _PREFERRED = re.compile(r"\bpreferred\b", re.IGNORECASE)
+_UNITS = re.compile(r"\b(?:llc|op|lp|ltip|partnership|membership|exchangeable|operating|holdco|opco)\s+units\b",
+                    re.IGNORECASE)
 _COMMON = re.compile(r"\b(common|ordinary)\b", re.IGNORECASE)
 
 
 def _security(header: str | None) -> str | None:
     """The security a header names — its class ("Class B", "Series A"), else
     its kind ("Common Stock", "Convertible Preferred Stock") — or None."""
-    named = _share_class(header or "")
+    header = header or ""
+    if header.startswith(_OTHER_SECURITY):          # named as its heading names it: "Issued CPS"
+        return holder_name(header[len(_OTHER_SECURITY) + 1:].split("|")[0]) or _OTHER_SECURITY
+    named = _share_class(header)
     if named:
         return named
-    m = _SECURITY_KIND.search(header or "")
+    m = _SECURITY_KIND.search(header)
     return re.sub(r"\s+", " ", m.group(0)).title() if m else None
 
 
 def _is_preferred(header: str) -> bool:
+    """A column that is not a percent of the issuer's stock: a preferred
+    class, units of the operating company, a security the header has no word
+    the reader knows for (findings items 116 and 117)."""
+    if header.startswith(_OTHER_SECURITY) or _UNITS.search(header):
+        return True
     return bool(_PREFERRED.search(header)) and not _COMMON.search(header)
 
 
