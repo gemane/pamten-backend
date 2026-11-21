@@ -23,7 +23,8 @@ router = APIRouter(prefix="/search", tags=["Search"])
 
 def _clean(row: dict) -> dict:
     """Drop ArcadeDB's @rid/@type/@cat metadata keys from a raw SQL row."""
-    return {k: v for k, v in row.items() if not k.startswith("@")}
+    from app.database import public_props
+    return public_props(row)
 
 
 def _same_words(a: str, b: str) -> bool:

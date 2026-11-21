@@ -10,7 +10,7 @@ from app.models.relationship import (
     RelatedToCreate,
     DualListedCreate,
 )
-from app.database import db
+from app.database import db, public_props
 from app.db.anchors import node_label
 from app import suppressions
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
@@ -51,7 +51,7 @@ def _strip_meta(doc) -> dict:
     """Drop ArcadeDB's @rid/@type/@cat metadata keys from a returned document."""
     if not isinstance(doc, dict):
         return doc
-    return {k: v for k, v in doc.items() if not k.startswith("@")}
+    return public_props(doc)
 
 
 def _now_iso() -> str:
@@ -688,7 +688,7 @@ def _nodes_by_id(ids: set[str]) -> dict[str, dict]:
         return out
     for label in ("Entity", "Person"):
         for r in run_sql(f"SELECT FROM {label} WHERE id IN :ids", {"ids": sorted(ids)}):
-            out[r["id"]] = {k: v for k, v in r.items() if not k.startswith("@")}
+            out[r["id"]] = public_props(r)
     return out
 
 

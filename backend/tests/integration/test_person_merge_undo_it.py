@@ -415,3 +415,18 @@ def test_a_link_the_merge_dropped_is_drawn_again_whatever_was_removed(it_db):
     after = [e for e in merge_undo.picture("choff:dup")["edges"] if e["type"] == "RELATED_TO"]
     assert len(before) == 1 and [(e["other"], e["props"]) for e in after] == [("p-keep", before[0]["props"])]
     assert report["held_back"] == []
+
+
+def test_a_split_gives_each_person_its_own_match_keys_back(it_db):
+    """The merged person carries the keys of both entries (findings item 124);
+    split again, each has its own."""
+    from app.db.arcadedb import run_sql
+    _two_people(it_db)
+    run_sql("UPDATE Person SET match_keys = ['v:2026-01-05'] WHERE id = 'p-keep'")
+    run_sql("UPDATE Person SET match_keys = ['v:2026-07-19'] WHERE id = 'choff:dup'")
+    keep, dup = _state("p-keep"), _state("choff:dup")
+    merge_person_records("p-keep", "choff:dup")
+    assert _state("p-keep")["node"]["match_keys"] == ["v:2026-01-05", "v:2026-07-19"]
+    undo_merge(_snapshot_id(), _=_USER)
+    assert _state("p-keep") == keep and _state("choff:dup") == dup
+    assert keep["node"]["match_keys"] == ["v:2026-01-05"] and dup["node"]["match_keys"] == ["v:2026-07-19"]

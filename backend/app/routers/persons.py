@@ -3,7 +3,7 @@ from app.models.person import PersonCreate, PersonResponse, PersonMergeRequest, 
 from app.generations import generation_marks, marks_conflict
 from app.auth.dependencies import require_contributor
 from app.database import db
-from app import suppressions
+from app import person_keys, suppressions
 from app.db.arcadedb import run_sql
 from app.merged_ids import record_merge, resolve_current_id
 from app.claims import migrate_claims
@@ -155,7 +155,8 @@ _PERSON_RETURN = (
     "RETURN p.id AS id, p.full_name AS full_name, p.wikidata_id AS wikidata_id, "
     "p.sec_cik AS sec_cik, "
     "p.birth_date AS birth_date, p.birth_place AS birth_place, p.birth_country AS birth_country, "
-    "p.first_name AS first_name, p.last_name AS last_name, p.aliases AS aliases"
+    "p.first_name AS first_name, p.last_name AS last_name, p.aliases AS aliases, "
+    "p.match_keys AS match_keys"
 )
 
 
@@ -165,7 +166,15 @@ def _person_row(r) -> dict:
             "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place"),
             "birth_country": r.get("birth_country"),
             "first_name": r.get("first_name"), "last_name": r.get("last_name"),
-            "aliases": r.get("aliases") or []}
+            "aliases": r.get("aliases") or [],
+            # dedupe-only (app/person_keys.py): read for the scan, never handed out
+            "match_keys": r.get("match_keys") or []}
+
+
+def _member(m: dict, connected: int) -> dict:
+    """A scanned person as a group lists it: without the match keys, which no
+    response carries."""
+    return {**{k: v for k, v in m.items() if k != "match_keys"}, "connected": connected}
 
 
 def _all_persons(session) -> list[dict]:
@@ -498,7 +507,7 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                     "confidence": "low", "likely_distinct": True,
                     "reason": ", ".join([base_reason, distinct_by]),
                     "suggested_keep_id": members[0]["id"],
-                    "members": [{**m, "connected": len(ent[i])}
+                    "members": [_member(m, len(ent[i]))
                                 for i, m in enumerate(members)],
                 })
                 return
@@ -534,7 +543,10 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                 if name_months <= settings.PERSON_RARE_NAME_MONTHS \
                         or births_compare(members[i]["birth_date"], members[j]["birth_date"]) != "same":
                     return False
-                why = side.link(members[i]["id"], members[j]["id"])
+                # a key the register gave both entries (the same identity-
+                # verification day), else what their two companies say
+                why = person_keys.shared_evidence(members[i]["match_keys"], members[j]["match_keys"]) \
+                    or side.link(members[i]["id"], members[j]["id"])
                 if why:
                     side_evidence.add(why)
                 return bool(why)
@@ -572,7 +584,7 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                     "confidence": "high", "likely_distinct": False,
                     "reason": ", ".join(reasons),
                     "suggested_keep_id": members[keep_order[0]]["id"],
-                    "members": [{**m, "connected": len(ent[i])} for i, m in enumerate(members)],
+                    "members": [_member(m, len(ent[i])) for i, m in enumerate(members)],
                 })
                 return
 
@@ -639,7 +651,7 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                 "likely_distinct": likely_distinct,
                 "reason": ", ".join(reasons),
                 "suggested_keep_id": members[idx[0]]["id"],
-                "members": [{**m, "connected": len(ent[i])} for i, m in enumerate(members)],
+                "members": [_member(m, len(ent[i])) for i, m in enumerate(members)],
             })
 
         # A shared SEC CIK is a hard identifier — the SEC assigns one per filer,
@@ -970,6 +982,9 @@ def merge_person_records(keep: str, dup: str, reason: str | None = None) -> str:
         from app.scraper.maintenance import _migrate_membership
         _migrate_membership(dup, keep, "Person")
 
+        # asked for by name: a node read whole does not carry them (database.PRIVATE_PROPERTIES)
+        match_keys = [r.get("keys") for r in session.run(
+            "MATCH (p:Person) WHERE p.id = $keep OR p.id = $dup RETURN p.match_keys AS keys", keep=keep, dup=dup)]
         # Backfill blank bio fields on the kept person from the duplicate's values.
         bio_set = ", ".join(f"keep.{p} = COALESCE(keep.{p}, ${p})" for p in BIO_COALESCE)
         session.run(f"""
@@ -978,6 +993,7 @@ def merge_person_records(keep: str, dup: str, reason: str | None = None) -> str:
                 keep.description   = CASE WHEN COALESCE(keep.description, '') = '' THEN $description ELSE keep.description END,
                 keep.aliases       = $alias,
                 keep.nationalities = CASE WHEN size(COALESCE(keep.nationalities, [])) > 0 THEN keep.nationalities ELSE $nationalities END,
+                keep.match_keys    = $match_keys,
                 keep.birth_country = $birth_country,
                 keep.created_at    = $created_at
         """, keep=keep,
@@ -986,6 +1002,8 @@ def merge_person_records(keep: str, dup: str, reason: str | None = None) -> str:
              description=dup_node.get("description") or None,   # absent, never ''
              alias=alias_union,
              nationalities=dup_node.get("nationalities") or None,   # absent, never []
+             # the merged person is every entry it was made of (app/person_keys.py)
+             match_keys=person_keys.union(*match_keys),
              **{p: dup_node.get(p) for p in BIO_COALESCE})
 
         # The two dates are one birth date told at two precisions (the register's

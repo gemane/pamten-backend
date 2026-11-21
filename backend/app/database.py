@@ -68,6 +68,23 @@ def _wrap(value):
     return value
 
 
+#: Properties a node read as a whole never carries: kept for one internal use
+#: and for no response. `Person.match_keys` (app/person_keys.py) is what the
+#: person dedupe tells namesakes apart by — an identity-verification day, a
+#: hashed postcode — and two dozen reads hand a whole node to the client
+#: (`dict(record["p"])`). Dropped here, where a node becomes a dict, the
+#: property reaches only the code that asks for it by name
+#: (`RETURN p.match_keys AS match_keys`).
+PRIVATE_PROPERTIES = frozenset({"match_keys"})
+
+
+def public_props(row: dict) -> dict:
+    """A stored row as a response may carry it: without ArcadeDB's `@…`
+    metadata and without the private properties. For the reads that take rows
+    straight from SQL — the wrappers below do the same for Cypher's nodes."""
+    return {k: v for k, v in row.items() if not k.startswith("@") and k not in PRIVATE_PROPERTIES}
+
+
 class _NodeWrapper:
     """
     Wraps an ArcadeDB vertex or edge dict.
@@ -75,7 +92,7 @@ class _NodeWrapper:
     """
 
     def __init__(self, data: dict):
-        self._data = {k: v for k, v in data.items() if not k.startswith("@")}
+        self._data = public_props(data)
 
     # dict(wrapper) calls keys() then __getitem__
     def keys(self):
