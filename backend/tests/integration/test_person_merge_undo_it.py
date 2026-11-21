@@ -209,7 +209,7 @@ def test_the_scan_does_not_merge_the_two_again(it_db):
     it_db.run_command("CREATE (:Person {id: 'choff:b', full_name: 'Mark Stephen Jones', birth_date: '1959-11'})")
     assert deduplicate_high_confidence(apply=True)["merged_count"] == 1
     entry = merge_log(limit=10, _=_USER)["entries"][0]
-    assert entry["reason"].endswith("same birth month")
+    assert entry["reason"].endswith("same birth month, a rare name")
     undo_merge(entry["snapshot_id"], _=_USER)
     again = deduplicate_high_confidence(apply=True)
     assert again["merged_count"] == 0
