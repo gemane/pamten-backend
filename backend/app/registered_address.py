@@ -25,6 +25,7 @@ geocoding notes), so the split stays visible rather than guessed away.
 from __future__ import annotations
 
 from app.addresses import REGISTERED, field
+from app.database import public_props
 from app.scraper.mapper import normalize_address
 
 #: the stored key and readable address of the registered office
@@ -68,7 +69,8 @@ def _page(session, key: str, hidden: set, exclude: str | None, limit: int, offse
     rows = session.run(
         f"MATCH (e:Entity {{{KEY}: $k}}) RETURN e ORDER BY e.name, e.id "
         f"SKIP {int(offset)} LIMIT {int(limit) + len(skip)}", k=key)
-    out = [dict(r["e"]) for r in rows]
+    # as every public read of a node: without the properties kept for matching only
+    out = [public_props(dict(r["e"])) for r in rows]
     return [e for e in out if e.get("id") not in skip][:limit]
 
 
