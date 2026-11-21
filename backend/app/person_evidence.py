@@ -11,7 +11,7 @@ of significant control — but the two companies say something:
   verification day, the cleanest evidence there is: of 173,756 such pairs with
   two verified entries 0.05 % differ in the day, against a floor of about 1 %;
 - **one company owns the other**;
-- **the same registered office** — unless the office is an agent's: 48 % of the
+- **the same registered office** (its matching key) — unless the office is an agent's: 48 % of the
   5.6 million UK companies sit at one of 23,847 postcodes with more than 20
   companies each (`uk_mass_office_postcodes.txt`), and two namesakes can both
   be clients of one accountant.
@@ -27,6 +27,8 @@ from __future__ import annotations
 import functools
 import pathlib
 
+from app import addresses
+
 #: entities at one registered address in the graph above which it is an agent's
 MASS_OFFICE_ENTITIES = 20
 #: a shared owner or officer tied to more companies than this is an institution
@@ -36,6 +38,10 @@ CO_OWNER_MAX_COMPANIES = 50
 COMPANY_MAX_TIES = 200
 #: a person tied to more companies than this is not read at all (a nominee)
 PERSON_MAX_COMPANIES = 50
+
+#: the registered office's matching key and postcode, as the address registry names them
+_OFFICE_KEY = addresses.field(addresses.REGISTERED, "key")
+_OFFICE_POSTCODE = addresses.field(addresses.REGISTERED, "postcode")
 
 CO_OWNER = "their companies share an owner or officer"
 OWNS_OTHER = "one of their companies owns the other"
@@ -78,7 +84,7 @@ class CompanySide:
         out: dict = {}
         rows = list(self.session.run(
             "MATCH (x:Person {id: $id})-[]-(e:Entity) RETURN DISTINCT e.id AS id, "
-            "e.address_normalized AS office, e.reg_postcode AS postcode", id=pid))
+            f"e.{_OFFICE_KEY} AS office, e.{_OFFICE_POSTCODE} AS postcode", id=pid))
         for row in rows if len(rows) <= PERSON_MAX_COMPANIES else []:
             ties = list(self.session.run(
                 "MATCH (e:Entity {id: $eid})-[r:OWNS|HAS_ROLE]-(o) RETURN o.id AS id, o.full_name AS full_name, "
@@ -109,7 +115,7 @@ class CompanySide:
         if office not in self._at_office:
             from app.db.arcadedb import run_sql
             self._at_office[office] = int((run_sql(
-                "SELECT count(*) AS n FROM Entity WHERE address_normalized = :a", {"a": office}) or [{}])[0].get("n") or 0)
+                f"SELECT count(*) AS n FROM Entity WHERE {_OFFICE_KEY} = :a", {"a": office}) or [{}])[0].get("n") or 0)
         return self._at_office[office] > MASS_OFFICE_ENTITIES
 
     def _tied_to(self, node: tuple) -> int:
