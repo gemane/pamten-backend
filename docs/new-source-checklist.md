@@ -1999,6 +1999,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       And check the yardstick before trusting it: the register's identity-verification day
       looked like proof of two people when it differed, and differs in 4 % of the groups of
       a name only one person bears.
+- [ ] **A list the subset cannot compute is shipped, with its source and date.** "The same
+      registered office" is evidence that two namesakes are one person — unless the office
+      is a formation agent's, and half of all UK companies sit at one. Counting companies
+      per address in the graph finds those on a full import and none on dev's 281 UK
+      companies, so the rule would have been safe in production and wrong in every test
+      (findings item 124, step 3). The 23,847 postcodes are a data file computed from the
+      full company register; the graph count stays as the net for other countries. When a
+      rule needs a population statistic, ask whether the development data can supply it.
 
 ## 9. Documentation
 

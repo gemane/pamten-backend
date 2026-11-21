@@ -445,6 +445,8 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
         groups: list[dict] = []
         seen: set[frozenset] = set()
         _ent_cache: dict[str, set] = {}
+        from app.person_evidence import CompanySide
+        side = CompanySide(session)
 
         def _entities(pid: str) -> set:
             if pid not in _ent_cache:
@@ -519,7 +521,24 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
             # Who is linked to whom by a fact about the two of them. Where that
             # does not join the whole group, the joined members are a group of
             # their own — unless a full birth date already makes the group one.
-            linked_sets = _components(len(members), lambda i, j: bool(ent[i] & ent[j]))
+            # A shared company links any two; what the two COMPANIES say
+            # (`person_evidence`: a shared owner, an ownership, one registered
+            # office) links two whose birth dates agree — beside the month,
+            # never in its place.
+            side_evidence: set = set()
+
+            def _linked(i: int, j: int) -> bool:
+                if ent[i] & ent[j]:
+                    return True
+                # only where it decides: under a rare name the month does already
+                if name_months <= settings.PERSON_RARE_NAME_MONTHS \
+                        or births_compare(members[i]["birth_date"], members[j]["birth_date"]) != "same":
+                    return False
+                why = side.link(members[i]["id"], members[j]["id"])
+                if why:
+                    side_evidence.add(why)
+                return bool(why)
+            linked_sets = _components(len(members), _linked)
             linked = len(linked_sets) == 1
             if not linked and not hard_id and not variant and (month_only or not shared_birth):
                 for idx in linked_sets:
@@ -537,6 +556,8 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                 # the merge log keeps this line: a month is thirty times weaker
                 # than a day, and says so
                 reasons.append("same birth month" if month_only else "same birth date")
+            if linked:
+                reasons.extend(sorted(side_evidence))
 
             # keep: prefer a Wikidata node, then most-connected, then shortest name
             keep_order = sorted(range(len(members)),
