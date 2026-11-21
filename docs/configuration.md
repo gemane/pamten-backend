@@ -45,6 +45,7 @@ Every environment variable the backend reads (`app/config.py`). A local `.env` n
 | `SCRAPER_AUTODEDUP_ENABLED` | `true` | Auto-merge high-confidence duplicate persons after each `run-all` scrape |
 | `PERSON_RARE_NAME_MONTHS` | `3` | A name whose bearers span at most this many birth months merges on a shared birth month alone; a commoner name needs a second fact (see [Duplicate persons](deduplication.md#duplicate-persons)) |
 | `PERSON_FULL_SCAN_MAX` | `200000` | Persons a full duplicate scan may load; above it the scan is refused and the scoped one (`dedupe-persons --scraped-only`) is used |
+| `PERSON_POSTCODE_HASH_KEY` | — | **Secret, env only.** Keys the hash of a PSC's correspondence postcode that the person dedupe compares (`app/person_keys.py`). Empty = no hash is stored. A long random string (`python -c "import secrets; print(secrets.token_urlsafe(48))"`); set it BEFORE the PSC import, keep it for the life of the database — a changed key matches no old hash |
 | `FEDERATION_ENABLED` | `false` | Enable trusted-peer federation (publish/pull) |
 | `FEDERATION_SIGNING_KEY` | — | Ed25519 private seed (base64) for signing exports; generate with `manage.py gen-federation-key`. Secret — env only |
 | `OPENCORPORATES_API_KEY` | — | OpenCorporates API token (optional) |

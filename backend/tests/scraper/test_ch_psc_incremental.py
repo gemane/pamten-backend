@@ -103,6 +103,21 @@ class TestWhatMovesTheDigest:
         # The whole reason the digest is a projection rather than the line.
         assert record_digest(record(data={field: value})) == record_digest(record())
 
+    def test_the_identity_verification_day_moves_it_and_the_rest_of_those_details_do_not(self):
+        """The day is what the import keeps (a dedupe key, findings item 124):
+        a record that gains one has to reach the refresh. The agent, the
+        statement dates and the preferred name are still nothing the graph
+        stores."""
+        plain = record_digest(record())
+        day = {"identity_verified_on": "2023-03-01T00:00:00Z"}
+        assert record_digest(record(data={"identity_verification_details": day})) != plain
+        assert record_digest(record(data={"identity_verification_details": {
+            **day, "preferred_name": "A", "appointment_verification_start_on": "2025-12-23T00:00:00Z"}})) == \
+            record_digest(record(data={"identity_verification_details": day}))
+        assert record_digest(record(data={"identity_verification_details": {
+            "identity_verified_on": "2024-05-05T00:00:00Z"}})) != \
+            record_digest(record(data={"identity_verification_details": day}))
+
     def test_key_order_does_not(self):
         a = record()
         b = {"data": dict(reversed(list(a["data"].items()))), "company_number": a["company_number"]}

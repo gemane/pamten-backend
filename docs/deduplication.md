@@ -189,6 +189,24 @@ person is verified again when an agent files for them — the days differ in
 the keys of both entries, and a split gives each its own back. The keys are
 private to the dedupe (see `docs/data-model.md`).
 
+The second key is the **correspondence postcode, as a keyed hash** (step 6;
+decided by the user on 2026-11-21, the lawyer's view still to be asked):
+`p:<16 hex>`, HMAC-SHA-256 of the postcode under `PERSON_POSTCODE_HASH_KEY`.
+The readable postcode is not stored — the graph holds no address of a person.
+Two entries of one common name and birth month at one postcode are linked
+("the same correspondence postcode"). Measured on the full register: name,
+birth month and postcode make 1.6 million merges with at least 175 expected
+wrong; of the 316,956 groups of a name with five or more birth months the
+postcode joins 90,868 completely, and with the company-side evidence 121,238
+(38 %). Against the verification day the pairs it links differ in 0.9 % (floor
+1.8 %). **No key for an agent's postcode**: the 574 postcodes more than 1,000
+people give (`app/scraper/data/uk_mass_person_postcodes.txt`) hold 2.0 of the
+13.9 million entries with a postcode, and two namesakes can share a formation
+agent. **No hash without the key setting.** The hash is made at import, so a
+graph loaded before the key was set gets its postcode keys at the next full
+PSC import; changing the key makes old and new hashes strangers to each other
+(re-import, do not rotate casually).
+
 **The officer id as a bridge** (step 4, no code of its own). The register
 writes a person of significant control once per company statement, but links
 an OFFICER across companies by its own id (`choff:{id}`). Most owners are also

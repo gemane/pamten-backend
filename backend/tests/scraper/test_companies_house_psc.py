@@ -378,6 +378,32 @@ class TestPscFields:
         assert "match_keys" not in mapped(None)
         assert "match_keys" not in mapped({"appointment_verification_start_on": "2025-12-23T00:00:00Z"})
 
+    def test_the_correspondence_postcode_is_kept_as_a_keyed_hash_and_only_with_the_key(self):
+        """Step 6 of item 124: the hash is the only thing of the address the
+        person keeps — and nothing without `PERSON_POSTCODE_HASH_KEY`."""
+        from unittest.mock import patch
+
+        from app import person_keys
+        from app.config import settings
+        rec = {"company_number": "01234567", "data": {
+            "kind": "individual-person-with-significant-control", "name": "Mrs Jean Carol Randle",
+            "name_elements": {"forename": "Jean", "surname": "Randle"},
+            "address": {"premises": "Alvenga", "address_line_1": "Godmans Lane", "locality": "Hull",
+                        "postal_code": "HU10 7NY"},
+            "identity_verification_details": {"identity_verified_on": "2023-03-01T00:00:00Z"},
+            "links": {"self": "/company/01234567/persons-with-significant-control/individual/abc"},
+            "natures_of_control": []}}
+        with patch.object(settings, "PERSON_POSTCODE_HASH_KEY", "a-test-key-of-reasonable-length"):
+            props = psc_record(rec, "src", 97).owner_props
+            hashed = person_keys.postcode_key("HU10 7NY", "a-test-key-of-reasonable-length")
+            assert props["match_keys"] == sorted([hashed, "v:2023-03-01"])
+            for part in ("HU10", "Godmans", "Alvenga", "Hull"):
+                assert part not in str(props)                       # no address on a person
+            rec["data"]["address"]["postal_code"] = "WC2H 9JQ"      # an agent's: no key
+            assert psc_record(rec, "src", 97).owner_props["match_keys"] == ["v:2023-03-01"]
+        with patch.object(settings, "PERSON_POSTCODE_HASH_KEY", ""):
+            assert psc_record(rec, "src", 97).owner_props["match_keys"] == ["v:2023-03-01"]
+
     def test_birth_date(self):
         assert _birth_date({"date_of_birth": {"year": 1951, "month": 8}}) == "1951-08"
         assert _birth_date({"date_of_birth": {"year": 1951}}) == "1951"
