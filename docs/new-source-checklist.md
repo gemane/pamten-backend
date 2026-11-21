@@ -1961,6 +1961,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       reaches a source must be off in every test by default (`_no_source_probes` in
       `tests/conftest.py`): the integration suite calls a plain `alerts.collect()`, and
       the first CI run of the probes sent twelve real requests and failed on them.
+- [ ] **List every form that carries the fact, not the two you met first.** The insider
+      window read Forms 3 and 4; Form 5, the annual statement in the same XML, is the only
+      filing some directors ever make about an issuer, and they had no seat (WesBanco,
+      findings item 119). When a source has a family of forms for one fact (3/4/5, 13D/13G,
+      10-K/20-F/40-F), read the form list from the source's own documentation and name the
+      set once, in one constant — the form tuple stood in three places here.
 
 ## 9. Documentation
 

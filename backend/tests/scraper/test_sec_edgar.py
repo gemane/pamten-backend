@@ -3909,3 +3909,77 @@ class TestBrowsePageSize:
             list(sec_edgar._ownership_feed_entries("0000320193"))
         assert sent[0]["count"] in self.ALLOWED
         assert sent[0]["count"] == str(sec_edgar.OWNERSHIP_FEED_PAGE)   # the step and the page agree
+
+
+class TestForm5InTheInsiderWindow:
+    """A director whose newest filing about the issuer is a Form 5 — the annual
+    statement of what needed no Form 4 — was not listed: the window read Forms
+    3 and 4 only. WesBanco's Michael J Crawford (Form 5 of 2026-02-10,
+    isDirector) had no seat (findings item 119)."""
+
+    @staticmethod
+    def _xml(owner, cik, doc_type, period="2025-12-31"):
+        return (f'<?xml version="1.0"?><ownershipDocument><documentType>{doc_type}</documentType>'
+                f'<periodOfReport>{period}</periodOfReport>'
+                f'<issuer><issuerCik>0000203596</issuerCik></issuer>'
+                f'<reportingOwner><reportingOwnerId><rptOwnerCik>{cik}</rptOwnerCik>'
+                f'<rptOwnerName>{owner}</rptOwnerName></reportingOwnerId>'
+                f'<reportingOwnerRelationship><isDirector>1</isDirector>'
+                f'</reportingOwnerRelationship></reportingOwner></ownershipDocument>')
+
+    def _window(self, forms, docs):
+        from app.scraper import sec_edgar
+        n = len(forms)
+        submissions = {"filings": {"recent": {
+            "form": [f for f, _, _ in forms],
+            "accessionNumber": [f"0000000001-26-{i:06d}" for i in range(n)],
+            "primaryDocument": [d for _, d, _ in forms],
+            "filingDate": [day for _, _, day in forms]}}}
+        with patch.object(sec_edgar, "_get", return_value=submissions), \
+             patch.object(sec_edgar, "_get_text", side_effect=lambda url, params=None: docs[url.rsplit("/", 1)[-1]]):
+            return sec_edgar.fetch_executives("203596")
+
+    def test_a_director_who_files_form_5_is_listed(self):
+        execs = self._window(
+            [("5", "f5.xml", "2026-02-10"), ("4", "f4.xml", "2026-01-15")],
+            {"f5.xml": self._xml("CRAWFORD MICHAEL J", "0001234567", "5"),
+             "f4.xml": self._xml("CLOSSIN TODD", "0001111111", "4")})
+        assert {(e["name"], e["document_type"]) for e in execs} == {("Michael J Crawford", "5"), ("Todd Clossin", "4")}
+        crawford = next(e for e in execs if e["document_type"] == "5")
+        assert crawford["role"] == "Director" and crawford["source_date"] == "2026-02-10"
+        assert crawford["since"] is None            # a Form 5 dates no seat; the Form 3 does
+
+    def test_an_amended_form_5_counts_too(self):
+        execs = self._window([("5/A", "f5a.xml", "2026-03-01")],
+                             {"f5a.xml": self._xml("CRAWFORD MICHAEL J", "0001234567", "5/A")})
+        assert [e["name"] for e in execs] == ["Michael J Crawford"]
+
+    def test_their_form_3_still_dates_the_seat(self):
+        execs = self._window(
+            [("5", "f5.xml", "2026-02-10"), ("3", "f3.xml", "2018-08-22")],
+            {"f5.xml": self._xml("CRAWFORD MICHAEL J", "0001234567", "5"),
+             "f3.xml": self._xml("CRAWFORD MICHAEL J", "0001234567", "3", period="2018-08-20")})
+        assert [(e["name"], e["since"]) for e in execs] == [("Michael J Crawford", "2018-08-20")]
+
+    def test_a_form_5_alone_opens_the_window(self):
+        # the window is counted back from the newest insider filing — a Form 5 is one
+        from app.scraper import sec_edgar
+        assert sec_edgar._form34_window_start(["10-K", "5"], ["2026-03-01", "2026-02-10"]) is not None
+        assert sec_edgar._form34_window_start(["10-K", "8-K"], ["2026-03-01", "2026-02-10"]) is None
+
+    def test_a_form_5_on_an_older_submissions_page_is_inside_the_window_too(self):
+        from app.scraper import sec_edgar
+        recent = {"form": ["4"], "accessionNumber": ["0000000001-26-000001"],
+                  "primaryDocument": ["f4.xml"], "filingDate": ["2026-03-01"]}
+        older = {"form": ["5", "10-K"], "accessionNumber": ["0000000001-26-000002", "0000000001-25-000003"],
+                 "primaryDocument": ["f5.xml", "k.htm"], "filingDate": ["2026-02-10", "2024-01-01"]}
+        docs = {"f4.xml": self._xml("CLOSSIN TODD", "0001111111", "4"),
+                "f5.xml": self._xml("CRAWFORD MICHAEL J", "0001234567", "5")}
+
+        def get(url, params=None):
+            return older if url.endswith("older.json") else {
+                "filings": {"recent": recent, "files": [{"name": "older.json"}]}}
+        with patch.object(sec_edgar, "_get", side_effect=get), \
+             patch.object(sec_edgar, "_get_text", side_effect=lambda url, params=None: docs[url.rsplit("/", 1)[-1]]):
+            execs = sec_edgar.fetch_executives("203596")
+        assert sorted(e["name"] for e in execs) == ["Michael J Crawford", "Todd Clossin"]

@@ -1555,8 +1555,12 @@ new CEO) — read both, or the newest insiders vanish.
 
 ### Which insiders — the last 15 months
 
-Insiders are listed from every Form 3/4 filed in the **15 months** before the
-issuer's newest one (`FORM4_WINDOW_DAYS = 456`), newest first, one per reporting
+Insiders are listed from every Form 3, 4 **and 5** (`INSIDER_FORMS`) filed in
+the **15 months** before the issuer's newest one (`FORM4_WINDOW_DAYS = 456`).
+Form 5 is the annual statement of what needed no Form 4 — gifts, small
+acquisitions — in the same XML; a director who only ever files that was not
+listed until the window read it (WesBanco's Michael J Crawford, Form 5 of
+2026-02-10; findings item 119). Newest first, one per reporting
 person — up to `MAX_FORM4_FETCH = 60` people. The window is read whole: when EDGAR's
 inline index (the newest ~1,000 filings) ends inside it — JPMorgan's on 2025-11-10,
 its window from 2025-07-16 — the next submissions page is read for the rest, and the
