@@ -537,8 +537,13 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
         name, first, last = parts
         owner_id, owner_label = psc_slug_id(self_link), "Person"
         nationality = _nationality(data.get("nationality"))
-        keys = person_keys.union([person_keys.verification_key(
-            (data.get("identity_verification_details") or {}).get("identity_verified_on"))])
+        from app.config import settings
+        keys = person_keys.union([
+            person_keys.verification_key(
+                (data.get("identity_verification_details") or {}).get("identity_verified_on")),
+            # the correspondence postcode as a keyed hash — the address itself is not kept
+            person_keys.postcode_key((data.get("address") or {}).get("postal_code"),
+                                     settings.PERSON_POSTCODE_HASH_KEY)])
         owner_props = {
             "first_name": first, "last_name": last, "full_name": name,
             "search_text": name,

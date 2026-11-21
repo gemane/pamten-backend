@@ -2022,6 +2022,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       names only one person bears the days differ in 4 % of the groups — one person,
       verified again by an agent. As a veto it would have held back one true merge in
       twenty-five; as evidence when it AGREES it is wrong in 0.002 % (item 124, step 5).
+- [ ] **When the importer starts keeping a field, the change detector must start seeing it.**
+      The PSC refresh compares a digest of "everything the graph stores" per record, a
+      hand-written list of fields — and its tests said, rightly at the time, that the
+      identity-verification details must NOT move it. Step 5 of item 124 began storing the
+      verification day; the digest still ignored it, so a record that gained a day would
+      never have reached the refresh (found in step 6). Grep the new field's source key in
+      every reader of the same record — the mapper, the digest, the dry-run counters — and
+      add it so that records WITHOUT the field keep the digest they had (here: appended only
+      when present), or the whole register looks changed.
 
 ## 9. Documentation
 

@@ -128,6 +128,7 @@ class Settings(BaseSettings):
     ALERT_STATE_FILE:                 str  = "~/data/alerts-state.json"   # the health check's last state
     PERSON_FULL_SCAN_MAX:             int  = 200000       # persons a full duplicate scan may load; above it, scan scoped
     PERSON_RARE_NAME_MONTHS:          int  = 3            # a name whose bearers span at most this many birth months merges on a shared month
+    PERSON_POSTCODE_HASH_KEY:         str  = ""           # secret — env only; keys the hash of a PSC's correspondence postcode (app/person_keys.py). Empty = no hash is stored
     ALERT_REFUSED_WARN:               int  = 5            # requests a source refused (4xx, not 404/429) since yesterday
     ALERT_REFUSED_CRIT:               int  = 50
     ALERT_SOURCE_PROBES:              bool = True         # one known request per source endpoint (app/source_contracts.py)

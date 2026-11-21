@@ -118,6 +118,12 @@ def _projection(rec: dict) -> list:
         data.get("identification"),
         data.get("address"),
         (data.get("links") or {}).get("self"),
+        # the identity-verification day the import keeps as a match key
+        # (findings item 124). Only where there is one: a record without it
+        # keeps the digest it had, so adding this did not make the whole
+        # register look changed.
+        *([verified] if (verified := (data.get("identity_verification_details") or {})
+                         .get("identity_verified_on")) else []),
     ]
 
 
