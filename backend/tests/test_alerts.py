@@ -171,7 +171,8 @@ class TestCollectAsksTheSources:
 
     def test_probes_run_and_report(self):
         probe = Probe("gleif", "an LEI record", lambda: None)
-        with patch("app.source_contracts.run", return_value=[(probe, "no legal name")]):
+        with patch.object(settings, "ALERT_SOURCE_PROBES", True), \
+             patch("app.source_contracts.run", return_value=[(probe, "no legal name")]):
             [a] = alerts_mod.collect({"probes"}, NOW)
         assert a.message == "gleif: an LEI record — no legal name"
 
@@ -181,10 +182,12 @@ class TestCollectAsksTheSources:
             assert alerts_mod.collect({"probes"}, NOW) == []
 
     def test_a_crashed_probe_run_is_a_warning_not_a_lost_run(self):
-        with patch("app.source_contracts.run", side_effect=RuntimeError("boom")):
+        with patch.object(settings, "ALERT_SOURCE_PROBES", True), \
+             patch("app.source_contracts.run", side_effect=RuntimeError("boom")):
             [a] = alerts_mod.collect({"probes"}, NOW)
         assert a.level == "warn" and "probes check could not run" in a.message
 
     def test_both_are_part_of_a_plain_run(self):
         assert {"refused", "probes"} <= set(alerts_mod.CHECKS)
+        assert type(settings).model_fields["ALERT_SOURCE_PROBES"].default is True   # on outside the tests
 

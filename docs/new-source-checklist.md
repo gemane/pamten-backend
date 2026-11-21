@@ -1945,7 +1945,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       (findings item 132); the daily `probes` check and the `refused` count in
       `manage.py alerts` are what would have said so the next morning. A source whose
       host is new goes into `SOURCE_HOSTS`, or neither check sees it. And note in
-      `docs/operations.md` where the source announces its changes, if it does.
+      `docs/operations.md` where the source announces its changes, if it does. A check that
+      reaches a source must be off in every test by default (`_no_source_probes` in
+      `tests/conftest.py`): the integration suite calls a plain `alerts.collect()`, and
+      the first CI run of the probes sent twelve real requests and failed on them.
 
 ## 9. Documentation
 

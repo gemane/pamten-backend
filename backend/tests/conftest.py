@@ -453,3 +453,14 @@ def _nothing_suppressed(request, monkeypatch):
         return
     from app import suppressions
     monkeypatch.setattr(suppressions, "guard", lambda session: suppressions.Guard(set(), set()))
+
+
+@pytest.fixture(autouse=True)
+def _no_source_probes(monkeypatch):
+    """`manage.py alerts` asks every outside source one question
+    (`app/source_contracts.py`, findings item 137). No test may do that: a plain
+    `alerts.collect()` in the integration suite sent twelve real requests from
+    CI the first time it ran, and failed on their answers. A test of the probes
+    switches them on and stubs `source_contracts.run`."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "ALERT_SOURCE_PROBES", False)
