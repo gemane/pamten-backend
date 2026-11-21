@@ -1967,6 +1967,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       findings item 119). When a source has a family of forms for one fact (3/4/5, 13D/13G,
       10-K/20-F/40-F), read the form list from the source's own documentation and name the
       set once, in one constant — the form tuple stood in three places here.
+- [ ] **A document filed by several parties is listed under one of them — ask who the
+      others are before concluding that somebody did not file.** The insider window keys a
+      Form 4 by its first reporting owner; a director who reports jointly with the fund
+      they sit for is a later owner, so the roster rule "a director the window lacks, on a
+      board that files yearly, has left" refused Innovex's Jason Turowsky a seat he holds
+      (findings item 118). And do not swing the other way: the relationship flags of a
+      joint filing are copied to every filer, so "every later owner flagged director" would
+      have seated 31 fund entities. Keep the independent evidence (the proxy names the
+      person) as the condition and use the joint filing only to answer the one question it
+      can — did this person file.
 
 ## 9. Documentation
 
