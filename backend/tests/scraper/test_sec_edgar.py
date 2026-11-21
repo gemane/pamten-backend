@@ -3839,3 +3839,73 @@ class TestAVotingPactOrAJointFiling:
         from app.scraper import sec_edgar
         raw = _fixture("13da_brc_abinbev_2026.xml")
         assert sec_edgar._parse_13dg_xml(raw)["raw_text"] == raw
+
+
+class TestBrowsePageSize:
+    """browse-edgar answers HTTP 400 to a `count` outside its own list since
+    November 2026 ("Invalid count, Received: 5, Count must be one of: 10, 20,
+    …"); the 5 the name searches sent lost all 540 of a rebuild's (findings
+    item 132). Every request asks for a page EDGAR accepts, and the caller
+    keeps as many entries as it always did."""
+
+    ALLOWED = {"10", "20", "30", "40", "50", "60", "70", "80", "90", "100", "500"}
+
+    @staticmethod
+    def _entries(n, shape="list"):
+        if shape == "person":
+            return "<feed>" + "".join(
+                f'<entry><content><company-info name="ARRAY(0x{i})"><cik>{1000 + i:010d}</cik>'
+                "</company-info></content></entry>" for i in range(n)) + "</feed>"
+        return ('<feed xmlns="http://www.w3.org/2005/Atom">' + "".join(
+            f"<entry><id>urn:tag:www.sec.gov:cik={1000 + i:010d}</id></entry>"
+            for i in range(n)) + "</feed>")
+
+    def _client(self, text):
+        sent = []
+
+        def get(url, params=None):
+            sent.append(dict(params or {}))
+            resp = MagicMock(status_code=200, text=text, content=text.encode())
+            resp.headers = {}
+            return resp
+        client = MagicMock()
+        client.get.side_effect = get
+        return client, sent
+
+    @pytest.mark.parametrize("wanted, sent", [
+        (1, "10"), (5, "10"), (10, "10"), (11, "20"), (20, "20"), (95, "100"),
+        (100, "100"), (101, "500"), (500, "500"), (5000, "500"),
+    ])
+    def test_the_smallest_page_that_holds_what_is_wanted(self, wanted, sent):
+        from app.scraper import sec_edgar
+        assert sec_edgar.browse_count(wanted) == sent
+
+    def test_the_page_sizes_are_edgars_own_list(self):
+        from app.scraper import sec_edgar
+        assert {str(n) for n in sec_edgar.BROWSE_PAGE_SIZES} == self.ALLOWED
+
+    @pytest.mark.parametrize("form_type, kept", [("10-K", 5), ("20-F", 5), ("", 20)])
+    def test_a_company_name_search_asks_an_allowed_page_and_keeps_its_own_number(self, form_type, kept):
+        from app.scraper import sec_edgar
+        client, sent = self._client(self._entries(30))
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
+            found = sec_edgar._browse_index("Nestle", form_type)
+        assert sent[0]["count"] in self.ALLOWED
+        assert int(sent[0]["count"]) >= kept        # the page holds what is kept
+        assert [cik for cik, _ in found] == [f"{1000 + i:010d}" for i in range(kept)]
+
+    def test_a_person_name_search_asks_an_allowed_page_and_keeps_five(self):
+        from app.scraper import sec_edgar
+        client, sent = self._client(self._entries(9, "person"))
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
+            found = sec_edgar._lookup_person_ciks("Thomas Murphy")
+        assert sent[0]["count"] in self.ALLOWED
+        assert found == [f"{1000 + i:010d}" for i in range(5)]
+
+    def test_the_holder_feed_asks_an_allowed_page_and_steps_by_its_own(self):
+        from app.scraper import sec_edgar
+        client, sent = self._client("<feed xmlns='http://www.w3.org/2005/Atom'/>")
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
+            list(sec_edgar._ownership_feed_entries("0000320193"))
+        assert sent[0]["count"] in self.ALLOWED
+        assert sent[0]["count"] == str(sec_edgar.OWNERSHIP_FEED_PAGE)   # the step and the page agree

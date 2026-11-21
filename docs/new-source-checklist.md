@@ -1928,6 +1928,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       joined parent and subsidiary, and the merge turned the filer's edge into a self-loop
       (findings item 94). Before a join on any shared id, check that neither node owns the
       other; a company does not own itself.
+- [ ] **A request parameter the source merely tolerated can be refused tomorrow.** The
+      two EDGAR name searches sent `count=5`, the number of candidates they use;
+      browse-edgar took any number until November 2026 and then began answering HTTP 400
+      to everything outside its own page sizes (10 … 100, 500). One rebuild lost 540
+      requests, a company's whole SEC part and seven persons' SEC identity, and every one
+      was logged as a request "lost to the network" (findings item 132). Send what the
+      source's own interface sends (its page-size list), keep the number you use in the
+      code that cuts the answer, and pin the sent value with a test against the source's
+      list. After a rebuild, group the lost requests by HTTP status before reading them as
+      network loss: hundreds of 400s on one endpoint are the source changing, not the line.
 
 ## 9. Documentation
 
