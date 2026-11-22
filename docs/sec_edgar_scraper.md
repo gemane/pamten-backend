@@ -265,7 +265,15 @@ held to three words or more (the writers' unordered rule, item 58) and without t
 similarity hold — EDGAR conforms a filer named after a person surname first, so the file's
 "PRICE T ROWE GROUP INC" is "T. Rowe Price Group, Inc.", which neither the exact nor the
 prefix match saw and the similarity (0.29) would have refused (findings item 59,
-2026-11-06). Two words swapped ("Energy Fuels" / "FUELS ENERGY") are not matched. A form word elsewhere stays: dropped anywhere,
+2026-11-06). Two words swapped ("Energy Fuels" / "FUELS ENERGY") are not matched. A title
+carrying **two names of one company** — the trade name, a spaced dash, the legal name:
+"PETROBRAS - PETROLEO BRASILEIRO SA", "BrasilAgro - Brazilian Agricultural Real Estate Co"
+— is found by either name, and its similarity is that of the closer name: "Petrobras"
+scored 0.45 against the whole title, the lookup refused the company's own entry, and the
+name index (step 1b) then gave Petrobras Argentina S.A., a former subsidiary — two rebuilds
+scraped the wrong company, the second with 48 of its subsidiaries (findings item 136,
+2026-11-22). A hyphen inside a word ("Coca-Cola") parts nothing, and the fund hold reads
+the whole title. A form word elsewhere stays: dropped anywhere,
 "NV Energy" keyed "energy" and took ENERGY FUELS INC as its prefix match
 (2026-10-30). A title tagged as an ADR programme ("MTN GROUP LTD/ADR") is skipped
 (`is_adr_listing`): that CIK is the depositary's receipt registration, with no

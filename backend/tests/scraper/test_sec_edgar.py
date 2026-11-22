@@ -392,6 +392,45 @@ class TestLookupInTickers:
             assert _lookup_in_tickers("T. Rowe Price Group, Inc.") == {"cik": "0001113169", "name": "PRICE T ROWE GROUP INC"}
             assert _lookup_in_tickers("T Rowe Price Group") == {"cik": "0001113169", "name": "PRICE T ROWE GROUP INC"}
 
+    PETROBRAS = {"0": {"cik_str": 1119639, "ticker": "PBR", "title": "PETROBRAS - PETROLEO BRASILEIRO SA"},
+                 "1": {"cik_str": 1119639, "ticker": "PBR-A", "title": "PETROBRAS - PETROLEO BRASILEIRO SA"},
+                 "2": {"cik_str": 1499849, "ticker": "LND", "title": "BrasilAgro - Brazilian Agricultural Real Estate Co"}}
+
+    @pytest.mark.parametrize("query", ["Petrobras", "Petroleo Brasileiro S.A.", "PETROBRAS - PETROLEO BRASILEIRO SA"])
+    def test_a_two_name_title_is_found_by_either_name(self, query):
+        # findings item 136: 'Petrobras' scored 0.45 against the whole title, the
+        # lookup refused the company's own entry and the name index gave
+        # Petrobras Argentina S.A. — the wrong company, twice, with 48 subsidiaries
+        with patch("app.scraper.sec_edgar._tickers_cache", self.PETROBRAS):
+            assert _lookup_in_tickers(query) == {"cik": "0001119639", "name": "PETROBRAS - PETROLEO BRASILEIRO SA"}
+
+    def test_a_two_name_title_by_its_trade_name(self):
+        with patch("app.scraper.sec_edgar._tickers_cache", self.PETROBRAS):
+            assert _lookup_in_tickers("BrasilAgro")["cik"] == "0001499849"
+
+    def test_a_two_name_title_still_needs_one_of_its_names(self):
+        # the second name's words are no key: neither a part of a name ...
+        with patch("app.scraper.sec_edgar._tickers_cache", self.PETROBRAS):
+            assert _lookup_in_tickers("Brasileiro") is None
+            assert _lookup_in_tickers("Brazilian Agricultural") is None
+        # ... nor a prefix that is far from both names
+        tickers = {"0": {"cik_str": 1, "ticker": "X", "title": "Alpha Beta Gamma Delta Epsilon - Zeta Eta Theta Iota"}}
+        with patch("app.scraper.sec_edgar._tickers_cache", tickers):
+            assert _lookup_in_tickers("Alpha") is None
+
+    def test_a_hyphen_inside_a_word_parts_no_names(self):
+        # only a spaced dash parts two names: "Coca-Cola" is one
+        tickers = {"0": {"cik_str": 21344, "ticker": "KO", "title": "COCA-COLA CONSOLIDATED BOTTLING OF THE CAROLINAS INC"}}
+        with patch("app.scraper.sec_edgar._tickers_cache", tickers):
+            assert _lookup_in_tickers("Cola") is None
+            assert _lookup_in_tickers("Coca") is None
+
+    def test_a_part_does_not_hide_the_fund_word(self):
+        # the fund hold reads the whole title (Baillie Gifford & Co is not its funds)
+        tickers = {"0": {"cik_str": 1120543, "ticker": "BGF", "title": "Baillie Gifford - Baillie Gifford Funds"}}
+        with patch("app.scraper.sec_edgar._tickers_cache", tickers):
+            assert _lookup_in_tickers("Baillie Gifford") is None
+
     def test_two_words_swapped_are_not_the_same_company(self):
         # the unordered tier needs three words or more (the writers' rule, item 58)
         tickers = {"0": {"cik_str": 1385849, "ticker": "UUUU", "title": "FUELS ENERGY INC"}}

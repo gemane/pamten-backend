@@ -443,6 +443,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       and the query 't rowe price group' met neither its exact nor its prefix match, and
       the similarity (0.29) would have refused the only right answer — the lookup now takes
       the same words in another order, three words or more (findings item 59, 2026-11-06).
+      And a source's name field may hold TWO names: the tickers file's "PETROBRAS -
+      PETROLEO BRASILEIRO SA" (trade name, dash, legal name) scored 0.45 against the target
+      "Petrobras", so the similarity hold refused the right entry and the next, looser
+      lookup gave a former subsidiary of the same prefix (Petrobras Argentina, 0.64). A
+      similarity hold compares against each name the field carries; and when a strict
+      lookup refuses, check what the fallback takes instead (findings item 136, 2026-11-22).
 - [ ] **Where a knowledge base and a register disagree, report it — to us and to them.**
       `manage.py wikidata-suggestions` compares each item's LEI/CIK with the node's register
       ids and writes a CSV plus a QuickStatements batch for a person to submit (never an
