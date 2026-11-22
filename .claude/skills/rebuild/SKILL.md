@@ -40,7 +40,7 @@ not the user's word.
 ### 2. The kit
 Copy this skill's `kit/` to a fresh `~/.cache/rebuild-<YYYY-MM-DD>/` (a letter suffix for a
 second run that day), `chmod 700` it. The scripts find their folder themselves.
-- `rebuild.sh` — 0 golden copies, 1 drop/create/schema (refuses without `accounts.json`),
+- `rebuild.sh` — 0 golden copies (and EDGAR's bulk name list, `sec-name-list`: the person-name searches of the replay are then local lookups — `lib.sh` sets `SEC_NAME_LIST_DIR`; findings item 135), 1 drop/create/schema (refuses without `accounts.json`),
   2 bulk import under the import lock (the test chain: GLEIF seeds → family → names → succession → names of its endpoints; UK PSC), 3 `finish-import.sh`, 4 GLEIF history, 5 accounts
   back, 6 replay, 7 finishing what the scrapes added (the securities bridge
   `gleif-isin-bridge --apply` (CUSIP → ISIN → LEI, item 71) first, since it re-keys sec: nodes to
