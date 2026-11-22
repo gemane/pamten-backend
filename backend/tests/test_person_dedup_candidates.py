@@ -58,6 +58,13 @@ def test_a_generational_mark_is_not_the_surname(sql):
     assert (sql[0]["q"], sql[0]["pat"]) == ("murphy", "%thomas%")
 
 
+def test_the_british_mark_is_not_the_surname_either(sql):
+    # findings item 147: "Jnr" / "Snr" as the UK register's filers write it
+    persons._fulltext_name_candidates("John Smith Jnr")
+    persons._fulltext_name_candidates("John Smith Snr")
+    assert [(q["q"], q["pat"]) for q in sql] == [("smith", "%john%")] * 2
+
+
 def test_the_pattern_carries_only_letters_and_digits(sql):
     # the LIKE wildcards cannot come from a name: punctuation splits words
     persons._fulltext_name_candidates("Shaquille O'Neal_%")

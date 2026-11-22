@@ -1,4 +1,5 @@
-"""Generational marks in a person's names — "Jr.", "Sr.", "II", "III", "IV".
+"""Generational marks in a person's names — "Jr.", "Sr.", "II", "III", "IV",
+and the British "Jnr" / "Snr".
 
 A father and son share a name and often a company; the mark is the one thing
 in the NAME that tells them apart. The duplicate scan (routers.persons) used
@@ -11,13 +12,17 @@ from __future__ import annotations
 
 import re
 
-_MARKS = {"jr": "jr", "junior": "jr", "sr": "sr", "senior": "sr", "ii": "ii", "iii": "iii", "iv": "iv"}
+#: "Jnr" / "Snr" are how the UK register's filers write it: 1,056 and 352 owner
+#: entries of the full PSC file carried one and were read as unmarked names
+#: (findings item 147).
+_MARKS = {"jr": "jr", "jnr": "jr", "junior": "jr", "sr": "sr", "snr": "sr", "senior": "sr",
+          "ii": "ii", "iii": "iii", "iv": "iv"}
 _TOKEN = re.compile(r"[a-z]+")
 
 
 def generation_marks(*names: str | None) -> set[str]:
     """The marks any of these names carry, normalised: {"jr"}, {"sr"}, {"iii"}…
-    "Junior"/"Senior" count as "jr"/"sr". A name without one gives nothing."""
+    "Junior"/"Jnr" and "Senior"/"Snr" count as "jr"/"sr". A name without one gives nothing."""
     out: set[str] = set()
     for name in names:
         for tok in _TOKEN.findall((name or "").lower()):

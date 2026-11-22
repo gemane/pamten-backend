@@ -288,8 +288,10 @@ def _fulltext_name_candidates(name: str) -> list[dict]:
     return run_sql(_FULLTEXT_PERSON_SELECT, {"q": surname, "pat": f"%{given}%"}) or []
 
 
-#: a generational mark is not a surname — "Thomas S Murphy Jr" is a Murphy
-_GENERATION_WORDS = {"jr", "sr", "ii", "iii", "iv"}
+#: a generational mark is not a surname — "Thomas S Murphy Jr" is a Murphy,
+#: "John Smith Jnr" a Smith (item 147). "Junior" / "Senior" stay out: both are
+#: surnames of their own.
+_GENERATION_WORDS = {"jr", "jnr", "sr", "snr", "ii", "iii", "iv"}
 
 
 def _birth_parts(value: str | None) -> tuple:

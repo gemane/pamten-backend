@@ -185,6 +185,22 @@ def test_sr_against_jr_is_definitive_without_any_id(it_db):
     assert group["likely_distinct"] is True and "generational marks" in group["reason"]
 
 
+def test_snr_against_jnr_is_the_same_verdict(it_db):
+    """Findings item 147: the UK register's filers write "Snr" / "Jnr"; read as
+    no mark, a father and son whose records share a name at one company merge."""
+    from app.routers.persons import deduplicate_high_confidence
+    _berkshire(it_db)
+    it_db.run_command("CREATE (:Person {id:'snr', full_name:'Thomas Murphy', aliases: ['Thomas Murphy Snr']})")
+    it_db.run_command("CREATE (:Person {id:'jnr', full_name:'Thomas Murphy', aliases: ['Thomas Murphy (Jnr)']})")
+    _seat(it_db, "snr")
+    _seat(it_db, "jnr")
+
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 0
+    (group,) = [g for g in res["needs_review"] if {m["id"] for m in g["members"]} == {"snr", "jnr"}]
+    assert group["likely_distinct"] is True and "generational marks" in group["reason"]
+
+
 def test_a_mark_on_one_side_only_waits_for_a_human(it_db):
     from app.routers.persons import deduplicate_high_confidence
     _berkshire(it_db)
