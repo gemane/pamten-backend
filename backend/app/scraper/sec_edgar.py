@@ -746,6 +746,36 @@ def _name_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, na, nb).ratio()
 
 
+#: A title carrying two names of one company: "PETROBRAS - PETROLEO BRASILEIRO
+#: SA", "BrasilAgro - Brazilian Agricultural Real Estate Co" — the trade name,
+#: a spaced dash, the legal name. ("Veraxa Biotech AG - Post de-SPAC" has the
+#: shape too; its second part is no name, and no query is a prefix of it.)
+_TITLE_NAMES = re.compile(r"\s+[-–—]\s+")
+
+
+def _title_names(title: str) -> list[str]:
+    """The normalised names of a two-name title; none for any other title."""
+    names = _TITLE_NAMES.split(strip_edgar_tag(title))
+    return [_ticker_normalize(n) for n in names] if len(names) > 1 else []
+
+
+def _title_similarity(query: str, title: str) -> float:
+    """`_name_similarity` of ``query`` against a tickers title, or against the
+    closest of the names a two-name title carries (`_TITLE_NAMES`).
+
+    The target "Petrobras" is the prefix of "PETROBRAS - PETROLEO BRASILEIRO
+    SA" and scored 0.45 against the whole of it: the lookup refused the
+    company's own entry, and the name index then gave Petrobras Argentina S.A.
+    (0.64, a former subsidiary) — two rebuilds scraped the wrong company, the
+    second with 48 of its subsidiaries (findings item 136). The fund hold stays
+    on the whole title: a part must not hide the word that makes it a fund."""
+    whole = _name_similarity(query, title)
+    names = _TITLE_NAMES.split(strip_edgar_tag(title))
+    if len(names) < 2 or _fund_words(_ticker_normalize(title)) - _fund_words(_ticker_normalize(query)):
+        return whole
+    return max([whole] + [_name_similarity(query, n) for n in names])
+
+
 def _lookup_in_tickers(query: str) -> dict | None:
     """
     Look up a company in EDGAR's listed-company tickers file.
@@ -778,7 +808,7 @@ def _lookup_in_tickers(query: str) -> dict | None:
             continue
         cik   = str(entry.get("cik_str", "")).zfill(10)
         norm  = _ticker_normalize(title)
-        if norm == q:
+        if norm == q or q in _title_names(title):
             exact.append((title, cik, len(title)))
         elif norm.startswith(q):
             prefix.append((title, cik, len(title)))
@@ -789,7 +819,7 @@ def _lookup_in_tickers(query: str) -> dict | None:
         if pool:
             pool.sort(key=lambda x: x[2])   # shortest name = most specific
             title, cik, _ = pool[0]
-            sim = _name_similarity(query, title)
+            sim = _title_similarity(query, title)
             if sim < _MIN_NAME_SIMILARITY:
                 log.warning(
                     "SEC EDGAR: tickers match rejected (similarity %.2f < %.2f): %r vs %r",
