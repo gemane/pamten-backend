@@ -163,11 +163,24 @@ _OWNED = re.compile(r"beneficial|owned|ownership|outstanding|to be voted", re.IG
 #: last year. NovaGold's nominee table ("Name, Province … | Age | … | 2025 AGM
 #: Votes in Favor (%) | Meets Share Ownership Guidelines") read as an ownership
 #: table gave every director 85–99 % of the company (findings item 117)
-#: … nor is a section heading that states a figure: "More than 5% owners:"
-#: stood in the class column of United States Antimony's table as a percent
-#: column of its own
-_NOT_A_STAKE = re.compile(r"votes?\s+(in\s+favou?r|for\b|cast\b|withheld)|\bAGM\b|\battendance\b"
-                          r"|\d\s*%", re.IGNORECASE)
+_NOT_A_STAKE = re.compile(r"votes?\s+(in\s+favou?r|for\b|cast\b|withheld)|\bAGM\b|\battendance\b", re.IGNORECASE)
+#: A figure a header states is no percent sign of its own: the section heading
+#: "More than 5% owners:" stood in the class column of United States
+#: Antimony's table and read as a percent column (findings item 117). Only the
+#: FIGURE is set aside, not the header: "Percentage (* Less than 1%)" — the
+#: commonest note on a percent column — is one, and with every header that
+#: states a figure refused, Whirlpool's director table read no row and no
+#: record date; the statements pass then began at the filing day instead and
+#: lost a 13D filed between the two (findings item 142).
+_FIGURE_PERCENT = re.compile(r"\d[\d.,]*\s*%")
+
+
+def _is_percent_header(text: str) -> bool:
+    """A header cell that heads a percent-of-class column: it says percent
+    beside any figure it states, and is no vote count."""
+    return bool(_PERCENT.search(_FIGURE_PERCENT.sub(" ", text))) and not _NOT_A_STAKE.search(text)
+
+
 #: the column that names each row's class: "Title of Class", "Class of Stock"
 _CLASS_COLUMN = re.compile(r"\btitle\s+of\s+(class|securit)|\bclass\s+of\s+(stock|shares|securities)\b",
                            re.IGNORECASE)
@@ -392,7 +405,7 @@ def _holder_rows(table) -> list[dict] | None:
         return None
     header = [c for row in grid[:first] for c in row]
     names = [c for c in header if _NAME_HEADER.search(c[2])]
-    percents = [c for c in header if _PERCENT.search(c[2]) and not _NOT_A_STAKE.search(c[2])]
+    percents = [c for c in header if _is_percent_header(c[2])]
     if not names or not percents or not _OWNED.search(" ".join(c[2] for c in header)):
         return None
     name_col = names[0]

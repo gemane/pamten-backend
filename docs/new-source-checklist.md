@@ -123,6 +123,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       kind you hold (663 cached tables here), old against new, and read every changed row:
       the first version of this fix merged Vanguard into GAMCO at Lennar and undid a
       verified fix at LENSAR, and only the replay showed it.
+      And the replay compares EVERYTHING the reader returns, not only what the writer
+      uses today: that replay looked at the rows of 5 % and more, so a rule that refused
+      every percent header stating a figure ("Percentage (* Less than 1%)") passed — the
+      director tables it emptied hold no 5 % row. Their record date went with them, the
+      statements pass began later, and Whirlpool lost a 13D filed in between (findings
+      item 142, 2026-11-22). Count all rows and every derived field, old against new.
 - [ ] **A writer that looks its parties up in the graph depends on the order of the scrapes
       — and a guard on a populated database cannot see it.** The ownership-table writer
       finds a holder among the nodes the graph holds. Checked on dev, where every node
