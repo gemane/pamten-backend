@@ -62,10 +62,13 @@ def _download() -> bytes:
     return sec_edgar._response(LIST_URL, {}).content
 
 
-def index_path(directory: str | None = None, download=_download, now=time.time) -> str | None:
+def index_path(directory: str | None = None, download=None, now=time.time,
+               force: bool = False) -> str | None:
     """The index file, refreshed when older than `MAX_AGE_HOURS`; None when the
     list is off or there is none to read. A failed refresh keeps the file at
-    hand — yesterday's list misses a filer registered today, nothing else."""
+    hand — yesterday's list misses a filer registered today, nothing else.
+    ``force``: download now, whatever the age (`manage.py sec-name-list`, the
+    bulk downloads' step)."""
     global _last_failure
     if directory is None:
         from app.config import settings
@@ -74,12 +77,13 @@ def index_path(directory: str | None = None, download=_download, now=time.time) 
         return None
     path = os.path.join(directory, INDEX_FILE)
     have = os.path.exists(path)
-    if have and now() - os.path.getmtime(path) < MAX_AGE_HOURS * 3600:
-        return path
-    if now() - _last_failure < RETRY_AFTER_SECONDS:
-        return path if have else None
+    if not force:
+        if have and now() - os.path.getmtime(path) < MAX_AGE_HOURS * 3600:
+            return path
+        if now() - _last_failure < RETRY_AFTER_SECONDS:
+            return path if have else None
     try:
-        index = build_index(download())
+        index = build_index((download or _download)())
         if index.count(b"\n") < 1000:               # an error page, not the list
             raise ValueError(f"{index.count(b'\n')} names")
         os.makedirs(directory, exist_ok=True)
@@ -171,3 +175,12 @@ def person_ciks(words: list[str], limit: int, path: str | None = None) -> list[s
         if found:
             return found[:limit]
     return []
+
+
+def count(path: str) -> int:
+    """How many names the index holds."""
+    with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        n, at = 0, data.find(b"\n")
+        while at >= 0:
+            n, at = n + 1, data.find(b"\n", at + 1)
+        return n

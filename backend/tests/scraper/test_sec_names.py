@@ -143,3 +143,39 @@ class TestTheLookupAsksTheListFirst:
              patch.object(sec_edgar, "_search_person_ciks", return_value=["0001242782"]) as search:
             assert sec_edgar._lookup_person_ciks("Robyn M. Denholm") == ["0001242782"]
         search.assert_called_once_with(["Robyn", "M.", "Denholm"])
+
+
+class TestTheCommand:
+    def _run(self, tmp_path, download, force=False, directory=True):
+        import types
+        import manage
+        from app.config import settings
+        with patch.object(settings, "SEC_NAME_LIST_DIR", str(tmp_path) if directory else ""), \
+             patch.object(sec_names, "_download", download):
+            manage.cmd_sec_name_list(types.SimpleNamespace(force=force))
+
+    def test_it_downloads_and_says_how_many_names(self, tmp_path, capsys):
+        self._run(tmp_path, lambda: RAW)
+        assert "1,113 names downloaded" in capsys.readouterr().out
+        assert sec_names.count(os.path.join(tmp_path, sec_names.INDEX_FILE)) == 1113
+
+    def test_a_list_of_today_is_kept_unless_forced(self, tmp_path, capsys):
+        download = MagicMock(return_value=RAW)
+        self._run(tmp_path, download)
+        self._run(tmp_path, download)
+        assert download.call_count == 1 and "kept" in capsys.readouterr().out
+        self._run(tmp_path, download, force=True)
+        assert download.call_count == 2
+
+    def test_a_failed_download_exits_1_and_keeps_the_index(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.setattr(sec_names, "_last_failure", 0.0)
+        self._run(tmp_path, lambda: RAW)
+        with pytest.raises(SystemExit) as exit_:
+            self._run(tmp_path, MagicMock(side_effect=OSError("down")), force=True)
+        assert exit_.value.code == 1 and "the index at hand is kept" in capsys.readouterr().out
+        assert sec_names.count(os.path.join(tmp_path, sec_names.INDEX_FILE)) == 1113
+
+    def test_without_a_directory_it_exits_1(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as exit_:
+            self._run(tmp_path, lambda: RAW, directory=False)
+        assert exit_.value.code == 1 and "SEC_NAME_LIST_DIR" in capsys.readouterr().out
