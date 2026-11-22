@@ -120,9 +120,9 @@ KNOWN_SOURCES = {
         "credibility": 97,
         "quality": "statutory",
         "description": "Companies House register of officers "
-                       "(directors, secretaries and LLP members of UK companies)",
+                       "(directors and LLP members of UK companies)",
         "region": "GB",
-        "coverage": "Who runs a UK company — its serving directors, secretaries and "
+        "coverage": "Who runs a UK company — its serving directors and "
                     "LLP members, with the day each was appointed",
     },
 }

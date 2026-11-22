@@ -49,6 +49,15 @@ specification for "add source X". The contract:
       if the fields differ from what is already stored — a full birth date, a home address
       — say so in `pamten-legal` *in the same change*. The legal pages name the fields and
       why each is necessary; a source that quietly adds one makes them wrong.
+- [ ] **Every ROLE the source lists is one the purpose needs — a register's whole list is
+      not the scope.** Companies House lists the company secretary beside the directors, and
+      the officers import took all of them. A secretary has no vote and no control, and the
+      register states no birth date for one: a group's secretary came in once per subsidiary
+      (James Oliver Earley, 13 Unilever companies, 13 persons) and the only way to join them
+      was to store more about a person the graph's question does not need. They were
+      dropped instead (2026-11-22, findings item 148). When records of a kind cannot be told
+      apart with what the source gives, ask whether that kind is needed before asking for
+      more data.
 - [ ] **You can say what this source is authoritative for.** "Company registrations in
       Ireland" is an answer. "Company data" is not, and it is how a low-quality source ends
       up overwriting a register.

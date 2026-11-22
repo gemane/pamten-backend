@@ -83,7 +83,7 @@ def test_an_appointment_with_the_split_is_read_by_it():
 
 
 @pytest.mark.parametrize("role, label", [
-    ("director", "Director"), ("secretary", "Company Secretary"), ("llp-member", "LLP Member"),
+    ("director", "Director"), ("llp-member", "LLP Member"),
     ("llp-designated-member", "LLP Designated Member"), ("nominee-director", "Nominee Director"),
     ("cic-manager", "Cic Manager"),                 # a role the table does not name: as the register words it
     ("", None), (None, None),
@@ -101,6 +101,26 @@ def test_role_label(role, label):
 ])
 def test_a_company_holding_the_seat_is_not_read(item):
     assert ch.is_corporate(item) and ch.read_officer(item) is None
+    assert ch.left_out(item) == "corporate"
+
+
+@pytest.mark.parametrize("role", ["secretary", "nominee-secretary", "Secretary "])
+def test_a_company_secretary_is_not_read(role):
+    """Findings item 148 (user, 2026-11-22): no vote, no control, no birth date
+    — a group's secretary came in once per subsidiary (James Oliver Earley, 13
+    Unilever companies)."""
+    item = _item(officer_role=role)
+    assert ch.is_secretary(item) and ch.left_out(item) == "secretaries" and ch.read_officer(item) is None
+
+
+@pytest.mark.parametrize("role", ["director", "nominee-director", "llp-member", "llp-designated-member", "cic-manager"])
+def test_every_other_person_is_still_read(role):
+    item = _item(officer_role=role)
+    assert not ch.is_secretary(item) and ch.left_out(item) is None and ch.read_officer(item) is not None
+
+
+def test_a_secretary_firm_counts_as_a_company_not_as_a_secretary():
+    assert ch.left_out(_item(officer_role="corporate-secretary", name="PRISM COSEC LIMITED")) == "corporate"
 
 
 @pytest.mark.parametrize("item", [
@@ -191,7 +211,8 @@ def test_a_dry_run_writes_nothing_not_even_a_run_row():
     from unittest.mock import patch
 
     from app.config import settings
-    items = [_item(), _item(resigned_on="2020-01-01"), _item(officer_role="corporate-secretary")]
+    items = [_item(), _item(resigned_on="2020-01-01"), _item(officer_role="corporate-secretary"),
+             _item(officer_role="secretary"), _item(officer_role="secretary", resigned_on="2021-01-01")]
     with patch.object(settings, "COMPANIES_HOUSE_API_KEY", "k"), \
          patch("app.scraper.sources.get_source_enabled", side_effect=AssertionError("catalogue")), \
          patch.object(ch, "companies_in_graph", return_value=[{"id": "gb-coh:1", "name": "A Ltd", "number": "1"}]), \
@@ -201,6 +222,7 @@ def test_a_dry_run_writes_nothing_not_even_a_run_row():
          patch("app.scraper.graph_writer._ensure_source", side_effect=AssertionError("source")):
         out = ch.run_ch_officers(dry_run=True)
     assert (out["status"], out["read"], out["written"], out["resigned"], out["corporate"]) == ("dry-run", 1, 1, 1, 1)
+    assert out["secretaries"] == 2                   # serving or resigned: neither is a seat, neither is "resigned"
 
 
 def test_a_source_switched_off_in_the_catalogue_reads_nothing():

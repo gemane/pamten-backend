@@ -25,9 +25,10 @@ def _item(oid, name, role="director", appointed="2014-10-16", **over):
 
 ITEMS = [
     _item("jane", "SMITH, Jane Mary", nationality="British,American"),
-    _item("omar", "KHAN, Omar", role="secretary", appointed="2019-01-02", nationality=None),
+    _item("omar", "KHAN, Omar", role="llp-member", appointed="2019-01-02", nationality=None),
     _item("gone", "OLD, Peter", resigned_on="2018-06-30"),                    # left before the first run
     _item("firm", "PRISM COSEC LIMITED", role="corporate-secretary"),
+    _item("sec", "EARLEY, James Oliver", role="secretary"),                   # no secretaries (item 148)
 ]
 
 
@@ -62,20 +63,21 @@ def test_serving_officers_become_persons_and_seats(it_db):
     assert (out["status"], out["read"], out["written"], out["resigned"], out["corporate"], out["ended"]) == \
         ("ok", 1, 2, 1, 1, 0)
     seats = _seats(it_db)
-    assert set(seats) == {("choff:jane", "Director"), ("choff:omar", "Company Secretary")}
+    assert set(seats) == {("choff:jane", "Director"), ("choff:omar", "LLP Member")}
     jane = seats[("choff:jane", "Director")]
     assert (str(jane["since"])[:10], jane["until"], jane["sid"], jane["rf"]) == ("2014-10-16", None, "ch-officers", "field")
     assert jane["url"] == "https://find-and-update.company-information.service.gov.uk/company/08415302/officers"
     people = {r["id"]: r for r in it_db.run_command(
         "MATCH (p:Person) RETURN p.id AS id, p.full_name AS full, p.first_name AS first, p.last_name AS last, "
         "p.birth_date AS birth, p.nationalities AS nat, p.source_id AS sid")}
-    assert set(people) == {"choff:jane", "choff:omar"}            # nobody for the resigned, nobody for the firm
+    assert set(people) == {"choff:jane", "choff:omar"}            # nobody for the resigned, the firm, the secretary
+    assert out["secretaries"] == 1
     assert people["choff:jane"] == {"id": "choff:jane", "full": "Jane Mary Smith", "first": "Jane Mary",
                                     "last": "Smith", "birth": "1979-10", "nat": ["GB", "US"], "sid": "ch-officers"}
     assert people["choff:omar"]["nat"] is None       # no nationality: no field, never an empty list
     assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS n")[0]["n"] == 2
     claims = it_db.run_command(f"MATCH (c:Claim) WHERE c.to_id = '{CO}' RETURN c.kind AS kind, c.role AS role")
-    assert sorted(c["role"] for c in claims) == ["Company Secretary", "Director"]
+    assert sorted(c["role"] for c in claims) == ["Director", "LLP Member"]
     run = it_db.run_command("MATCH (r:ScrapeRun) RETURN r.source AS s, r.status AS st, r.total AS n")
     assert [(r["s"], r["st"], r["n"]) for r in run] == [("ch-officers", "ok", 2)]
 
@@ -95,7 +97,7 @@ def test_a_resignation_stated_later_ends_the_seat_on_its_day(it_db):
     out, _ = _run(later)
     seats = _seats(it_db)
     assert str(seats[("choff:jane", "Director")]["until"])[:10] == "2026-09-30"
-    assert seats[("choff:omar", "Company Secretary")]["until"] is None
+    assert seats[("choff:omar", "LLP Member")]["until"] is None
     assert (out["ended"], out["written"]) == (1, 1)
     # the next run finds nothing left to end
     assert _run(later)[0]["ended"] == 0
@@ -141,7 +143,7 @@ def test_a_nationality_fills_an_empty_field_and_never_replaces_one(it_db):
     _seed(it_db)
     it_db.run_command("CREATE (:Person {id: 'choff:jane', full_name: 'Jane Mary Smith', nationalities: ['FR']})")
     it_db.run_command("CREATE (:Person {id: 'choff:omar', full_name: 'Omar Khan'})")
-    _run([ITEMS[0], _item("omar", "KHAN, Omar", role="secretary", nationality="Irish")])
+    _run([ITEMS[0], _item("omar", "KHAN, Omar", role="llp-member", nationality="Irish")])
     nats = {r["id"]: r["nat"] for r in it_db.run_command("MATCH (p:Person) RETURN p.id AS id, p.nationalities AS nat")}
     assert nats == {"choff:jane": ["FR"], "choff:omar": ["IE"]}
 

@@ -176,7 +176,7 @@ def cmd_ch_officers(args):
           f"ended {res['ended']}; "
           + (f"{verb} {res['past']} past seats of {res['resigned']} resigned officers; left out "
              if args.history else f"left out {res['resigned']} resigned, ")
-          + f"{res['corporate']} corporate, "
+          + f"{res['corporate']} corporate, {res['secretaries']} secretaries, "
           f"{res['unreadable']} unreadable; {res['names_asked']} names with a title part asked for their split")
     if res["failed"]:
         sys.exit(1)
@@ -1578,7 +1578,7 @@ def _build_parser():
     # ch-officers command (Companies House register of officers)
     p_cho = subparsers.add_parser(
         'ch-officers',
-        help="Read the serving officers (directors, secretaries, LLP members) of the UK companies "
+        help="Read the serving officers (directors and LLP members; no secretaries) of the UK companies "
              "in the graph from the Companies House API and write them as seats; a seat whose "
              "holder has resigned since is ended on the register's date. Manual; needs "
              "COMPANIES_HOUSE_API_KEY")
