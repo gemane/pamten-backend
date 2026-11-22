@@ -21,9 +21,12 @@ def test_the_auto_dedup_follows_the_survivor_to_its_new_id():
         calls.append((keep, dup))
         return "sec:0001195071" if dup == "sec:0001195071" else keep
 
-    with patch.object(persons, "scan_duplicate_groups", return_value=[GROUP]), \
+    # the scan after the merges finds the group gone (the run repeats its scan
+    # while a pass merges anything, findings item 145)
+    with patch.object(persons, "scan_duplicate_groups", side_effect=[[GROUP], []]) as scan, \
          patch.object(persons, "merge_person_records", side_effect=merge):
         res = persons.deduplicate_high_confidence(apply=True)
+    assert scan.call_count == 2 and res["passes"] == 2
     # the second twin is merged into the RE-KEYED survivor, not the id it had
     assert calls == [("wd:Q912811", "sec:0001195071"), ("sec:0001195071", "u-3")]
     assert res["merged"] == [{"keep_id": "sec:0001195071", "keep_name": "Brian Moynihan",
