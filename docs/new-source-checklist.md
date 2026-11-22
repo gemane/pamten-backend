@@ -129,6 +129,14 @@ parser. Anything that does not map is either a new property (document it) or noi
       director tables it emptied hold no 5 % row. Their record date went with them, the
       statements pass began later, and Whirlpool lost a 13D filed in between (findings
       item 142, 2026-11-22). Count all rows and every derived field, old against new.
+- [ ] **A local copy that replaces a live lookup is measured against it on the same
+      questions.** EDGAR's bulk name list answers a person's name search without a request;
+      the first version matched whole words, which read stricter and better — and lost 9 of
+      300 people, because the live search is a prefix search and Wikidata names people by
+      short forms ("Tim Cook" is COOK TIMOTHY D). The list also holds every filer of a
+      name, not only the Form 4 filers the search returned, so the same cut of five
+      candidates found fewer; ten finds more than the search did (findings item 135,
+      2026-11-22). Save the live answers once and replay every variant against them.
 - [ ] **A writer that looks its parties up in the graph depends on the order of the scrapes
       — and a guard on a populated database cannot see it.** The ownership-table writer
       finds a holder among the nodes the graph holds. Checked on dev, where every node

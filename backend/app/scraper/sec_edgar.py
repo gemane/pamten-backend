@@ -91,6 +91,11 @@ MAX_FORM4_SCAN   = 1000
 FORM4_WINDOW_DAYS = 456
 MAX_FORM3_SCAN   = 40     # Form 3s read past the insider cap, for seat start dates
 MAX_PERSON_CANDIDATES = 5   # filers a person's name search returns, tried in turn
+# … and from the bulk name list: it lists every filer of the name, not only
+# those with a Form 4, so the right one stands further down (John W. Stanton:
+# sixth of seven). Measured on 300 people: 5 finds 91 of the stored CIKs, 10
+# finds 95, more finds no more; a candidate with no Form 4 costs one request.
+LIST_PERSON_CANDIDATES = 10
 MAX_PERSON_FORM4 = 20     # a candidate's own Form 4s opened to find one about the issuer
 MAX_8K_FETCH     = 12     # newest 8-Ks with Item 5.02 read for departures
 
@@ -2923,12 +2928,24 @@ def _lookup_person_ciks(name: str) -> list[str]:
     matches from the start, so "Robyn Denholm" — the order Wikidata gives —
     finds nobody (findings item 29). The surname-first form is asked first,
     then the name as given (an SEC-styled name already is surname first).
-    A search with one match answers with that filer's name, kept only when it
+    Answered from the bulk name list where one is kept (`sec_names`), else by
+    the live search. A search with one match answers with that filer's name, kept only when it
     has the given name and the surname; a search with several answers with
     CIKs alone, each a candidate the caller's issuer check decides."""
     words = _name_words(name)
     if not words:
         return []
+    # the bulk name list, when this machine keeps one: the same question
+    # without a request (findings item 135)
+    from app.scraper import sec_names
+    listed = sec_names.person_ciks(words, LIST_PERSON_CANDIDATES)
+    if listed is not None:
+        return listed
+    return _search_person_ciks(words)
+
+
+def _search_person_ciks(words: list[str]) -> list[str]:
+    """`_lookup_person_ciks` by EDGAR's live name search (browse-edgar)."""
     queries = [f"{words[-1]} {words[0]}"] if len(words) > 1 else []
     queries.append(" ".join(words))
     wanted = {w.strip(".").upper() for w in (words[0], words[-1])}

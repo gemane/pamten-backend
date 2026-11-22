@@ -267,8 +267,9 @@ still to set up on the production box):
      scraping has hundreds of 404s and none of these;
    - `probes`: one known request to each endpoint the scrapers depend on
      (`app/source_contracts.py`, about a dozen requests): EDGAR's ticker
-     list, company-name and person-name search, a filer's submissions, the
-     13D/G feed and the full-text search; a GLEIF record and a parent
+     list, company-name and person-name search (the live one, whatever list is
+     kept), the bulk name list where one is kept (`SEC_NAME_LIST_DIR`), a
+     filer's submissions, the 13D/G feed and the full-text search; a GLEIF record and a parent
      relationship; a Wikidata item by a stated id, by name and its labels;
      a company's officers at Companies House (only with its key). Each goes
      through the scraper's own function, so the parameters probed are the

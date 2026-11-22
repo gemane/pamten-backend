@@ -66,7 +66,7 @@ CASES = [
      {"0": {"cik_str": 320193}}, [{}, {"0": {"cik_str": 1}}, None]),
     (sc._sec_company_search, (sec_edgar, "_browse_index"),
      [(APPLE, None)], [None, [], [("0000000001", "Other Inc")]]),
-    (sc._sec_person_search, (sec_edgar, "_lookup_person_ciks"),
+    (sc._sec_person_search, (sec_edgar, "_search_person_ciks"),
      ["0000000009", sc.COOK_CIK], [[], ["0000000009"]]),
     (sc._sec_submissions, (sec_edgar, "_submissions"),
      {"filings": {"recent": {"form": ["10-K"], "accessionNumber": ["a"], "primaryDocument": ["d"]}}},
@@ -132,6 +132,28 @@ class TestTheProbeList:
             assert "companies-house" not in {p.source for p in sc.probes()}
         with patch.object(settings, "COMPANIES_HOUSE_API_KEY", "k"):
             assert "companies-house" in {p.source for p in sc.probes()}
+
+    def test_the_bulk_name_list_is_asked_only_where_one_is_kept(self):
+        assert "bulk name list" not in {p.name for p in sc.probes()}          # the suite keeps none
+        with patch.object(settings, "SEC_NAME_LIST_DIR", "/somewhere"):
+            assert "bulk name list" in {p.name for p in sc.probes()}
+
+    def test_the_bulk_name_list_must_hold_a_known_filer(self):
+        from app.scraper import sec_names
+        with patch.object(sec_names, "index_path", return_value="idx"):
+            with patch.object(sec_names, "person_ciks", return_value=["0000000009", sc.COOK_CIK]):
+                sc._sec_name_list()
+            with patch.object(sec_names, "person_ciks", return_value=[]), pytest.raises(sc.Broken):
+                sc._sec_name_list()
+        with patch.object(sec_names, "index_path", return_value=None), pytest.raises(sc.Broken):
+            sc._sec_name_list()                                               # no download and none at hand
+
+    def test_the_person_search_probe_asks_the_live_search_whatever_list_is_kept(self):
+        from app.scraper import sec_names
+        with patch.object(sec_names, "person_ciks", return_value=[sc.COOK_CIK]) as listed, \
+             patch.object(sec_edgar, "_search_person_ciks", return_value=[]), pytest.raises(sc.Broken):
+            sc._sec_person_search()
+        listed.assert_not_called()
 
     def test_every_source_with_a_scraper_has_a_probe(self):
         with patch.object(settings, "COMPANIES_HOUSE_API_KEY", "k"):

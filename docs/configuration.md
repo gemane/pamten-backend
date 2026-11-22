@@ -40,6 +40,7 @@ Every environment variable the backend reads (`app/config.py`). A local `.env` n
 | `ALERT_REFUSED_WARN` / `ALERT_REFUSED_CRIT` | requests a source refused since yesterday (a 4xx other than 404/410/429): warn at 5, critical at 50 |
 | `ALERT_SOURCE_PROBES` | `manage.py alerts` asks each source endpoint one known question (`app/source_contracts.py`); `false` = skip |
 | `SEC_CACHE_DIR` | *(empty)* | Local layer of the EDGAR filing cache (immutable Archives files only; never searches). Needs a persistent disk — leave unset on Render |
+| `SEC_NAME_LIST_DIR` | *(empty)* | Directory for the local index of EDGAR's bulk name list (every filer name → CIK; ~40 MB downloaded at most once a day, ~325 MB of memory while the index is built). Set: a person's name search is a local lookup, no request. Empty: the live search is asked. Needs a persistent disk — leave unset on Render |
 | `OBJECT_STORE_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | *(empty)* | The shared S3-compatible object store (`app/objectstore.py`) — one bucket for every environment, a prefix per purpose; `edgar/` is the filing cache's shared layer, `geocode/` the address cache's (so a rebuild does not re-ask Nominatim for every address). Any S3 API (Hetzner, Scaleway, AWS); keys are secrets, env only |
 | `SCRAPER_OPENCORPORATES_ENABLED` | `false` | OpenCorporates source switch |
 | `SCRAPER_AUTODEDUP_ENABLED` | `true` | Auto-merge high-confidence duplicate persons after each `run-all` scrape |
