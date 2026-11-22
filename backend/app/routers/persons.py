@@ -457,8 +457,22 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
         from app.person_evidence import CompanySide
         side = CompanySide(session)
 
+        if seed_ids is None:
+            # A full scan asks for nearly every person's companies: read them in
+            # one query. One query per person was 1,075 round trips on a graph
+            # of 7,700 people — 17 of the scan's 18 seconds, and the review
+            # list waited that long to open (2026-11-22).
+            for row in session.run(
+                    "MATCH (x:Person)-[]-(e:Entity) RETURN x.id AS pid, collect(DISTINCT e.id) AS ids"):
+                _ent_cache[row.get("pid")] = set(row.get("ids") or [])
+        all_loaded = seed_ids is None
+
         def _entities(pid: str) -> set:
+            """The companies a person is tied to. A scoped scan asks for the
+            few persons it touches, each once; a full scan has them all."""
             if pid not in _ent_cache:
+                if all_loaded:
+                    return _ent_cache.setdefault(pid, set())      # tied to no company
                 rec = session.run(
                     "MATCH (x:Person {id:$id})-[]-(e:Entity) RETURN collect(DISTINCT e.id) AS ids",
                     id=pid).single()

@@ -248,6 +248,11 @@ same full name or alias), so a name written in another word order can look
 rarer than it is; merging at import, over the whole register file, is planned
 with the production server.
 
+A full scan reads every person's companies in **one query** (a scoped scan asks per
+person, for the few it touches): asked per person, the scan of 7,700 people made 1,075
+round trips and the review list took 17 seconds to open; it takes under a second now
+(2026-11-22).
+
 The merge log's reason says "same birth month" or "same birth date", so the
 month merges can be listed.
 
