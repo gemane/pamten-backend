@@ -1,15 +1,15 @@
 """Companies House officers: the people who hold a seat at a UK company — and,
 with ``history``, those who held one.
 
-The PSC snapshot names who CONTROLS a UK company; who RUNS it — directors,
-secretaries, LLP members — is a separate register, read here from the
+The PSC snapshot names who CONTROLS a UK company; who RUNS it — directors
+and LLP members — is a separate register, read here from the
 Companies House REST API (no free bulk file):
 
     GET https://api.company-information.service.gov.uk/company/{number}/officers
         ?items_per_page=100&start_index=N          (HTTP basic: the API key, no password)
 
     items[].name                  "SURNAME, Forename Middle" or "SURNAME, Forename, Title"  → Person
-    items[].officer_role          director / secretary / llp-member / …  → HAS_ROLE.role
+    items[].officer_role          director / llp-member / …  → HAS_ROLE.role (a secretary is not taken)
     items[].appointed_on          → HAS_ROLE.since
     items[].resigned_on           → ends a seat this source holds open
     items[].date_of_birth         {month, year} — never a day  → Person.birth_date "YYYY-MM"
@@ -45,6 +45,14 @@ What is taken, and what is not (user, 2026-11-13):
   record.
 - **People only.** A corporate officer (a company-secretary firm, a nominee
   company: 462 of the 9,111) is a company, and a seat runs from a person.
+- **No company secretaries** (user, 2026-11-22). A secretary keeps the
+  company's registers and files its returns: no vote on the board, no control
+  — the weakest case for holding a person here. The register states no birth
+  date for one, so a group's secretary came in once per subsidiary and nothing
+  could join the records (James Oliver Earley: 13 Unilever companies, 13
+  people; 725 of dev's 734 undated officer seats were secretaries — findings
+  items 146 and 148). `secretary` and `nominee-secretary` are counted and
+  left out, as a corporate officer is.
 - **Name, role, the dates, month and year of birth, nationality** — the birth
   month is what keeps two people of one name apart; the nationality is stored
   as the other sources store it (ISO-2 where the demonym is recognised, the
@@ -80,11 +88,12 @@ RATE_RESERVE = 5
 ROLES = {
     "director": "Director",
     "nominee-director": "Nominee Director",
-    "secretary": "Company Secretary",
-    "nominee-secretary": "Nominee Company Secretary",
     "llp-member": "LLP Member",
     "llp-designated-member": "LLP Designated Member",
 }
+
+#: `officer_role` of a person who is not taken at all: the company secretary
+NOT_TAKEN_ROLES = frozenset({"secretary", "nominee-secretary"})
 
 _OFFICER_ID = re.compile(r"^/officers/([^/]+)/appointments$")
 _TITLE = re.compile(r"^(mr|mrs|ms|miss|dr|sir|dame|lord|lady|prof|professor|the hon)\.?\s+", re.IGNORECASE)
@@ -97,6 +106,21 @@ class OfficersError(Exception):
 def is_corporate(item: dict) -> bool:
     """A company holding the seat: its role says so, or it states a register."""
     return (item.get("officer_role") or "").startswith("corporate-") or bool(item.get("identification"))
+
+
+def is_secretary(item: dict) -> bool:
+    """A person serving as the company's secretary — not taken (the module's
+    notes say why)."""
+    return (item.get("officer_role") or "").strip().lower() in NOT_TAKEN_ROLES
+
+
+def left_out(item: dict) -> str | None:
+    """Why an appointment is not read at all — the counter it goes to:
+    "corporate" for a company, "secretaries" for a secretary; None for one
+    that is read."""
+    if is_corporate(item):
+        return "corporate"
+    return "secretaries" if is_secretary(item) else None
 
 
 def role_label(officer_role: str | None) -> str | None:
@@ -192,8 +216,8 @@ def read_officer(item: dict) -> dict | None:
     """One appointment as the writer takes it: {"officer_id", "first_name",
     "last_name", "full_name", "birth_date", "nationalities", "role", "since",
     "until"} — None for
-    a company, and for a record with no officer id, name or role."""
-    if is_corporate(item):
+    a company, a secretary, and a record with no officer id, name or role."""
+    if left_out(item):
         return None
     oid, role = officer_id(item), role_label(item.get("officer_role"))
     name = officer_name(item.get("name"), item.get("name_elements"))
@@ -275,11 +299,11 @@ def add_name_elements(client: httpx.Client, items: list[dict], known: dict, slee
     """Give every person whose name is written and whose list name has a title
     part the register's own split (`item["name_elements"]`), asked once per
     officer id for the run (``known``). Returns how many were asked for.
-    Corporate officers are not asked for, and resigned ones only with
+    Corporate officers and secretaries are not asked for, and resigned ones only with
     ``history``: without it nobody writes their names."""
     asked = 0
     for item in items:
-        if is_corporate(item) or (item.get("resigned_on") and not history) \
+        if left_out(item) or (item.get("resigned_on") and not history) \
                 or not has_title_part(item.get("name")):
             continue
         oid = officer_id(item)
@@ -372,7 +396,7 @@ def write_company_officers(entity_id: str, number: str, items: list[dict], sourc
     closed seat, appointed on to resigned on. A term that touches the open
     seat ends it (`graph_writer._upsert_role` matches a seat over a touching
     period); one that does not is a seat of its own.
-    Returns {"written", "ended", "past", "corporate", "resigned", "unreadable"}:
+    Returns {"written", "ended", "past", "corporate", "secretaries", "resigned", "unreadable"}:
     ``ended`` the open seats a resignation closed, ``past`` the closed seats
     the history wrote."""
     from datetime import datetime, timezone
@@ -382,13 +406,15 @@ def write_company_officers(entity_id: str, number: str, items: list[dict], sourc
     from app.roles import canonical_role
     from app.scraper.edge_schema import READ_FIELD
     from app.scraper.graph_writer import _upsert_role
-    out = {"written": 0, "ended": 0, "past": 0, "corporate": 0, "resigned": 0, "unreadable": 0}
+    out = {"written": 0, "ended": 0, "past": 0, "corporate": 0, "secretaries": 0, "resigned": 0,
+           "unreadable": 0}
     url = OFFICERS_PAGE.format(number=number)
     now = datetime.now(timezone.utc).isoformat()
     serving, left = [], []
     for item in items:
-        if is_corporate(item):
-            out["corporate"] += 1
+        why = left_out(item)
+        if why:
+            out[why] += 1
             continue
         rec = read_officer(item)
         if rec is None:
@@ -467,8 +493,8 @@ def run_ch_officers(only: list[str] | None = None, limit: int | None = None, dry
     closed seats. A manual run: no schedule calls it.
 
     `dry_run` reads and counts, writing nothing. Returns {"status", "companies",
-    "read", "unknown", "failed", "written", "ended", "past", "corporate", "resigned",
-    "unreadable", "names_asked"}; status `no_api_key` without COMPANIES_HOUSE_API_KEY, `disabled`
+    "read", "unknown", "failed", "written", "ended", "past", "corporate", "secretaries",
+    "resigned", "unreadable", "names_asked"}; status `no_api_key` without COMPANIES_HOUSE_API_KEY, `disabled`
     when the source is switched off in the catalogue."""
     from app.config import settings
     from app.scraper.graph_writer import _ensure_source
@@ -483,8 +509,8 @@ def run_ch_officers(only: list[str] | None = None, limit: int | None = None, dry
         return {"status": "disabled"}
     companies = companies_in_graph(only, limit)
     out = {"status": "dry-run" if dry_run else "ok", "companies": len(companies), "read": 0, "unknown": 0,
-           "failed": 0, "written": 0, "ended": 0, "past": 0, "corporate": 0, "resigned": 0,
-           "unreadable": 0, "names_asked": 0}
+           "failed": 0, "written": 0, "ended": 0, "past": 0, "corporate": 0, "secretaries": 0,
+           "resigned": 0, "unreadable": 0, "names_asked": 0}
     # a dry run writes nothing — not a run-log row either
     logged = contextlib.nullcontext({}) if dry_run else \
         record_run("ch-officers", "all" if not only else ",".join(sorted(only)))
@@ -504,8 +530,9 @@ def run_ch_officers(only: list[str] | None = None, limit: int | None = None, dry
                 continue
             out["read"] += 1
             if dry_run:
-                recs = [read_officer(i) for i in items if not is_corporate(i)]
-                counts = {"corporate": sum(1 for i in items if is_corporate(i)),
+                recs = [read_officer(i) for i in items if not left_out(i)]
+                counts = {"corporate": sum(1 for i in items if left_out(i) == "corporate"),
+                          "secretaries": sum(1 for i in items if left_out(i) == "secretaries"),
                           "unreadable": sum(1 for r in recs if r is None),
                           "resigned": sum(1 for r in recs if r and r["until"]),
                           "written": sum(1 for r in recs if r and not r["until"]), "ended": 0,

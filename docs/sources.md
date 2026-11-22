@@ -172,7 +172,7 @@ headquarters pin comes from a source that does (GLEIF, EDGAR).
 
 ## Companies House officers
 
-Who **runs** a UK company — its serving directors, secretaries and LLP members. The PSC
+Who **runs** a UK company — its serving directors and LLP members (no company secretaries). The PSC
 snapshot above names who controls a company; the register of officers is a separate
 one with no free bulk file, read per company from the Companies House REST API
 (`app/scraper/ch_officers.py`):
@@ -217,6 +217,15 @@ request per 100 appointments: dev's 280 UK companies took 292.
 - **People only.** A corporate officer (`corporate-secretary`, `corporate-director`,
   `corporate-nominee-…`, or any record that states an `identification`) is a company —
   mostly company-secretary firms — and a seat runs from a person: 466 left out on dev.
+- **No company secretaries** (`secretary`, `nominee-secretary`; user, 2026-11-22, findings
+  item 148). A secretary keeps the company's registers and files its returns — no vote on
+  the board, no control — so the graph's question does not need the person. The register
+  states no birth date for one and gives each appointment its own officer id where it
+  cannot link them, so a group's secretary came in once per subsidiary and nothing could
+  join the records (James Oliver Earley: 13 Unilever companies, 13 people; 725 of dev's 734
+  undated officer seats). Joining them would have meant storing the service postcode
+  (item 146, measured, not built). The run counts them (`secretaries`) beside the
+  corporate officers and reads nothing of them — a resigned one included.
 - **Per person:** the name ("SURNAME, Forename" turned into first and last name; see
   *The name's title part* below), the month and year of birth (the register publishes no day), and the id
   `choff:{officer id}` — Companies House's own key for one person across companies,
@@ -226,8 +235,7 @@ request per 100 appointments: dev's 280 UK companies took 292.
   one comma-joined text in the register ("British,American") and becomes two entries.
   It fills an empty field and never replaces another source's. **Not stored:** the
   correspondence address and the country of residence.
-- **Per seat:** `HAS_ROLE` with the role (`director` → "Director", `secretary` →
-  "Company Secretary", `llp-member` → "LLP Member", `llp-designated-member` → "LLP
+- **Per seat:** `HAS_ROLE` with the role (`director` → "Director", `llp-member` → "LLP Member", `llp-designated-member` → "LLP
   Designated Member", a nominee as "Nominee …", any other as the register words it),
   `since` = `appointed_on` (absent for an appointment before 1992, which the register
   only bounds), the company's officers page as `source_url`, `read_from` field, source
