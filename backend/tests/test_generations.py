@@ -13,6 +13,14 @@ class TestMarks:
         assert g.generation_marks("John Smith Junior", "John Smith Senior") == {"jr", "sr"}
         assert g.generation_marks("Gates William H Iii") == {"iii"}
 
+    def test_reads_the_british_spellings(self):
+        """Findings item 147: the UK register's "Jnr" / "Snr" were no marks."""
+        assert g.generation_marks("John Smith Jnr") == {"jr"}
+        assert g.generation_marks("John Smith, Snr.") == {"sr"}
+        assert g.marks_conflict(g.generation_marks("John Smith Jnr"), g.generation_marks("John Smith Snr"))
+        assert g.marks_conflict(g.generation_marks("John Smith Jnr"), g.generation_marks("John Smith Senior"))
+        assert not g.marks_conflict(g.generation_marks("John Smith Jnr"), g.generation_marks("John Smith Jr"))
+
     def test_a_plain_name_carries_none(self):
         assert g.generation_marks("Thomas Murphy") == set()
         assert g.generation_marks(None, "") == set()
