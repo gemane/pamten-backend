@@ -52,6 +52,7 @@ def scraper_env(monkeypatch):
     from app.config import settings
     monkeypatch.setattr(settings, "OBJECT_STORE_BUCKET", "")
     monkeypatch.setattr(settings, "SEC_CACHE_DIR", "")
+    monkeypatch.setattr(settings, "SEC_NAME_LIST_DIR", "")     # the developer's .env may keep a name list
 
 
 # ── No test reaches the internet ──────────────────────────────────────────────

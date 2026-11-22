@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # never searches or listings). Empty = off. For servers with a disk; Render's
     # filesystem is ephemeral, so leave it unset there. See docs/sec_edgar_scraper.md.
     SEC_CACHE_DIR:                    str  = ""
+    # EDGAR's bulk name list (every filer name → CIK, ~40 MB, daily) kept as a
+    # local index, so a person's name search costs no request
+    # (app/scraper/sec_names.py). Empty = off: the live search is asked. Needs a
+    # persistent disk — leave it unset on Render.
+    SEC_NAME_LIST_DIR:                str  = ""
     # The shared S3-compatible object store (app/objectstore.py): one bucket for
     # every environment, a prefix per purpose (edgar/ = the filing cache,
     # geocode/ = the geocoder's answers, images/ = logos and portraits with

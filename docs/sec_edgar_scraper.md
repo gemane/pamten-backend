@@ -2125,13 +2125,45 @@ other than through its own scrape.
 | Older index pages + their Form 3s, while someone is undated | up to 3 + 60 (documents cached) |
 | The proxy's roster: the table filing, the issuer's owner list, per missing director a submissions JSON and their Form 3s | 2, then usually 2–4 per director (Berkshire 32, Tesla 15) |
 | 8-Ks with Item 5.02, for departures | up to 12 (cached) |
-| Person-centric pass: per person without a holding (up to 15), 1–2 name searches, then per candidate (up to 5) a submissions JSON and up to 20 Form 4s | usually 3–4 per person (documents cached) |
+| Person-centric pass: per person without a holding (up to 15), 1–2 name searches (none with the bulk name list, see below), then per candidate (up to 5) a submissions JSON and up to 20 Form 4s | usually 3–4 per person (documents cached) |
 | **Total (typical)** | **~40–50** |
 
 At 0.12 s per request this takes roughly 5–8 seconds per company, in addition
 to the Wikidata scrape.
 Add about 10 s for each request sec.gov leaves hanging (about 1 in 30; see
 "Stalls and the one retry" above).
+
+### The bulk name list (`sec_names.py`, findings item 135)
+
+EDGAR publishes every name it knows a filer by — companies and people, current
+and former names — as one file, `Archives/edgar/cik-lookup-data.txt`: about a
+million "NAME:CIK:" lines, 40 MB, rewritten daily. Where `SEC_NAME_LIST_DIR`
+names a directory, a **person's** name search is answered from it instead of
+browse-edgar: no request, and nothing to lose when the search page changes
+(item 132 lost every name search of a rebuild).
+
+- **The index.** The list is downloaded at most once in 24 hours (3 s) and
+  written as a sorted file of normalised names (upper case, dots dropped,
+  commas as spaces). A lookup is a binary search over the file through `mmap`:
+  the process holds none of the names. Building takes ~5 s and ~325 MB for a
+  moment. A failed refresh keeps the index at hand and is not retried for 15
+  minutes; with none at hand the live search is asked.
+- **The match** is the live search's: the surname-first form first ("DENHOLM
+  ROBYN" for Robyn Denholm), then the name as given, each as a prefix ("Cook
+  Tim" lists COOK TIMOTHY D — Wikidata names many people by a short form); the
+  first that lists anybody answers, and the issuer check decides between the
+  candidates as before. A name that is not a person's is left out: under
+  "Gates Bill" the list holds only GATES BILL & MELINDA FOUNDATION, and its
+  Form 4 about the issuer would have given Bill Gates the foundation's number.
+- **Ten candidates, not five.** The list holds every filer of a name, the live
+  search only those with a Form 4, so the right one stands further down (John
+  W. Stanton: sixth of seven). A candidate with no Form 4 costs one request.
+- **Measured** on 300 people of dev against the live search's answers: the
+  live search finds the CIK the person holds for 87, the list for 95; the list
+  answers 24 names the live search finds nobody for, and never the reverse.
+  Requests for the names themselves: about 450 before, none now.
+- **Not yet from the list:** the company-name searches, and a remembered miss.
+  The list is no source of graph data: it only says which CIKs a name may be.
 
 ---
 

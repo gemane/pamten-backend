@@ -86,8 +86,16 @@ def _sec_company_search() -> None:
 
 def _sec_person_search() -> None:
     from app.scraper import sec_edgar
-    found = sec_edgar._lookup_person_ciks("Timothy Cook")
+    found = sec_edgar._search_person_ciks(["Timothy", "Cook"])     # the live search, whatever list is kept
     _expect(COOK_CIK in found, f"'Timothy Cook' among Form 4 filers lists {found}")
+
+
+def _sec_name_list() -> None:
+    from app.scraper import sec_names
+    path = sec_names.index_path()
+    _expect(path, "the bulk name list could not be downloaded and none is at hand")
+    found = sec_names.person_ciks(["Timothy", "Cook"], 50, path)
+    _expect(COOK_CIK in (found or []), f"'Timothy Cook' in the bulk name list gives {(found or [])[:5]}")
 
 
 def _sec_submissions() -> None:
@@ -169,7 +177,8 @@ def _companies_house_officers() -> None:
 
 
 def probes() -> list[Probe]:
-    """The probes this instance can run: Companies House only with its key."""
+    """The probes this instance can run: Companies House only with its key, the
+    bulk name list only where one is kept."""
     from app.config import settings
     out = [
         Probe("sec-edgar", "ticker list", _sec(_sec_tickers)),
@@ -184,6 +193,8 @@ def probes() -> list[Probe]:
         Probe("wikidata", "item by name", _wikidata_by_name),
         Probe("wikidata", "an item's labels", _wikidata_entity),
     ]
+    if settings.SEC_NAME_LIST_DIR:
+        out.insert(3, Probe("sec-edgar", "bulk name list", _sec(_sec_name_list)))
     if settings.COMPANIES_HOUSE_API_KEY:
         out.append(Probe("companies-house", "a company's officers", _companies_house_officers))
     return out

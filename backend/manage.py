@@ -182,6 +182,33 @@ def cmd_ch_officers(args):
         sys.exit(1)
 
 
+def cmd_sec_name_list(args):
+    """Download EDGAR's bulk name list and build the local index the person
+    lookup reads (findings item 135) — one of the bulk downloads, so a rebuild
+    or an import day starts with today's list instead of fetching it inside
+    the first scrape. The lookup refreshes it by itself once it is a day old."""
+    import os
+    import time
+    from app.config import settings
+    from app.scraper import sec_names
+    if not settings.SEC_NAME_LIST_DIR:
+        print("sec-name-list: set SEC_NAME_LIST_DIR to the directory that keeps the index "
+              "(a persistent disk; not on Render)")
+        sys.exit(1)
+    path = os.path.join(settings.SEC_NAME_LIST_DIR, sec_names.INDEX_FILE)
+    fresh = os.path.exists(path) and time.time() - os.path.getmtime(path) < sec_names.MAX_AGE_HOURS * 3600
+    if fresh and not args.force:
+        print(f"EDGAR name list: {sec_names.count(path):,} names, less than a day old — kept ({path})")
+        return
+    before = os.stat(path).st_mtime_ns if os.path.exists(path) else None
+    got = sec_names.index_path(force=True)
+    if not got or os.stat(got).st_mtime_ns == before:
+        print("EDGAR name list: the download failed"
+              + ("; the index at hand is kept" if got else " and there is no index — the live search will be asked"))
+        sys.exit(1)
+    print(f"EDGAR name list: {sec_names.count(got):,} names downloaded ({got})")
+
+
 def cmd_ch_company_data(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -1534,6 +1561,15 @@ def _build_parser():
     p_cec.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_cec.set_defaults(func=cmd_close_ended_classes)
+
+    # sec-name-list command (EDGAR's bulk name list → the local index)
+    p_snl = subparsers.add_parser(
+        'sec-name-list',
+        help="Download EDGAR's bulk name list (every filer name with its CIK, ~40 MB) and build the "
+             "local index a person's name search reads; needs SEC_NAME_LIST_DIR. Skips a list less "
+             "than a day old")
+    p_snl.add_argument('--force', action='store_true', help='Download even if the index is less than a day old')
+    p_snl.set_defaults(func=cmd_sec_name_list)
 
     # ch-officers command (Companies House register of officers)
     p_cho = subparsers.add_parser(
