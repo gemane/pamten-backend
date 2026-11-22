@@ -51,3 +51,39 @@ def test_autodedup_scoped_to_touched(it_db):
     # The full scan (no seed) still sees everyone — the same duplicate group surfaces.
     full = scan_duplicate_groups()
     assert any({a, b, "existing-gates"} <= {m["id"] for m in g["members"]} for g in full)
+
+
+def test_a_full_scan_reads_the_companies_in_one_query(it_db, monkeypatch):
+    """The review list waited 17 s on 1,075 round trips: a full scan asked for
+    each person's companies with a query of its own (2026-11-22). It reads them
+    all at once now — and finds what the per-person scan found: two namesakes
+    of one company are a group for their shared company, a third namesake with
+    no company at all stands apart from that reason."""
+    from app.database import _Session as ArcadeSession
+    from app.routers.persons import scan_duplicate_groups
+    for pid, name in (("p-a", "Jordan Quillfeather"), ("p-b", "Jordan Quillfeather"),
+                      ("p-c", "Jordan Quillfeather"), ("p-other", "Somebody Else Entirely")):
+        _person(it_db, pid, name)
+    it_db.run_command("CREATE (e:Entity {id:'e-co', name:'Quill Co'})")
+    for pid in ("p-a", "p-b", "p-other"):
+        it_db.run_command("MATCH (p:Person {id:$p}), (e:Entity {id:'e-co'}) CREATE (p)-[:HAS_ROLE {role:'Director'}]->(e)",
+                          {"p": pid})
+
+    asked: list[str] = []
+    run = ArcadeSession.run
+
+    def counting(self, query, *args, **kwargs):
+        asked.append(query)
+        return run(self, query, *args, **kwargs)
+    monkeypatch.setattr(ArcadeSession, "run", counting)
+
+    full = scan_duplicate_groups()
+    per_person = [q for q in asked if "(x:Person {id:$id})-[]-(e:Entity)" in q]
+    assert per_person == []
+    assert sum("MATCH (x:Person)-[]-(e:Entity)" in q for q in asked) == 1
+
+    scoped = scan_duplicate_groups(seed_ids=["p-a", "p-b", "p-c"])
+    key = lambda groups: sorted((sorted(m["id"] for m in g["members"]), g["confidence"], g["reason"]) for g in groups)  # noqa: E731
+    mine = [g for g in full if {m["id"] for m in g["members"]} & {"p-a", "p-b", "p-c"}]
+    assert mine and key(mine) == key(scoped)        # the same groups, the same reasons, either way
+    assert any({m["id"] for m in g["members"]} == {"p-a", "p-b"} and "company" in g["reason"] for g in mine)
