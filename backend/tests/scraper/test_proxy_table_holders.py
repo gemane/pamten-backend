@@ -490,6 +490,49 @@ def test_a_one_word_class_cell_and_a_section_heading_with_a_figure():
                                                "Americo Investment Advisors Inc.": (5.5, "Preferred Stock")}
 
 
+WHIRLPOOL_DIRECTORS = (
+    "<html><body><p>The table shows the beneficial ownership of our common stock as of February 9, 2026, by "
+    "each director and executive officer.</p><table>"
+    "<tr><td>Name</td><td>Shares Beneficially Owned (1)</td><td>Deferred Stock Units (2)</td>"
+    "<td>Shares Under Exercisable Options (3)</td><td>Total (4)</td><td>{percent}</td></tr>"
+    "<tr><td>Samuel R. Allen</td><td>22,156</td><td>—</td><td>—</td><td>22,156</td><td>*</td></tr>"
+    "<tr><td>Marc R. Bitzer</td><td>301,442</td><td>—</td><td>472,619</td><td>774,061</td><td>1.37%</td></tr>"
+    "</table></body></html>")
+
+
+@pytest.mark.parametrize("percent", [
+    "Percentage (* Less than 1%)",          # Whirlpool's DEF 14A of 2026-03-10
+    "Percent of Class (*less than 1.0 %)",
+    "% of Class (if more than 1%)",
+])
+def test_a_note_with_a_figure_beside_the_percent_heading_keeps_the_column(percent):
+    """Findings item 142: every header stating a figure was refused as a
+    percent column (the rule meant for "More than 5% owners:"), so Whirlpool's
+    director table read no row and no record date — and the statements pass,
+    which begins at the earlier of filing day and record date, lost the 13D
+    Appaloosa filed between the two."""
+    html = WHIRLPOOL_DIRECTORS.format(percent=percent)
+    assert [r["name"] for r in read_holder_rows(html)] == ["Samuel R. Allen", "Marc R. Bitzer"]
+    table = read_holder_table(html)
+    assert table["as_of"] == "2026-02-09"
+    assert [(r["name"], r["stake_pct"]) for r in table["rows"]] == [("Marc R. Bitzer", 1.37)]
+
+
+@pytest.mark.parametrize("text, heads_a_percent_column", [
+    ("Percent of Class", True),
+    ("%", True),
+    ("Percentage (* Less than 1%)", True),
+    ("More than 5% owners:", False),          # a section heading (United States Antimony)
+    ("5% Stockholders", False),
+    ("Owners of 5 % or more", False),         # the figure and its sign apart
+    ("2025 AGM Votes in Favor (%)", False),   # a vote count (NovaGold)
+    ("Shares Beneficially Owned", False),
+])
+def test_what_heads_a_percent_column(text, heads_a_percent_column):
+    from app.scraper.proxy_statement import _is_percent_header
+    assert _is_percent_header(text) is heads_a_percent_column
+
+
 @pytest.mark.parametrize("columns, stake, named", [
     # units of the operating company beside the stock: the stock is the stake
     ([("Class A Common Stock %", 6.7), ("LLC Units Beneficially Owned %", 98.6)], 6.7, "Class A"),

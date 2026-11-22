@@ -1980,7 +1980,13 @@ Health Services, LENSAR).
 **A percent that is no stake.** A nominee table states the votes each director
 got last year ("2025 AGM Votes in Favor (%)", NovaGold: every director at
 85–99 %); a section heading states a threshold ("More than 5% owners:"). Neither
-is a percent column.
+is a percent column. Only the stated FIGURE is set aside, though, not every header
+that states one: "Percentage (* Less than 1%)" is the commonest note on a percent
+column. While any header with a figure was refused, Whirlpool's director table read
+no row and no record date, the statements pass (`write_statements_since`) began at
+the filing day (2026-03-10) instead of the record date (2026-02-09), and the 13D
+Appaloosa filed on 2026-03-03 — with its voting group of five — was not read
+(findings item 142, 2026-11-22).
 A section heading that stands in the class column, alone on its row
 ("Directors and Executive Officers"), is no class either.
 
