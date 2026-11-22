@@ -710,6 +710,13 @@ def _all_pairs_dismissed(members: list, dismissed: set) -> bool:
     return all(frozenset((a, b)) in dismissed for a, b in combinations(ids, 2))
 
 
+#: scan-and-merge passes of one auto-dedup run. A pass after the first only
+#: follows merges of the pass before, so the count is the longest chain of
+#: records that reach each other through a merge: two on dev (item 145). The
+#: cap is a guard against a scan that keeps finding the pair it just merged.
+DEDUP_MAX_PASSES = 5
+
+
 def deduplicate_high_confidence(apply: bool = True, seed_ids: list[str] | None = None) -> dict:
     """
     Scan for duplicate persons and auto-merge only HIGH-confidence, non-distinct
@@ -721,36 +728,64 @@ def deduplicate_high_confidence(apply: bool = True, seed_ids: list[str] | None =
     `seed_ids` scopes the scan to just the persons a scrape touched (+ their exact
     match candidates) so the post-scrape auto-dedup stays fast on a large DB; None
     scans everything (the manual/periodic full dedup).
+
+    Scan and merge are repeated until a pass merges nothing (at most
+    `DEDUP_MAX_PASSES`); `needs_review` is the last scan's, `passes` how many ran,
+    `merging_passes` how many of them merged something.
     """
     merged: list[dict] = []
     needs_review: list[dict] = []
-    for g in scan_duplicate_groups(seed_ids=seed_ids):
-        if g["confidence"] != "high" or g.get("likely_distinct"):
-            needs_review.append(g)
-            continue
-        keep = g["suggested_keep_id"]
-        keep_name = next((m["full_name"] for m in g["members"] if m["id"] == keep), keep)
-        done: list[str] = []
-        for m in g["members"]:
-            if m["id"] == keep:
+    seeds = seed_ids
+    passes = merging = 0
+    # A merge changes what the scan saw: the group that named the record just
+    # merged away cannot be merged from that scan (findings item 145). Two
+    # records of "Robert Christopher Massey" merged on their rare name, and the
+    # one merged away was the one that shared a company with "Robert Massey" —
+    # that pair, rated high, stayed on the review list. So the scan is repeated
+    # while a pass merges anything, and every pair is judged again on what the
+    # records hold NOW; a vanished record's forward is not followed, which
+    # would merge on evidence collected for another record.
+    while passes < DEDUP_MAX_PASSES:
+        passes += 1
+        needs_review = []
+        survivors: list[str] = []
+        for g in scan_duplicate_groups(seed_ids=seeds):
+            if g["confidence"] != "high" or g.get("likely_distinct"):
+                needs_review.append(g)
                 continue
-            if apply:
-                try:
-                    # the survivor may come back under a better id (a `wd:`
-                    # person that took the twin's CIK is `sec:` now): the
-                    # group's next merge and the report use that id
-                    keep = merge_person_records(keep, m["id"], reason=g["reason"])
-                except ValueError:
-                    continue  # node vanished (already merged in a prior group)
-            done.append(m["full_name"])
-        if done:
-            merged.append({"keep_id": keep, "keep_name": keep_name, "merged": done})
+            keep = g["suggested_keep_id"]
+            keep_name = next((m["full_name"] for m in g["members"] if m["id"] == keep), keep)
+            done: list[str] = []
+            for m in g["members"]:
+                if m["id"] == keep:
+                    continue
+                if apply:
+                    try:
+                        # the survivor may come back under a better id (a `wd:`
+                        # person that took the twin's CIK is `sec:` now): the
+                        # group's next merge and the report use that id
+                        keep = merge_person_records(keep, m["id"], reason=g["reason"])
+                    except ValueError:
+                        continue  # node vanished (merged in a prior group): the next pass sees the survivor
+                done.append(m["full_name"])
+            if done:
+                merged.append({"keep_id": keep, "keep_name": keep_name, "merged": done})
+                survivors.append(keep)
+        merging += bool(survivors)
+        if not apply or not survivors:
+            break                     # a dry run cannot see past its first pass; nothing merged = stable
+        if seed_ids is not None:
+            # a scoped scan goes on from what it started with and what it made:
+            # an id merged away fetches nothing, its survivor fetches the rest
+            seeds = list(dict.fromkeys([*seed_ids, *survivors, *(seeds or [])]))
     return {
         "applied": apply,
         "merged": merged,
         "merged_count": sum(len(x["merged"]) for x in merged),
         "needs_review": needs_review,
         "review_count": len(needs_review),
+        "passes": passes,                 # scans run, the last one finding nothing to merge
+        "merging_passes": merging,        # … and those that merged something
     }
 
 

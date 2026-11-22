@@ -248,6 +248,17 @@ same full name or alias), so a name written in another word order can look
 rarer than it is; merging at import, over the whole register file, is planned
 with the production server.
 
+**The run repeats its scan while a pass merges anything** (findings item 145, at most
+`DEDUP_MAX_PASSES` = 5). A merge changes what the scan saw: on dev two officer records of
+"Robert Christopher Massey" merged on their rare name, and the one merged away was the
+one that shared a company with "Robert Massey" — that pair, rated high in the same scan,
+could no longer be merged from it and stayed on the review list. The next pass sees the
+survivor with both seats and judges the pair again on what the records hold now. The
+forward of a vanished record is deliberately not followed: that would merge on evidence
+collected for another record and skip the checks (two Wikidata items, a Jr. on one side).
+A scoped run goes on from its seeds plus the survivors; a dry run is one pass; the review
+list a run returns is the last scan's, so it shows what is left after the merges.
+
 A full scan reads every person's companies in **one query** (a scoped scan asks per
 person, for the few it touches): asked per person, the scan of 7,700 people made 1,075
 round trips and the review list took 17 seconds to open; it takes under a second now

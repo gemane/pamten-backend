@@ -314,9 +314,10 @@ def test_a_person_without_a_birth_date_does_not_merge_along(it_db):
     res = deduplicate_high_confidence(apply=True)
     assert res["merged_count"] == 1
     assert len(_alive(it_db)) == 2 and "choff:c" in _alive(it_db)
-    # the three wait for a human as a doubt — a month and a day in it are no conflict
-    whole = [g for g in res["needs_review"] if len(g["members"]) == 3]
-    assert len(whole) == 1 and whole[0]["likely_distinct"] is False
+    # the one without a date waits for a human beside the merged two, as a
+    # doubt (the review list is the scan AFTER the merges, findings item 145)
+    left = [g for g in res["needs_review"] if "choff:c" in {m["id"] for m in g["members"]}]
+    assert len(left) == 1 and len(left[0]["members"]) == 2 and left[0]["likely_distinct"] is False
 
 
 def test_a_day_and_the_month_it_lies_in_are_one_birth_date(it_db):
@@ -459,8 +460,10 @@ def test_one_shared_company_does_not_merge_the_whole_group_of_a_name(it_db):
     _works_at(it_db, "other", "p-3")
     res = deduplicate_high_confidence(apply=True)
     assert res["merged_count"] == 1 and "p-3" in _alive(it_db) and len(_alive(it_db)) == 2
-    whole = [g for g in res["needs_review"] if len(g["members"]) == 3]
-    assert len(whole) == 1 and "only some of them share a company" in whole[0]["reason"]
+    # the third waits beside the merged two, and not as "high" (the review list
+    # is the scan AFTER the merges, findings item 145)
+    left = [g for g in res["needs_review"] if "p-3" in {m["id"] for m in g["members"]}]
+    assert len(left) == 1 and len(left[0]["members"]) == 2 and left[0]["confidence"] != "high"
 
 
 def test_a_chain_of_shared_companies_links_all_of_them(it_db):
@@ -509,3 +512,88 @@ def test_a_day_and_its_month_count_as_one_birth_month_of_the_name(it_db):
             ("chpsc:c", "Tadashi Yanai", "1961-05"), ("chpsc:d", "Tadashi Yanai", "1975-09"))
     res = deduplicate_high_confidence(apply=True)
     assert res["merged_count"] == 1 and len(_alive(it_db)) == 3
+
+
+# ── a merge changes what the scan saw (findings item 145) ────────────────────
+
+def _masseys(it_db):
+    """Dev, rebuild 2026-11-21b: two officer records of "Robert Christopher
+    Massey" (a rare name, one birth month) and a "Robert Massey" of the same
+    month who shares a company with ONE of them — the one with fewer seats,
+    which the name merge folds into the other."""
+    _people(it_db, ("choff:kept", "Robert Christopher Massey", "1985-11"),
+            ("choff:folded", "Robert Christopher Massey", "1985-11"),
+            ("choff:short", "Robert Massey", "1985-11"))
+    for pid, first in (("choff:kept", "Robert Christopher"), ("choff:folded", "Robert Christopher"),
+                       ("choff:short", "Robert")):
+        it_db.run_command("MATCH (p:Person {id: $id}) SET p.first_name = $f, p.last_name = 'Massey'",
+                          {"id": pid, "f": first})
+    _works_at(it_db, "brightside", "choff:kept")
+    _works_at(it_db, "brightside-two", "choff:kept")
+    _works_at(it_db, "anacap", "choff:folded", "choff:short")
+
+
+def test_a_pair_whose_record_was_just_merged_away_is_merged_by_the_next_pass(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _masseys(it_db)
+    res = deduplicate_high_confidence(apply=True)
+    assert _alive(it_db) == ["choff:kept"]
+    assert res["merged_count"] == 2 and res["merging_passes"] == 2 and res["passes"] == 3
+    assert res["review_count"] == 0
+    seats = {r["e"] for r in it_db.run_command(
+        "MATCH (p:Person {id: 'choff:kept'})-[:HAS_ROLE]->(e:Entity) RETURN e.id AS e")}
+    assert seats == {"brightside", "brightside-two", "anacap"}
+    # each merge is logged with the evidence of ITS pair: the name for the first,
+    # the shared company for the second
+    reasons = sorted(r["r"] for r in it_db.run_command("MATCH (ml:MergeLog) RETURN ml.reason AS r"))
+    assert any("a rare name" in r for r in reasons) and any("shared company" in r for r in reasons)
+
+
+def test_a_second_pass_judges_the_pair_again_and_may_refuse_it(it_db):
+    """No forward is followed: the survivor is another record than the one the
+    scan paired. Here the kept record and the short name carry two different
+    Wikidata items — the folded record carried none, so its pair was rated
+    high — and the pair waits for a human instead of merging on the folded
+    record's evidence."""
+    from app.routers.persons import deduplicate_high_confidence
+    _masseys(it_db)
+    it_db.run_command("MATCH (p:Person {id: 'choff:kept'}) SET p.wikidata_id = 'Q111'")
+    it_db.run_command("MATCH (p:Person {id: 'choff:short'}) SET p.wikidata_id = 'Q222'")
+    res = deduplicate_high_confidence(apply=True)
+    assert _alive(it_db) == ["choff:kept", "choff:short"] and res["merged_count"] == 1
+    pair = [g for g in res["needs_review"] if {m["id"] for m in g["members"]} == {"choff:kept", "choff:short"}]
+    assert len(pair) == 1 and pair[0]["likely_distinct"] is True
+
+
+def test_the_scoped_run_goes_on_from_the_survivor(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _masseys(it_db)
+    # seeded with the pair only: the survivor of the first pass is not among the
+    # seeds, and nothing but its id leads the second pass to it
+    res = deduplicate_high_confidence(apply=True, seed_ids=["choff:folded", "choff:short"])
+    assert _alive(it_db) == ["choff:kept"] and res["merged_count"] == 2
+
+
+def test_a_dry_run_is_one_pass_and_merges_nothing(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _masseys(it_db)
+    res = deduplicate_high_confidence(apply=False)
+    assert res["passes"] == 1 and _alive(it_db) == ["choff:folded", "choff:kept", "choff:short"]
+
+
+def test_a_run_that_merges_nothing_scans_once(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _people(it_db, ("p-a", "Ada Lovelace", "1815-12"), ("p-b", "Grace Hopper", "1906-12"))
+    res = deduplicate_high_confidence(apply=True)
+    assert res["passes"] == 1 and res["merging_passes"] == 0
+
+
+def test_the_passes_are_capped(it_db, monkeypatch):
+    from app.routers import persons
+    scans = []
+    group = {"confidence": "high", "likely_distinct": False, "reason": "r", "suggested_keep_id": "a",
+             "members": [{"id": "a", "full_name": "A"}, {"id": "b", "full_name": "B"}]}
+    monkeypatch.setattr(persons, "scan_duplicate_groups", lambda seed_ids=None: scans.append(1) or [group])
+    monkeypatch.setattr(persons, "merge_person_records", lambda keep, dup, reason=None: keep)
+    res = persons.deduplicate_high_confidence(apply=True)
+    assert len(scans) == persons.DEDUP_MAX_PASSES == res["passes"]

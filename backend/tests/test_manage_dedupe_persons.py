@@ -37,6 +37,13 @@ def test_the_default_is_the_full_scan_applied(monkeypatch, capsys):
         "Merged 2 persons across 2 groups; 10 groups need review"]
 
 
+def test_a_run_of_several_passes_says_so(monkeypatch, capsys):
+    # findings item 145: a merge can make the next pair mergeable
+    _wire(monkeypatch, {**_result(), "passes": 3, "merging_passes": 2})
+    manage.cmd_dedupe_persons(SimpleNamespace(scraped_only=False, dry_run=False, db_url=None))
+    assert capsys.readouterr().out.splitlines()[-1] == "Merged 2 persons across 2 groups in 2 passes; 10 groups need review"
+
+
 def test_scraped_only_seeds_the_scoped_scan_from_the_hard_ids(monkeypatch):
     calls = _wire(monkeypatch, _result())
     manage.cmd_dedupe_persons(SimpleNamespace(scraped_only=True, dry_run=False, db_url=None))

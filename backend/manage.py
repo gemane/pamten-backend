@@ -313,8 +313,12 @@ def cmd_dedupe_persons(args):
         sys.exit(1)
     for g in res["merged"]:
         print(f"  {g['keep_name']} ({g['keep_id']}) takes {', '.join(g['merged'])}")
+    # a merge can make the next pair mergeable, so the run repeats its scan
+    # while a pass merges anything (findings item 145)
+    passes = res.get("merging_passes", 1)
     print(f"{'Would merge' if dry else 'Merged'} {res['merged_count']} persons across "
-          f"{len(res['merged'])} groups; {res['review_count']} groups need review")
+          f"{len(res['merged'])} groups{f' in {passes} passes' if passes > 1 else ''}; "
+          f"{res['review_count']} groups need review")
 
 
 def cmd_undo_person_merge(args):
