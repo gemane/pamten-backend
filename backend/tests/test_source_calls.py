@@ -24,7 +24,14 @@ def _clean():
 
 
 def _counts():
-    return {(s, k): n for (_d, s, k), n in source_calls.drain().items()}
+    out: dict = {}
+    for (_d, s, k, _w), n in source_calls.drain().items():
+        out[(s, k)] = out.get((s, k), 0) + n
+    return out
+
+
+def _types():
+    return {(s, k, w): n for (_d, s, k, w), n in source_calls.drain().items()}
 
 
 class TestHosts:
@@ -67,6 +74,50 @@ class TestHosts:
         hosts = {h for f in files for h in re.findall(r"https?://([a-zA-Z0-9.-]+)", f.read_text())}
         missing = sorted(h for h in hosts - self.NOT_FETCHED if source_calls.source_for_host(h) is None)
         assert missing == []
+
+
+class TestRequestType:
+    @pytest.mark.parametrize("url, what", [
+        ("https://data.sec.gov/submissions/CIK0000320193.json", "filer-record"),
+        ("https://data.sec.gov/submissions/CIK0000320193-submissions-001.json", "filer-record-page"),
+        ("https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/aapl-20250927.htm", "filing-document"),
+        ("https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/0000320193-25-000079.txt", "filing-document"),
+        ("https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/index.json", "filing-folder"),
+        ("https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/", "filing-folder"),
+        ("https://www.sec.gov/Archives/edgar/data/320193/000032019325000079", "filing-folder"),
+        ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=SC", "filing-feed"),
+        ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=4", "filing-feed"),
+        ("https://www.sec.gov/cgi-bin/browse-edgar?company=Amgen+Inc&action=getcompany&type=", "company-search"),
+        ("https://www.sec.gov/cgi-bin/browse-edgar?company=Amgen+Inc&action=getcompany&type=10-K", "company-search"),
+        ("https://www.sec.gov/cgi-bin/browse-edgar?company=COOK+TIM&action=getcompany&type=4", "person-search"),
+        ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent", "other"),
+        ("https://efts.sec.gov/LATEST/search-index?q=%22Apple%22&forms=10-K", "full-text"),
+        ("https://data.sec.gov/api/xbrl/companyconcept/CIK0000320193/us-gaap/Assets.json", "xbrl"),
+        ("https://www.sec.gov/cgi-bin/own-disp?action=getowner&CIK=0001214156", "insider-page"),
+        ("https://www.sec.gov/files/company_tickers.json", "tickers"),
+        ("https://www.sec.gov/Archives/edgar/cik-lookup-data.txt", "name-list"),
+        ("https://www.sec.gov/somewhere/new", "other"),
+    ])
+    def test_edgar_by_what_the_url_asks_for(self, url, what):
+        assert source_calls.request_type("sec-edgar", url) == what
+        assert what in source_calls.SEC_TYPES
+
+    def test_a_source_without_a_rule_has_no_type(self):
+        assert source_calls.request_type("gleif", "https://api.gleif.org/api/v1/lei-records/X") == ""
+        assert source_calls.request_type("bucket:edgar", "edgar/0001/a.gz") == ""
+
+    def test_every_edgar_url_the_scrapers_name_has_a_type(self):
+        # the sibling-path guard: a new EDGAR endpoint must get a rule, or it
+        # is counted as `other` and nobody sees what it costs
+        app = pathlib.Path(source_calls.__file__).parent
+        urls = {u for f in app.glob("scraper/*.py")
+                for u in re.findall(r'"(https://(?:www|data|efts)\.sec\.gov/[^"<{ ]+)"', f.read_text())}
+        bare = {"https://www.sec.gov/cgi-bin/browse-edgar",          # typed by its parameters
+                "https://www.sec.gov/Archives/edgar/data", "https://data.sec.gov/submissions",
+                "https://www.sec.gov/edgar"}                         # the source's link, shown, not fetched
+        assert urls - bare, "no EDGAR URL found — the pattern no longer matches the scrapers"
+        untyped = sorted(u for u in urls - bare if source_calls.request_type("sec-edgar", u) == "other")
+        assert untyped == []
 
 
 class _Pool:
@@ -115,6 +166,23 @@ class TestTransport:
         with _client(status=429) as c:
             c.get("https://www.sec.gov/x")
         assert _counts() == {("sec-edgar", "ok"): 2, ("sec-edgar", "429"): 1}
+
+    def test_a_call_carries_what_was_asked(self, installed):
+        # findings item 135: EDGAR's calls were one number per rebuild
+        with _client() as c:
+            c.get("https://data.sec.gov/submissions/CIK0000320193.json")
+            c.get("https://data.sec.gov/submissions/CIK0000320193.json")
+            c.get("https://www.sec.gov/cgi-bin/browse-edgar", params={"company": "Amgen", "type": ""})
+            c.get("https://www.wikidata.org/w/api.php")
+        with _client(status=404) as c:
+            c.get("https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/a.htm")
+        with _client(fail=True) as c, pytest.raises(httpx.ConnectError):
+            c.get("https://efts.sec.gov/LATEST/search-index", params={"q": "x"})
+        assert _types() == {("sec-edgar", "ok", "filer-record"): 2,
+                            ("sec-edgar", "ok", "company-search"): 1,
+                            ("sec-edgar", "4xx", "filing-document"): 1,
+                            ("sec-edgar", "error", "full-text"): 1,
+                            ("wikidata", "ok", ""): 1}
 
     def test_a_failed_call_is_counted_and_still_raises(self, installed):
         with _client(fail=True) as c, pytest.raises(httpx.ConnectError):
@@ -191,6 +259,21 @@ class TestFlush:
         assert first[1]["k"] == f"{first[1]['d']}|{first[1]['s']}|{first[1]['kind']}"
         assert source_calls.drain() == {}
 
+    def test_a_request_type_is_a_row_of_its_own(self):
+        source_calls.count("sec-edgar", "ok", 3, what="filer-record")
+        source_calls.count("sec-edgar", "ok", 2, what="full-text")
+        with patch("app.db.arcadedb.run_sql") as sql:
+            assert source_calls.flush() == 2
+        rows = sorted((c.args[1]["k"].split("|", 1)[1], c.args[1]["w"], c.args[1]["n"]) for c in sql.call_args_list)
+        assert rows == [("sec-edgar|ok|filer-record", "filer-record", 3), ("sec-edgar|ok|full-text", "full-text", 2)]
+        assert all("what = :w" in c.args[0] for c in sql.call_args_list)
+
+    def test_a_failed_write_keeps_the_request_type(self):
+        source_calls.count("sec-edgar", "ok", 2, what="xbrl")
+        with patch("app.db.arcadedb.run_sql", side_effect=RuntimeError("db down")):
+            source_calls.flush()
+        assert _types() == {("sec-edgar", "ok", "xbrl"): 2}
+
     def test_a_failed_write_keeps_the_count_for_the_next_flush(self):
         source_calls.count("gleif", "ok", 2)
         with patch("app.db.arcadedb.run_sql", side_effect=RuntimeError("db down")):
@@ -212,6 +295,66 @@ class TestFormat:
 
     def test_nothing_counted(self):
         assert source_calls.format_totals({}) == "  none counted\n"
+
+    def test_the_request_types_under_their_source_most_asked_first(self):
+        text = source_calls.format_totals(
+            {"sec-edgar": {"ok": 900, "429": 2}, "gleif": {"ok": 3}, "bucket:edgar": {"hit": 4}},
+            {"sec-edgar": {"full-text": 20, "filer-record": 700, "filing-document": 2}})
+        lines = text.splitlines()
+        assert [ln.split() for ln in lines[1:4]] == [["filer-record", "700"], ["full-text", "20"], ["filing-document", "2"]]
+        assert lines[4].split()[:2] == ["gleif", "3"] and lines[5].startswith("  bucket:edgar")
+
+
+class TestTotalsByType:
+    def test_only_the_calls_that_carry_a_type(self):
+        rows = [{"source": "sec-edgar", "what": "filer-record", "n": 9}, {"source": "sec-edgar", "what": "xbrl", "n": 2},
+                {"source": "gleif", "what": "", "n": 4}, {"source": "wikidata", "n": 5}]     # rows from before the type
+        with patch("app.db.arcadedb.run_sql", return_value=rows) as sql:
+            out = source_calls.totals_by_type("2026-11-23", "2026-11-24")
+        assert out == {"sec-edgar": {"filer-record": 9, "xbrl": 2}}
+        assert sql.call_args.args[1] == {"a": "2026-11-23", "b": "2026-11-24"}
+
+    def test_the_command_prints_them(self, capsys):
+        import argparse
+
+        import manage
+        args = argparse.Namespace(to="2026-11-24", days=7, **{"from": "2026-11-23"})
+        with patch.object(manage, "_apply_direct_db_url"), \
+             patch.object(source_calls, "totals", return_value={"sec-edgar": {"ok": 11}}), \
+             patch.object(source_calls, "totals_by_type", return_value={"sec-edgar": {"filer-record": 9}}):
+            manage.cmd_source_calls(args)
+        out = capsys.readouterr().out
+        assert "sec-edgar" in out and "filer-record" in out and "9" in out.split("filer-record")[1]
+
+
+@pytest.mark.allow_network
+@pytest.mark.allow_db
+class TestAsyncTransport:
+    def test_an_async_call_carries_what_was_asked(self, installed):
+        import asyncio
+
+        class Pool:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                pass
+
+            async def handle_async_request(self, request):
+                async def body():
+                    yield b"{}"
+                return httpcore.Response(200, content=body())
+
+            async def aclose(self):
+                pass
+
+        async def go():
+            transport = httpx.AsyncHTTPTransport()
+            transport._pool = Pool()
+            async with httpx.AsyncClient(transport=transport) as c:
+                await c.get("https://data.sec.gov/submissions/CIK0000320193.json")
+        asyncio.run(go())
+        assert _types() == {("sec-edgar", "ok", "filer-record"): 1}
 
 
 class TestWeeklyReport:

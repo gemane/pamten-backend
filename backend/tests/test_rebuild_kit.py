@@ -235,6 +235,29 @@ class TestSourceCalls:
         assert snap["source_calls"] == {"bucket:edgar": {"hit": 4000},
                                         "sec-edgar": {"ok": 9000, "429": 2}}
 
+    def test_the_snapshot_keeps_what_was_asked(self):
+        def sql(q):
+            if "FROM SourceCall" in q and "what" in q:
+                return [{"source": "sec-edgar", "what": "filer-record", "n": 7000},
+                        {"source": "sec-edgar", "what": "full-text", "n": 60},
+                        {"source": "gleif", "what": "", "n": 40}, {"source": "wikidata", "n": 9}]
+            if "FROM SourceCall" in q:
+                return [{"source": "sec-edgar", "kind": "ok", "n": 9000}]
+            return _fake_sql(q)
+        snap = snapshot.take(sql, _fake_cypher)
+        assert snap["source_call_types"] == {"sec-edgar": {"filer-record": 7000, "full-text": 60}}
+        assert snap["source_calls"] == {"sec-edgar": {"ok": 9000}}
+
+    def test_the_diff_prints_what_was_asked_most_asked_first(self, capsys):
+        diff._print_source_calls(
+            {"source_calls": {"sec-edgar": {"ok": 9000}}},
+            {"source_calls": {"sec-edgar": {"ok": 8700}},
+             "source_call_types": {"sec-edgar": {"filer-record": 60, "full-text": 7000}}})
+        lines = capsys.readouterr().out.splitlines()
+        at = lines.index("  sec-edgar by request type:")
+        assert [ln.split() for ln in lines[at + 1:at + 3]] == [["full-text", "-", "->", "7000"],
+                                                              ["filer-record", "-", "->", "60"]]
+
     def test_the_diff_prints_them_previous_against_new(self, capsys):
         diff._print_source_calls({"source_calls": {"sec-edgar": {"ok": 9000}}},
                                  {"source_calls": {"sec-edgar": {"ok": 8700, "429": 2},

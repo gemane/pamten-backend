@@ -163,6 +163,13 @@ def _print_source_calls(P: dict, N: dict) -> None:
         kinds = sorted(set(a.get(src, {})) | set(b.get(src, {})))
         print(f"  {src:22} " + ", ".join(
             f"{k} {a.get(src, {}).get(k, '-')} -> {b.get(src, {}).get(k, '-')}" for k in kinds))
+    # what was asked (the request type, findings item 135), the most asked first
+    ta, tb = P.get("source_call_types") or {}, N.get("source_call_types") or {}
+    for src in sorted(set(ta) | set(tb)):
+        print(f"  {src} by request type:")
+        whats = set(ta.get(src, {})) | set(tb.get(src, {}))
+        for w in sorted(whats, key=lambda w: (-tb.get(src, {}).get(w, 0), w)):
+            print(f"    {w:22} {ta.get(src, {}).get(w, '-')} -> {tb.get(src, {}).get(w, '-')}")
 
 
 def _print_checks(P: dict, N: dict) -> None:
@@ -214,7 +221,7 @@ def _print_timings(P: dict, N: dict) -> None:
 
 def main() -> None:
     P, N = load(sys.argv[1]), load(sys.argv[2])
-    _print_counts({k: v for k, v in P.items() if k != "source_calls"}, N)
+    _print_counts({k: v for k, v in P.items() if k not in ("source_calls", "source_call_types")}, N)
     _print_source_calls(P, N)
     _print_nodes(P, N)
     for k in ("lei_and_cik", "wikidata_entities", "users"):
