@@ -361,20 +361,61 @@ def _cik10(cik: str) -> str:
         return str(cik)
 
 
+#: The filer records read inside one scrape (`one_filer_record_per_scrape`),
+#: by padded CIK; None outside one — every read is then a request.
+_filer_records: contextvars.ContextVar[dict[str, dict] | None] = contextvars.ContextVar(
+    "sec_filer_records", default=None)
+
+
+@contextlib.contextmanager
+def one_filer_record_per_scrape():
+    """Inside the block a filer's record (`_submissions`) is requested once and
+    handed out again after that.
+
+    One scrape reads the same record over and over: a holder's scrape asked for
+    its own record once per holding — Bank of New York Mellon's 87 times,
+    Berkshire Hathaway's 70 — and of 774 records read for 48 targets, 663 had
+    been read a moment before in the same scrape (median 0.2 s apart): 57 % of
+    all the scrape's requests (findings item 135, measured 2026-11-23).
+
+    The memo ends with the block, so the next scrape reads every record anew
+    and sees the filings made since — the reason a process-long cache was
+    refused (`_submissions`). Nested blocks share the outer one's memo: the
+    runner opens it around a company's scrape AND its writer, `scrape_company`
+    opens it for a caller that did not. A failed read is not kept."""
+    if _filer_records.get() is not None:
+        yield
+        return
+    token = _filer_records.set({})
+    try:
+        yield
+    finally:
+        _filer_records.reset(token)
+
+
 def _submissions(cik: str) -> dict:
     """The EDGAR submissions document for a CIK.
 
-    Deliberately NOT cached. Several helpers read this same document — the filer's
-    name, former names, LEI and country — so caching looks like an easy saving of
-    two or three requests per scrape. It is not worth it: the document also carries
-    `filings.recent`, and a process-lifetime cache would serve a later scrape an
-    earlier one's filings, silently missing new ones until a restart. Metadata
-    tolerates staleness; filings do not, and they share a URL.
+    Deliberately NOT cached for the process. Several helpers read this same
+    document — the filer's name, former names, LEI and country — and it also
+    carries `filings.recent`: a process-lifetime cache would serve a later scrape
+    an earlier one's filings, silently missing new ones until a restart.
+    Metadata tolerates staleness; filings do not, and they share a URL. (Tried
+    it. The SEC holdings tests failed immediately with one test seeing another's
+    filings — the same bug in miniature.)
 
-    (Tried it. The SEC holdings tests failed immediately with one test seeing
-    another's filings — the same bug in miniature.)
+    Within ONE scrape it is read once (`one_filer_record_per_scrape`): the
+    document a scrape works from is the one it read first. The callers read it,
+    none changes it — the memo hands out the same object.
     """
-    return _get(f"{SUBMISSIONS_URL}/CIK{_cik10(cik)}.json")
+    key = _cik10(cik)
+    memo = _filer_records.get()
+    if memo is not None and key in memo:
+        return memo[key]
+    sub = _get(f"{SUBMISSIONS_URL}/CIK{key}.json")
+    if memo is not None:
+        memo[key] = sub
+    return sub
 
 
 #: SEC puts US states and foreign countries in the *same* two-letter field, so a
@@ -917,7 +958,7 @@ def _registrant(cik: str, conformed: str | None) -> tuple[str | None, dict | Non
     if conformed:
         return conformed, None
     try:
-        sub = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+        sub = _submissions(cik)
     except httpx.HTTPError:
         return None, None
     return (sub.get("name") or "").strip() or None, sub
@@ -2499,7 +2540,7 @@ def fetch_executives(cik: str) -> list:
     """
     log.info("SEC EDGAR: fetching Form 3/4 for CIK=%s", cik)
     try:
-        submissions = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+        submissions = _submissions(cik)
     except httpx.HTTPError as exc:
         log.error("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
         _section_failed(SECTION_INSIDERS, exc)
@@ -2870,7 +2911,7 @@ def fetch_departures(cik: str, names: list[str], limit: int = MAX_8K_FETCH) -> l
     if not names:
         return []
     try:
-        submissions = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+        submissions = _submissions(cik)
     except Exception as exc:  # noqa: BLE001 - a lookup that fails must not fail the scrape
         log.warning("SEC EDGAR: departures lookup failed for CIK=%s: %s", cik, exc)
         return []
@@ -3509,7 +3550,8 @@ def scrape_company(company_name: str, holdings_limit: int = HOLDINGS_SCRAPE_LIMI
     """
     token = _failed_sections.set([])
     try:
-        return _scrape_company(company_name, holdings_limit, cik)
+        with one_filer_record_per_scrape():
+            return _scrape_company(company_name, holdings_limit, cik)
     finally:
         _failed_sections.reset(token)
 

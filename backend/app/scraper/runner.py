@@ -2390,8 +2390,10 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     # into the result (findings item 45): a lost Form 4 or 13D/G document is
     # dropped by its caller so the scrape goes on, and only the count tells a
     # rebuild that a company's numbers rest on a gap.
-    from app.scraper.sec_edgar import collect_lost_requests
-    with collect_lost_requests() as lost:
+    from app.scraper.sec_edgar import collect_lost_requests, one_filer_record_per_scrape
+    # … and a filer's record is requested once for the scrape and its writer
+    # together (findings item 135: 57 % of a scrape's requests were re-reads)
+    with collect_lost_requests() as lost, one_filer_record_per_scrape():
         out = _scrape_sec_edgar(company_name, country)
     if isinstance(out, dict):
         out["lost_requests"] = len(lost)
