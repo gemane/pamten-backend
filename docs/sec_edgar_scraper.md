@@ -1994,6 +1994,34 @@ Appaloosa filed on 2026-03-03 — with its voting group of five — was not read
 A section heading that stands in the class column, alone on its row
 ("Directors and Executive Officers"), is no class either.
 
+**Where the header does not say it, the cells do** (findings items 139, 143, 144, 150;
+`_percent_columns`, `_first_data_row`, `_is_address_line`). Four layouts the header
+alone did not explain:
+
+- *A voting-power column headed without "percent" or "%"* — Liberty Global's "Voting
+  Power" (John C. Malone 30.3 %), Restaurant Brands' and Penguin Solutions' "Total
+  Voting Power". It is a percent column when its figures carry the sign, in their own
+  cell or the cell right of it ("30.3 | %"); a column of vote counts is not.
+- *A row that opens with a date* — Whirlpool's 5 % holders table ("Schedule 13G Filed
+  On | Name and Address of Beneficial Owner | …"). The first data row is found by the
+  row's first cell that is no value, not by its first cell.
+- *No header cell over the percent* — OneSpan's header is "Name and Address of
+  Beneficial Owner | Amount and Nature of Beneficial Ownership" over "3,720,220 | (2) |
+  10.0%". When the header names no percent column at all, one column of "n %" cells
+  under no header cell, stated on two rows at least, is the percent of the class. Two
+  such columns are not guessed.
+- *The holder named above its address row* — "BlackRock, Inc." alone on a row, the
+  figures on "50 Hudson Yards | 6,085,591 | 13.87%" below. The name row has no figure
+  and was dropped; Dime Community's five holders were all written under their street,
+  others under "Malvern, PA 19355" or "Hamilton, Bermuda HM11" (26 rows in nine of 663
+  cached proxies). A figure row whose name cell is a line of an address from its first
+  word takes the name that stood alone above it: of several such lines the first with a
+  legal form or a footnote mark ("State Street Corporation (3)" over "State Street
+  Financial Center"), else the last (an unknown heading, then the name). A known
+  heading or a line ending in ":" ends what stood above; a cell that begins with a name
+  and goes on with the address is the holder's own row; a number in front of a name
+  with a legal form ("59 North Capital Management, LP") is no street.
+
 A voting-power column
 is `voting_power_pct`; the table's **record date** ("Shares Beneficially Owned
 as of April 2, 2026" in the header, else "as of …" in the text before it) is
