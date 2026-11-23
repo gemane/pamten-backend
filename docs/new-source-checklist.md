@@ -152,6 +152,15 @@ parser. Anything that does not map is either a new property (document it) or noi
       name, not only the Form 4 filers the search returned, so the same cut of five
       candidates found fewer; ten finds more than the search did (findings item 135,
       2026-11-22). Save the live answers once and replay every variant against them.
+- [ ] **Before caching a document, log who asks for it twice — the scope of the cache
+      follows from that.** EDGAR's filer record was 67 % of a scrape's requests, and a
+      cache of some hours was the obvious idea; it would have brought back the stale
+      `filings.recent` the record is uncached for. Logging each request with its scrape
+      showed 657 of 663 repeats INSIDE one company's scrape, 0.2 s apart — a holder's own
+      record, once per holding — and 6 across companies. A memo that lives for one scrape
+      takes them all and can serve nothing stale (findings item 135, 2026-11-23). And
+      route every reader through the one function the memo sits in: three built the URL
+      themselves.
 - [ ] **A writer that looks its parties up in the graph depends on the order of the scrapes
       — and a guard on a populated database cannot see it.** The ownership-table writer
       finds a holder among the nodes the graph holds. Checked on dev, where every node

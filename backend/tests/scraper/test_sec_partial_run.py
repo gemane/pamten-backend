@@ -77,9 +77,17 @@ class TestScrapeCompanyReportsLostSections:
         assert self._scrape(get_text=browse)["failed_sections"] == []
 
     def test_a_timed_out_submissions_file_loses_the_insiders(self):
-        def get(url, *a, **k):
-            raise httpx.ReadTimeout("stalled")
-        assert self._scrape(get=get)["failed_sections"] == ["insiders"]
+        # the insiders read the filer's record through `_submissions` like every
+        # other reader (findings item 135); a read that fails is not kept, so
+        # the sections after it ask again and are not lost with it
+        calls = []
+
+        def subs(*a, **k):
+            calls.append(a)
+            if len(calls) == 1:
+                raise httpx.ReadTimeout("stalled")
+            return {"filings": {"recent": {}}}
+        assert self._scrape(submissions=subs)["failed_sections"] == ["insiders"]
 
     def test_a_timed_out_submissions_file_loses_the_holdings(self):
         def subs(*a, **k):

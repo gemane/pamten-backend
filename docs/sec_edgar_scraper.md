@@ -2165,6 +2165,25 @@ to the Wikidata scrape.
 Add about 10 s for each request sec.gov leaves hanging (about 1 in 30; see
 "Stalls and the one retry" above).
 
+### A filer's record, once per scrape (findings item 135)
+
+The submissions JSON (`_submissions`) is the record every reader starts from: the
+filer's name, former names, address, SIC code and its recent filings. A scrape read it
+again and again — a holder's scrape asked for its own record once per holding (Bank of
+New York Mellon's 87 times, Berkshire Hathaway's 70). Measured over 48 targets on
+2026-11-23: 1,155 requests, 774 of them a filer's record for only 111 filers; 663 had
+been read a moment before in the same scrape (median 0.2 s apart), 6 in another
+company's. That was 57 % of all the scrape's requests.
+
+`one_filer_record_per_scrape` is a memo that lives for one scrape: inside the block a
+record is requested once and handed out again. The runner opens it around a company's
+scrape and its writer together; `scrape_company` opens it for any other caller; nested
+blocks share one memo. It ends with the scrape, so the next one reads every record anew
+— a cache that outlived the scrape would serve it the earlier one's `filings.recent`
+and miss what was filed since, which is why the record is cached nowhere else. A failed
+read is not kept. Every reader goes through `_submissions`; one that built the URL
+itself would pass the memo by, and a test counts them.
+
 ### The bulk name list (`sec_names.py`, findings item 135)
 
 EDGAR publishes every name it knows a filer by — companies and people, current
