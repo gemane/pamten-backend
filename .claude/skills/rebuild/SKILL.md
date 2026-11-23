@@ -57,7 +57,7 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   holder the issuer's own subsidiary list names, item 99 part 3), mark-shortcuts,
   mark-stale), 8 read-only checks (with the snapshot's over-100 % and cycle lists, item 97), the
   calls to each source and the bucket since step 1
-  (`manage.py source-calls`, `SourceCall` rows — step 0's shell downloads are not counted) and
+  (`manage.py source-calls`, `SourceCall` rows — step 0's shell downloads are not counted; under EDGAR what was asked, by request type: the filer record, a filing document, a name search …, findings item 135) and
   `after.json` (which keeps them, so the diff shows the change from the last rebuild).
 - `replay_scrapes.py` — A run-all over `scrape-targets.txt`, B the panel refreshes, A2 one
   run-all retry (every source, not Wikidata alone — findings item 54) for the companies whose

@@ -581,11 +581,11 @@ def cmd_source_calls(args):
     rows (app/source_calls.py), for the UTC days FROM <= day < TO."""
     _apply_direct_db_url(args)
     from datetime import date, timedelta
-    from app.source_calls import format_totals, totals
+    from app.source_calls import format_totals, totals, totals_by_type
     to = args.to or (date.today() + timedelta(days=1)).isoformat()
     since = getattr(args, "from") or (date.fromisoformat(to) - timedelta(days=args.days)).isoformat()
     print(f"source calls {since} to {to} (UTC days, end exclusive)")
-    print(format_totals(totals(since, to)), end="")
+    print(format_totals(totals(since, to), totals_by_type(since, to)), end="")
 
 
 def cmd_alerts(args):

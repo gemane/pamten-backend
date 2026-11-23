@@ -34,6 +34,29 @@ def test_two_flushes_add_up_in_one_row(calls):
     assert _rows() == {("sec-edgar", "ok"): 8, ("sec-edgar", "429"): 1, ("bucket:edgar", "hit"): 2}
 
 
+def test_request_types_are_rows_the_totals_still_sum(calls):
+    # findings item 135: the type splits a (source, kind) into several rows;
+    # every reader that sums by source and kind must see the same number
+    from app import weekly_report
+    from app.weekly import iso_week
+
+    calls.count("sec-edgar", "ok", 5, what="filer-record")
+    calls.count("sec-edgar", "ok", 2, what="full-text")
+    calls.count("sec-edgar", "429", 1, what="filer-record")
+    calls.count("gleif", "ok", 4)
+    calls.flush()
+    calls.count("sec-edgar", "ok", 3, what="filer-record")
+    calls.flush()
+    today = datetime.now(timezone.utc).date()
+    a, b = today.isoformat(), (today + timedelta(days=1)).isoformat()
+    assert calls.totals(a, b) == {"gleif": {"ok": 4}, "sec-edgar": {"ok": 10, "429": 1}}
+    assert calls.totals_by_type(a, b) == {"sec-edgar": {"filer-record": 9, "full-text": 2}}
+    assert calls.totals_by_type(b, "9999-12-31") == {}
+    assert weekly_report._source_calls(iso_week())["sources"]["sec-edgar"] == {"total": 11, "ok": 10, "429": 1}
+    from app.db.arcadedb import run_sql
+    assert len(run_sql("SELECT key FROM SourceCall WHERE source = 'sec-edgar'")) == 3
+
+
 def test_totals_and_the_weekly_report_read_the_days(calls):
     from app import weekly_report
     from app.weekly import iso_week

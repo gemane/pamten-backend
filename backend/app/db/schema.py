@@ -400,7 +400,7 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     "UsageCounter": ("key", "first_seen", "last_seen"),
     "UsageWeek": ("key", "week", "event"),
     "EndpointStat": ("key", "last_seen"),
-    "SourceCall": ("key", "day", "source", "kind", "last_seen"),
+    "SourceCall": ("key", "day", "source", "kind", "what", "last_seen"),
     "ImportState": ("key", "scope", "last_publish_date", "last_run_at", "snapshot_date", "holder", "acquired_at"),
     "RefreshToken": ("id", "token_hash", "user_id", "family_id", "replaced_by"),
     "AppSetting": ("key", "value", "updated_at"),
