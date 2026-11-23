@@ -602,3 +602,130 @@ def test_a_section_heading_does_not_become_the_class_of_the_rows_below_it():
             "<tr><td></td><td>Beta Capital LP</td><td>200</td><td>6.0%</td></tr>"
             "</table></body></html>")
     assert _named(read_holder_table(html)) == {"Alpha Holdings LLC": (30.0, None), "Beta Capital LP": (6.0, None)}
+
+
+# ── layouts the header alone does not explain (findings items 139, 143, 144, 150) ──
+
+def test_a_voting_power_column_headed_without_percent_is_read():
+    """findings item 139: "Voting Power" / "Total Voting Power" say percent
+    only beside the figures ("30.3 | %")."""
+    liberty = {r["name"]: r["voting_power_pct"] for r in _table("liberty_global_def14a_2026.html")["rows"]}
+    assert liberty["John C. Malone"] == 30.3 and liberty["Michael T. Fries"] == 9.9
+    assert liberty["ACR Alpine Capital Research, LLC"] == 7.78
+    brands = {r["name"]: r["voting_power_pct"] for r in _table("restaurant_brands_def14a_2026.html")["rows"]}
+    assert brands["3G Funds"] == 21.7 and brands["Capital World Investors"] == 9.7
+    penguin = {r["name"]: r["voting_power_pct"] for r in _table("penguin_solutions_def14a_2025.html")["rows"]}
+    assert penguin["SK Telecom Co., Ltd."] == 10.4 and penguin["BlackRock, Inc."] == 12.9
+    # the class percents stay what they were
+    assert _named(_table("liberty_global_def14a_2026.html"))["John C. Malone"] == (67.8, "Class B")
+
+
+def _rows_html(*rows: str) -> str:
+    return "<table>" + "".join(
+        "<tr>" + "".join(f"<td>{c}</td>" for c in row.split("|")) + "</tr>" for row in rows) + "</table>"
+
+
+def test_a_voting_power_column_of_vote_counts_is_no_percent_column():
+    """No "%" in the header and none beside the figures: the votes held."""
+    table = read_holder_table(_rows_html("Name of Beneficial Owner|Shares Beneficially Owned|Percent of Class|Voting Power",
+                                    "Alpha Holdings LLC|1,000,000|12.5%|10", "Beta Partners LP|500,000|6.3%|5"))
+    assert [(r["name"], r["stake_pct"], r["voting_power_pct"]) for r in table["rows"]] == [
+        ("Alpha Holdings LLC", 12.5, None), ("Beta Partners LP", 6.3, None)]
+
+
+def test_whirlpool_a_table_that_opens_each_row_with_a_date():
+    """findings item 143: "Schedule 13G Filed On | Name and Address of
+    Beneficial Owner | Shares Beneficially Owned | Percent of Class" — the
+    date stood where the reader looked for the name, so no row was a data row."""
+    table = _table("whirlpool_def14a_2026.html")
+    assert table["as_of"] == "2025-12-31"
+    assert {n: r["stake_pct"] for n, r in _big(table).items()} == {
+        "BlackRock, Inc.": 11.01, "The Vanguard Group Inc.": 9.73, "Appaloosa LP": 6.92,
+        "PRIMECAP Management Company": 6.75, "FMR LLC": 5.66}
+
+
+def test_onespan_no_header_over_the_percent_and_the_name_above_the_address():
+    """findings items 144 + 150: the header is "Name and Address of Beneficial
+    Owner | Amount and Nature of Beneficial Ownership" and nothing stands over
+    "10.0%"; each 5 % holder is named alone on a row, the figures stand on the
+    address row below it."""
+    table = _table("onespan_def14a_2026.html")
+    assert table["as_of"] == "2026-04-08"
+    big = _big(table)
+    assert {n: r["stake_pct"] for n, r in big.items()} == {
+        "BlackRock, Inc.": 10.0, "Entities affiliated with Legal & General Investment Management Limited": 5.6,
+        "Ameriprise Financial, Inc.": 5.5}
+    assert big["Entities affiliated with Legal & General Investment Management Limited"]["group"] is True
+    names = [r["name"] for r in table["rows"]]
+    assert "Marc Boroditsky" in read_names("onespan_def14a_2026.html")      # the directors below, one row each
+    assert not [n for n in names if n[0].isdigit() or n.startswith("One ")]
+
+
+def read_names(fixture: str) -> list[str]:
+    return [r["name"] for r in read_holder_rows((FIXTURES / fixture).read_text())]
+
+
+@pytest.mark.parametrize("fixture, holders", [
+    # "BlackRock, Inc." / "50 Hudson Yards | 6,085,591 (1) | 13.87%" / "New York, NY 10001"
+    ("dime_community_def14a_2026.html", {
+        "BlackRock, Inc.": 13.87, "Wellington Management Group LLP": 9.72, "The Vanguard Group": 6.66,
+        "Dimensional Fund Advisors LP": 5.31, "T. Rowe Price Investment Management, Inc.": 5.14}),
+    # name and street in one cell, the figures beside "Malvern, PA 19355"; State
+    # Street's block has four lines: the name, "State Street Financial Center",
+    # the street, the city (CIK 0001410636)
+    ("state_street_block_def14a.html", {
+        "The Vanguard Group": 12.3, "BlackRock, Inc.": 10.1, "State Street Corporation": 5.7}),
+    # a heading the reader does not know ("Beneficial Ownership of 5% or
+    # more:"), then "Orbis … Limited (2)" / "Orbis House, 25 Front Street" /
+    # "Hamilton, Bermuda HM11 | 13,424,844 | 11.7 | %" (CIK 0001852244)
+    ("orbis_block_def14a.html", {"Orbis Investment Management Limited": 11.7, "BlackRock, Inc.": 9.2}),
+])
+def test_a_holder_named_above_its_address_row_keeps_its_name(fixture, holders):
+    """findings item 150: the name row has no figure and was dropped; the
+    holder was written as "50 Hudson Yards", "Malvern, PA 19355", "Hamilton,
+    Bermuda HM11"."""
+    assert {n: r["stake_pct"] for n, r in _big(_table(fixture)).items()} == holders
+
+
+HEAD = "Name and Address of Beneficial Owner|Shares Beneficially Owned|Percent of Class"
+
+
+@pytest.mark.parametrize("rows, names", [
+    # a heading, then holders whose cell begins with the name and goes on with the address
+    (["Significant Shareholders", "The Vanguard Group 100 Vanguard Blvd. Malvern, PA 19355|7,286,181|11.06%",
+      "FMR LLC 245 Summer Street Boston, MA 02210|5,575,253|8.46%"], ["The Vanguard Group", "FMR LLC"]),
+    # a fund's ticker alone on a row, then its holder with "c/o" inside the cell
+    (["RSF", "Patrick W. Galley c/o 360 South Rosemary Avenue|214,920|5.60%"], ["Patrick W. Galley c/o"]),
+    # a number in front of a name with a legal form is no street
+    (["Principal Stockholders", "59 North Capital Management, LP|1,000,000|5.3%",
+      "1607 Capital Partners, LLC|900,000|6.99%"], ["59 North Capital Management, LP", "1607 Capital Partners, LLC"]),
+    # a heading the reader does not know, then the name, then the address row with the figures
+    (["Principal Holders", "The Vanguard Group", "100 Vanguard Blvd.|7,286,181|11.06%"], ["The Vanguard Group"]),
+    # … and a street word inside such a name does not make it one
+    (["Principal Stockholders", "100 Park Avenue Partners, LLC|1,000,000|5.3%"], ["100 Park Avenue Partners, LLC"]),
+    # a known heading above an address row names nobody
+    (["5% Stockholders", "50 Hudson Yards, New York, NY 10001|3,720,220|10.0%"], ["50 Hudson Yards, New York, NY 10001"]),
+])
+def test_what_stands_above_a_row_is_taken_for_its_name_only_over_an_address(rows, names):
+    assert [r["name"] for r in read_holder_table(_rows_html(HEAD, *rows))["rows"]] == names
+
+
+def test_two_percent_columns_under_no_header_are_not_guessed():
+    """findings item 144: one unheaded column is the percent of the class; with
+    two, only a header could say which is which."""
+    head = "Name of Beneficial Owner|Amount and Nature of Beneficial Ownership"
+    one = read_holder_table(_rows_html(head, "Alpha Holdings LLC|1,000,000|12.5%", "Beta Partners LP|500,000|6.3%"))
+    assert [(r["name"], r["stake_pct"]) for r in one["rows"]] == [("Alpha Holdings LLC", 12.5), ("Beta Partners LP", 6.3)]
+    two = read_holder_table(_rows_html(head, "Alpha Holdings LLC|1,000,000|12.5%|40.0%", "Beta Partners LP|500,000|6.3%|20.0%"))
+    assert two["rows"] == []
+    single = read_holder_table(_rows_html(head, "Alpha Holdings LLC|1,000,000|12.5%", "Beta Partners LP|500,000|—"))
+    assert single["rows"] == []                                  # stated once: not a column yet
+
+
+def test_a_percent_under_a_header_that_names_no_percent_is_not_guessed():
+    """findings item 144: the unheaded column is one under NO header cell; a
+    figure under "Change" is that column's, whatever it says."""
+    table = read_holder_table(_rows_html(
+        "Name of Beneficial Owner|Amount and Nature of Beneficial Ownership|Change",
+        "Alpha Holdings LLC|1,000,000|12.5%", "Beta Partners LP|500,000|6.3%"))
+    assert table["rows"] == []

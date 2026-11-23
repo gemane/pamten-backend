@@ -279,12 +279,19 @@ def _parse_pct(text: str | None) -> tuple[float | None, bool]:
 
 
 def _first_data_row(grid) -> int | None:
-    """Index of the first row with a name cell and a value right of it."""
+    """Index of the first row with a name cell and a value right of it.
+
+    The name cell is the row's first cell that is no value — not the row's
+    first cell: Whirlpool's 5 % holders table opens every row with the day the
+    Schedule 13G was filed ("4/5/2024 | BlackRock, Inc. … | 6,226,160 |
+    11.01 %"), and with the date taken for the name's place the table had no
+    data row at all (findings item 143)."""
     for i, row in enumerate(grid[:12]):
+        k = next((j for j, c in enumerate(row) if not _VALUE.match(c[2])), None)
         # a figure has a digit: Skydance's header row "Name of Beneficial
         # Owner | Shares | % | Shares | %" is no data row (findings item 86)
-        if len(row) >= 2 and not _VALUE.match(row[0][2]) and any(
-                c[0] >= row[0][1] and _VALUE.match(c[2]) and re.search(r"\d", c[2]) for c in row[1:]):
+        if k is not None and any(
+                c[0] >= row[k][1] and _VALUE.match(c[2]) and re.search(r"\d", c[2]) for c in row[k + 1:]):
             return i
     return None
 
@@ -385,6 +392,86 @@ def holder_name(text: str) -> str:
     return _TRAILING_NOTE.sub("", name).strip(" ,")  # "(5 )", " 3", " 2, 4"
 
 
+_PERCENT_CELL = re.compile(r"^\d[\d.,]*\s*%$")
+#: the header a percent column gets that stands under no header cell
+_UNHEADED_PERCENT = "Percent"
+
+
+def _states_percent(rows: list, column: tuple[int, int, str]) -> bool:
+    """A column whose figures are percents by their own cells: a "%" in the
+    figure's cell or in the cell right of it ("30.3 | %")."""
+    for row in rows:
+        cells = [c for c in row if _overlaps(c, column)]
+        if not any(re.search(r"\d", c[2]) for c in cells):
+            continue
+        if any("%" in c[2] for c in cells) or any(c[0] == column[1] and c[2].strip() == "%" for c in row):
+            return True
+    return False
+
+
+def _percent_columns(header: list, rows: list, name_col: tuple[int, int, str]) -> list[tuple[int, int, str]]:
+    """The table's percent columns, by their header — and where the header
+    does not say it, by the cells (findings items 139 and 144):
+
+    * a voting-power column headed without "percent" or "%": Liberty Global's
+      "Voting Power" (John C. Malone 30.3 %), Restaurant Brands' and Penguin
+      Solutions' "Total Voting Power" state the sign only beside the figures;
+    * a column under no header cell at all, when the header names no percent
+      column anywhere: OneSpan's "Name and Address of Beneficial Owner |
+      Amount and Nature of Beneficial Ownership" stands over "3,720,220 | (2)
+      | 10.0%". One such column only, stated on two rows at least — a second
+      one would need a header to say which percent is which."""
+    percents = [c for c in header if _is_percent_header(c[2])
+                or (_VOTING.search(c[2]) and not _NOT_A_STAKE.search(c[2]) and _states_percent(rows, c))]
+    if percents:
+        return percents
+    spans: dict[tuple[int, int], int] = {}
+    for row in rows:
+        for c in row:
+            if c[0] >= name_col[1] and _PERCENT_CELL.match(c[2]) and not any(_overlaps(c, h) for h in header):
+                spans[(c[0], c[1])] = spans.get((c[0], c[1]), 0) + 1
+    if len(spans) == 1:
+        (span, count), = spans.items()
+        if count >= 2:
+            return [(span[0], span[1], _UNHEADED_PERCENT)]
+    return []
+
+
+_STREET_WORD = (r"(street|st\.?|avenue|ave\.?|road|rd\.?|boulevard|blvd\.?|drive|dr\.?|lane|way|plaza|place"
+                r"|square|floor|suite|yards|center|centre|parkway|pkwy\.?|broadway|highway|court|circle|building)")
+_ADDRESS_START = re.compile(
+    r"^(c/o\b|p\.?\s?o\.?\s+box\b|(building|suite|floor)\s)"
+    r"|^(\d[\d-]*|one|two|three|four|five)\s+.*\b" + _STREET_WORD + r"(?!\w)",
+    re.IGNORECASE)
+#: the line an address ends with, alone in its cell: "New York, NY 10001",
+#: "Boston, MA 02114-2016", "Hamilton, Bermuda HM11"
+_PLACE_LINE = re.compile(r"[A-Za-z. ]+,\s*(?:[A-Z]{2}\s+\d{5}(?:-\d{4})?"
+                         r"|[A-Za-z. ]*?\b(?=[A-Z0-9]*\d)[A-Z0-9]{3,8}(?:\s[A-Z0-9]{3})?)")
+#: a legal form says the cell names somebody: "59 North Capital Management,
+#: LP" and "1607 Capital Partners, LLC" begin with a number and are no street
+_LEGAL_FORM = re.compile(r"\b(LLC|L\.L\.C\.|LP|L\.P\.|LLP|Inc\.?|Ltd\.?|Limited|Corp\.?|Corporation|Company|N\.A\.|PLC)(?!\w)")
+
+
+def _is_address_line(text: str) -> bool:
+    """A name cell that is a line of an address from its first word and names
+    nobody: "50 Hudson Yards", "One Coleman Street, London", "c/o …", "New
+    York, NY 10001". A cell that begins with a name and goes on with the
+    address ("The Vanguard Group 100 Vanguard Blvd. Malvern, PA 19355") is
+    the holder's own row."""
+    text = _FOOTNOTE_RE.sub("", text).strip()
+    if re.match(r"c/o\b", text, re.IGNORECASE):
+        return True
+    return bool(_ADDRESS_START.search(text) or _PLACE_LINE.fullmatch(text)) and not _LEGAL_FORM.search(text)
+
+
+def _named_above(block: list[str]) -> str:
+    """Of the lines that stood alone above an address row, the one that names
+    the holder: the first with a legal form or a footnote mark ("State Street
+    Corporation (3)" over "State Street Financial Center"), else the last (a
+    heading the reader does not know, then the name)."""
+    return next((t for t in block if _LEGAL_FORM.search(t) or _FOOTNOTE_RE.search(t)), block[-1])
+
+
 def _holder_rows(table) -> list[dict] | None:
     """One ownership table → [{"name", "percents": [float…]}], every percent
     column read under its header; None when it is no ownership table (no name
@@ -405,10 +492,12 @@ def _holder_rows(table) -> list[dict] | None:
         return None
     header = [c for row in grid[:first] for c in row]
     names = [c for c in header if _NAME_HEADER.search(c[2])]
-    percents = [c for c in header if _is_percent_header(c[2])]
-    if not names or not percents or not _OWNED.search(" ".join(c[2] for c in header)):
+    if not names or not _OWNED.search(" ".join(c[2] for c in header)):
         return None
     name_col = names[0]
+    percents = _percent_columns(header, grid[first:], name_col)
+    if not percents:
+        return None
     # a column of its own: "Title of Class" spanning the percent columns is a
     # heading over a column per class (Universal Health Services, LENSAR)
     class_col = next((c for c in header if _CLASS_COLUMN.search(c[2]) and c is not name_col
@@ -446,6 +535,24 @@ def _holder_rows(table) -> list[dict] | None:
     in_force = next((t for r in grid[:first] for t in [row_class(r)] if t), None)
     rows: list[dict] = []
     current: dict | None = None
+    # the holder named alone on a row, its figures on the address row below
+    # (findings item 150): "BlackRock, Inc." / "50 Hudson Yards | 6,085,591 |
+    # 13.87%" — Dime Community's five holders were all named by their street.
+    # `block`: the lines that named somebody since the last row with figures.
+    block: list[str] = []
+
+    def alone(text: str) -> None:
+        name = holder_name(text)
+        if not name or _NOT_AN_OWNER.search(name) or text.rstrip().endswith(":"):
+            block.clear()                  # a heading: what stood above it is over
+        elif not _is_address_line(text):
+            block.append(text)
+
+    # the first holder's name row has no figure, so it lies above the first data row
+    last_header = max((i for i, r in enumerate(grid[:first]) if any(c in names for c in r)), default=first)
+    for row in grid[last_header + 1:first]:
+        if len(row) == 1 and _overlaps(row[0], name_col):
+            alone(row[0][2])
     for row in grid[first:]:
         if not row:
             continue
@@ -462,11 +569,18 @@ def _holder_rows(table) -> list[dict] | None:
         if continues:
             current["chain"] = True
         if name_cell is not None and not continues:
-            name = holder_name(name_cell[2])
+            owner_cell = name_cell[2]
+            if has_data and block and _is_address_line(owner_cell):
+                owner_cell = _named_above(block)
+            name = holder_name(owner_cell)
+            if not has_data:
+                alone(owner_cell)
+            else:
+                block.clear()
             if not name or _NOT_AN_OWNER.search(name) or not has_data:
                 current = None
                 continue
-            current = {"name": name, "percents": [], "raw": _clean_name(name_cell[2]),
+            current = {"name": name, "percents": [], "raw": _clean_name(owner_cell),
                        "several_classes": several, "classes": set(), "chain": False}
             rows.append(current)
         if current is not None:

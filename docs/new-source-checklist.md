@@ -132,6 +132,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       kind you hold (663 cached tables here), old against new, and read every changed row:
       the first version of this fix merged Vanguard into GAMCO at Lennar and undid a
       verified fix at LENSAR, and only the replay showed it.
+      The same replay is where a rule's blind spots show: the fix for a holder named above
+      its address row (findings item 150) first took "Significant Shareholders" for The
+      Vanguard Group and a fund's ticker for its holder — a cell that begins with a name and
+      ends with an address is not an address line. Search the replay's OUTPUT for values of
+      the wrong kind too (a name that starts with a digit, a place, a heading): 26 holders
+      named "50 Hudson Yards" or "Malvern, PA 19355" had sat in it since the reader was built.
       And the replay compares EVERYTHING the reader returns, not only what the writer
       uses today: that replay looked at the rows of 5 % and more, so a rule that refused
       every percent header stating a figure ("Percentage (* Less than 1%)") passed — the
