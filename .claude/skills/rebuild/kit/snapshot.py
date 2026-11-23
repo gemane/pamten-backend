@@ -60,6 +60,13 @@ def take(q, cy) -> dict:
     for r in q("SELECT source, kind, sum(count) AS n FROM SourceCall GROUP BY source, kind"):
         calls.setdefault(r["source"], {})[r["kind"]] = int(r.get("n") or 0)
     snap["source_calls"] = dict(sorted(calls.items()))
+    # … and what was asked of a source ({source: {request type: n}}, every kind
+    # together; findings item 135: EDGAR's calls were one number per rebuild)
+    types: dict = {}
+    for r in q("SELECT source, what, sum(count) AS n FROM SourceCall GROUP BY source, what"):
+        if r.get("what"):
+            types.setdefault(r["source"], {})[r["what"]] = int(r.get("n") or 0)
+    snap["source_call_types"] = dict(sorted(types.items()))
     # Per-node ids and names (2026-10-28): a count drop (Person −33) could not be
     # traced to WHO went missing; with these the diff names them.
     snap["entities"] = sorted(([r["id"], r.get("name"), r.get("source_id"), r.get("sec_cik"), r.get("lei_id"), r.get("wikidata_id")]

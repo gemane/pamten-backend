@@ -208,7 +208,9 @@ The same numbers are on the Scraper tab (admins) and at `GET /analytics/weekly`.
 
 `python manage.py source-calls [--days 7 | --from YYYY-MM-DD] [--to YYYY-MM-DD]`
 prints the calls to each outside source and the bucket operations for those UTC
-days (`SourceCall`, see `docs/data-model.md`). Counted by the API and by every
+days (`SourceCall`, see `docs/data-model.md`), and under EDGAR what was asked — the
+filer record, a filing document, a name search … (the request type, most asked
+first; a rebuild's 17,800 EDGAR calls were one number until 2026-11-23). Counted by the API and by every
 `manage.py` command, flushed each minute and at exit; a process killed hard loses
 at most its last minute. Not counted: downloads made by shell scripts (`curl` in
 the golden-copy refresh and the bulk-import steps) and the database itself. The

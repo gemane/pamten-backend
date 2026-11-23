@@ -2009,6 +2009,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       reaches a source must be off in every test by default (`_no_source_probes` in
       `tests/conftest.py`): the integration suite calls a plain `alerts.collect()`, and
       the first CI run of the probes sent twelve real requests and failed on them.
+- [ ] **Count the source's calls by what they ask for, and measure before you cut them.**
+      A source with more than one endpoint gets a rule in `source_calls.request_type`
+      (EDGAR: `SEC_TYPES`), and a new endpoint of a typed source a rule of its own — a
+      test holds every EDGAR URL the scrapers name to one. A rebuild's 17,800 EDGAR calls
+      were one number: the name list (findings item 135) was built to save the name
+      searches, and a sample by hand then showed them at 4 % of a scrape and the filer
+      record at 70 %.
 - [ ] **List every form that carries the fact, not the two you met first.** The insider
       window read Forms 3 and 4; Form 5, the annual statement in the same XML, is the only
       filing some directors ever make about an issuer, and they had no seat (WesBanco,

@@ -18,8 +18,13 @@ The key space is closed: a host that is not in ``SOURCE_HOSTS`` is not counted
 peers). A source with a new host goes into the map, and a test checks every host
 the scrapers name is in it.
 
+Each call also carries **what was asked** (`request_type`): for EDGAR the
+filer record, a filing document, a name search … — a rebuild's 17,800 EDGAR
+calls were one number, and which request to save could only be sampled by hand
+(findings item 135). A source without a rule has the empty type.
+
 Counts are kept in memory and written as one ``SourceCall`` row per
-(UTC day, source, kind) — every minute by a daemon thread, and once more when the
+(UTC day, source, kind, request type) — every minute by a daemon thread, and once more when the
 process exits — so a rebuild's many short ``manage.py`` processes and the
 long-running API all land in the same rows. ``start()`` turns it on; a process
 that never calls it (the unit tests) never writes.
@@ -28,6 +33,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import re
 import threading
 from collections import Counter
 from datetime import datetime, timezone
@@ -88,9 +94,56 @@ def status_kind(status: int) -> str:
     return "4xx" if status in NOT_THERE else REFUSED
 
 
-def count(source: str, kind: str, n: int = 1) -> None:
+#: EDGAR's request types, by what the URL asks for. A closed set: `other`
+#: is a URL none of the rules know — a new endpoint somebody added, worth a rule.
+SEC_TYPES = ("filer-record", "filer-record-page", "filing-document", "filing-folder",
+             "filing-feed", "company-search", "person-search", "full-text", "xbrl",
+             "insider-page", "tickers", "name-list", "other")
+_SEC_FILER_RECORD = re.compile(r"/submissions/CIK\d+\.json$")
+_SEC_ARCHIVE = re.compile(r"/Archives/edgar/data/\d+(/.*)?$")
+
+
+def _sec_request_type(path: str, params: dict) -> str:
+    if path.startswith("/submissions/"):
+        # the record itself, or one of its older pages of filings
+        return "filer-record" if _SEC_FILER_RECORD.search(path) else "filer-record-page"
+    if path.endswith("/browse-edgar"):
+        if params.get("CIK"):
+            return "filing-feed"                 # one filer's filings, by its number
+        if "company" in params:                  # the name index; type 4 = reporting owners
+            return "person-search" if params.get("type") == "4" else "company-search"
+        return "other"
+    if path.endswith("/search-index"):
+        return "full-text"
+    if path.startswith("/api/xbrl/"):
+        return "xbrl"
+    if path.endswith("/own-disp"):
+        return "insider-page"
+    if path.endswith("/company_tickers.json"):
+        return "tickers"
+    if path.endswith("/cik-lookup-data.txt"):
+        return "name-list"
+    m = _SEC_ARCHIVE.search(path)
+    if m:
+        last = (m.group(1) or "").rstrip("/").rsplit("/", 1)[-1]
+        # a folder, or its listing: no file with a document's extension
+        return "filing-folder" if not last or last == "index.json" or "." not in last else "filing-document"
+    return "other"
+
+
+def request_type(source: str, url) -> str:
+    """What a request asks its source for, from the URL (an ``httpx.URL`` or a
+    string); "" for a source with no rule."""
+    if source != "sec-edgar":
+        return ""
+    import httpx
+    url = httpx.URL(str(url))
+    return _sec_request_type(url.path, dict(url.params))
+
+
+def count(source: str, kind: str, n: int = 1, what: str = "") -> None:
     with _lock:
-        _counts[(_today(), source, kind)] += n
+        _counts[(_today(), source, kind, what)] += n
 
 
 def count_bucket(key: str, kind: str) -> None:
@@ -103,7 +156,7 @@ def _today() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def drain() -> dict[tuple[str, str, str], int]:
+def drain() -> dict[tuple[str, str, str, str], int]:
     with _lock:
         out = dict(_counts)
         _counts.clear()
@@ -118,18 +171,18 @@ def flush() -> int:
     pending = drain()
     now = datetime.now(timezone.utc).isoformat()
     written = 0
-    for (day, source, kind), n in pending.items():
+    for (day, source, kind, what), n in pending.items():
         try:
             run_sql(
-                "UPDATE SourceCall SET key = :k, day = :d, source = :s, kind = :kind, "
+                "UPDATE SourceCall SET key = :k, day = :d, source = :s, kind = :kind, what = :w, "
                 "count = COALESCE(count, 0) + :n, last_seen = :now UPSERT WHERE key = :k",
-                {"k": f"{day}|{source}|{kind}", "d": day, "s": source, "kind": kind,
-                 "n": int(n), "now": now})
+                {"k": f"{day}|{source}|{kind}" + (f"|{what}" if what else ""), "d": day,
+                 "s": source, "kind": kind, "w": what, "n": int(n), "now": now})
             written += 1
         except Exception as exc:  # noqa: BLE001 - counting must never break a scrape
             log.warning("could not write source call count %s %s: %s", source, kind, exc)
             with _lock:
-                _counts[(day, source, kind)] += n
+                _counts[(day, source, kind, what)] += n
     return written
 
 
@@ -140,12 +193,13 @@ def _counted(handle):
         source = source_for_host(request.url.host)
         if source is None:
             return handle(self, request)
+        what = request_type(source, request.url)
         try:
             response = handle(self, request)
         except Exception:
-            count(source, "error")
+            count(source, "error", what=what)
             raise
-        count(source, status_kind(response.status_code))
+        count(source, status_kind(response.status_code), what=what)
         return response
     wrapper.__source_calls__ = True
     return wrapper
@@ -156,12 +210,13 @@ def _counted_async(handle):
         source = source_for_host(request.url.host)
         if source is None:
             return await handle(self, request)
+        what = request_type(source, request.url)
         try:
             response = await handle(self, request)
         except Exception:
-            count(source, "error")
+            count(source, "error", what=what)
             raise
-        count(source, status_kind(response.status_code))
+        count(source, status_kind(response.status_code), what=what)
         return response
     wrapper.__source_calls__ = True
     return wrapper
@@ -225,8 +280,24 @@ def totals(day_from: str, day_to: str) -> dict[str, dict[str, int]]:
     return dict(sorted(out.items()))
 
 
-def format_totals(by_source: dict[str, dict[str, int]]) -> str:
-    """The totals as text, network sources first, then the bucket prefixes."""
+def totals_by_type(day_from: str, day_to: str) -> dict[str, dict[str, int]]:
+    """{source: {request type: count}} for the same days, every kind together
+    (a retry is a call); only the calls that carry a type (`request_type`)."""
+    from app.db.arcadedb import run_sql
+
+    out: dict[str, dict[str, int]] = {}
+    for r in run_sql("SELECT source, what, sum(count) AS n FROM SourceCall "
+                     "WHERE day >= :a AND day < :b GROUP BY source, what",
+                     {"a": day_from, "b": day_to}):
+        if r.get("source") and r.get("what"):
+            out.setdefault(r["source"], {})[r["what"]] = int(r.get("n") or 0)
+    return dict(sorted(out.items()))
+
+
+def format_totals(by_source: dict[str, dict[str, int]],
+                  by_type: dict[str, dict[str, int]] | None = None) -> str:
+    """The totals as text, network sources first, then the bucket prefixes;
+    under a source its request types (``by_type``), the most asked first."""
     if not by_source:
         return "  none counted\n"
     lines = []
@@ -235,6 +306,8 @@ def format_totals(by_source: dict[str, dict[str, int]]) -> str:
     for src, kinds in sorted(network.items(), key=lambda kv: -sum(kv[1].values())):
         lines.append(f"  {src:22} {sum(kinds.values()):>9,}  "
                      + ", ".join(f"{k} {n:,}" for k, n in sorted(kinds.items())))
+        for what, n in sorted(((by_type or {}).get(src) or {}).items(), key=lambda kv: (-kv[1], kv[0])):
+            lines.append(f"      {what:22} {n:>9,}")
     for src, kinds in sorted(bucket.items()):
         lines.append(f"  {src:22} {'':>9}  "
                      + ", ".join(f"{k} {n:,}" for k, n in sorted(kinds.items())))
