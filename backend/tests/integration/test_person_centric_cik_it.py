@@ -129,6 +129,22 @@ def test_a_company_cik_is_not_a_person_s_holding(graph):
     assert graph.run_command("MATCH (p:Person)-[r:OWNS]->(e:Entity {id:'tsla'}) RETURN p.id AS id") == []
 
 
+def test_a_dead_seat_holder_is_not_looked_up(graph):
+    """findings item 149: a founder's role stays open after the death, so the
+    pass met Steve Jobs († 2011) at Apple and wrote his Form 4 of 2007 as an
+    open stake once his name resolved to a CIK. The dead are not asked, and
+    they do not call for run-all's second pass either."""
+    from app.scraper import runner
+    graph.run_command("CREATE (p:Person {id:'sec:0001007844', full_name:'Steve Jobs', wikidata_id:'Q19837', "
+                      "sec_cik:'0001007844', death_date:'2011-10-05'})")
+    graph.run_command("MATCH (p:Person {id:'sec:0001007844'}), (e:Entity {id:'tsla'}) "
+                      "CREATE (p)-[:HAS_ROLE {role:'Founder', source_id:'wd'}]->(e)")
+    assert runner.seat_holders_without_holdings("tsla") == frozenset({"wd:Q58345040"})
+    assert _scrape(HOLDING) == [("Robyn Denholm", None)]
+    assert graph.run_command("MATCH (p:Person {id:'sec:0001007844'})-[r:OWNS]->() RETURN count(r) AS n") == [{"n": 0}]
+    assert runner.seat_holders_without_holdings("tsla") == frozenset()
+
+
 def test_a_second_run_asks_by_the_cik(graph):
     _scrape(HOLDING)
     graph.run_command("MATCH (p:Person {id:'sec:0001242782'})-[r:OWNS]->() DELETE r")

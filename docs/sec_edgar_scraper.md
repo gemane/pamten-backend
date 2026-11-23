@@ -1692,7 +1692,11 @@ instead of Form 4 (WesBanco) are in neither list.
 After the issuer-side scan, every person who holds an **open seat** at the company
 (from Wikidata or an earlier scrape) and has no ownership edge to it is looked up
 by their own filings (`runner._seat_holders_pass`, `fetch_insider_holding`): each
-person once, in id order, up to `MAX_INSIDER_LOOKUPS = 15`. The pass — these lookups
+person once, in id order, up to `MAX_INSIDER_LOOKUPS = 15`. **Only the living are asked**: a
+founder's role stays open after the death (`roles.end_seats_at_death`), and the newest Form 4
+of a dead person is not what they hold — Steve Jobs († 2011) got his Form 4 of 2007 as an open
+Apple stake once the bulk name list resolved his name, and 31 dead founders (Henri Nestlé,
+Henry Wells …) were searched on EDGAR at every scrape (findings item 149). The pass — these lookups
 and the 8-K departures below — runs at the end of the SEC scrape and **once more at
 the end of a run-all** when a later source added seat holders without a holding
 (`runner.rerun_for_new_seats` → `run_sec_seat_holders`, the issuer's share count from

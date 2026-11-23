@@ -3009,13 +3009,17 @@ def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, share
         # Each person once, only seats still held, in a fixed order: a person
         # with two seats took two of the slots, and the cap cut a different
         # set on every run (findings item 29).
+        # Only the living: a founder's role stays open after the death
+        # (`roles.end_seats_at_death`), and the newest Form 4 of a dead person
+        # is not what they hold — Steve Jobs († 2011) got his Form 4 of 2007
+        # as an open Apple stake once his name resolved to a CIK (findings item 149).
         with db.get_session() as session:
             known = [
                 {"id": r.get("id"), "name": r.get("name"), "cik": r.get("cik")}
                 for r in session.run(
                     """
                     MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
-                    WHERE r.until IS NULL AND NOT (p)-[:OWNS]->(e)
+                    WHERE r.until IS NULL AND p.death_date IS NULL AND NOT (p)-[:OWNS]->(e)
                     RETURN DISTINCT p.id AS id, p.full_name AS name, p.sec_cik AS cik
                     ORDER BY id LIMIT $cap
                     """,
@@ -3065,14 +3069,15 @@ def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, share
 
 
 def seat_holders_without_holdings(entity_id: str | None) -> frozenset[str]:
-    """The people holding an open seat at ``entity_id`` with no OWNS edge to it
-    — the ones `_seat_holders_pass` looks up on EDGAR; empty for no node."""
+    """The living people holding an open seat at ``entity_id`` with no OWNS edge
+    to it — the ones `_seat_holders_pass` looks up on EDGAR; empty for no node."""
     if not entity_id:
         return frozenset()
     with db.get_session() as session:
         return frozenset(r["id"] for r in session.run(
             """MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
-               WHERE r.until IS NULL AND NOT (p)-[:OWNS]->(e) RETURN DISTINCT p.id AS id""",
+               WHERE r.until IS NULL AND p.death_date IS NULL AND NOT (p)-[:OWNS]->(e)
+               RETURN DISTINCT p.id AS id""",
             id=entity_id) if r.get("id"))
 
 

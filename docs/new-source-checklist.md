@@ -803,7 +803,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       — 22 persons kept their CIK and lost their item id, five lost their Form 4 holding,
       and Alphabet's run-all total fell 41 → 38 in the 2026-11-06 rebuild. Both dispatchers
       run that pass once more when the filer gained seat holders without a holding
-      (`runner.rerun_for_new_seats`; the run log says `new_seats`; findings item 67). A
+      (`runner.rerun_for_new_seats`; the run log says `new_seats`; findings item 67). An
+      "open seat" is not "a person to ask": a founder's role never ends, so a lookup keyed on
+      open seats met the dead — harmless while their names found nobody, a stale stake the day
+      a better name lookup resolved one (Steve Jobs' Form 4 of 2007, findings item 149). When
+      a lookup gets better, re-read who it is asked for. A
       backfill that "only fills blanks" must fill the item id too — the person writer
       filled aliases and never `wikidata_id` for a person the SEC had written first.
       And a step after the run that reads a source's `entity_id` reads it under the id
