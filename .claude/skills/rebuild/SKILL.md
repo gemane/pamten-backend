@@ -67,6 +67,11 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   rebuilds before it compare without those dates),
   D acquisitions, E 13F, F industry fill. Its target lists are frozen so rebuilds compare; change them only on purpose and
   say so in the verify.
+- `calls_by_step.py` — what each step asked of the outside sources (findings item 135): `rebuild.sh`
+  calls it when a step closes (from 2a on) and after each command of step 7 that can ask a source,
+  the replay after each phase; the `SourceCall` totals so far, less those at the call before, go to
+  `calls.tsv` in the kit folder ("step, source[/request type], calls"). The log prints one line per
+  step and a table at the end; `after.json` keeps the rows and the diff compares them.
 - `snapshot.py` — counts per type/source/filing/reason, entities and persons by id, the
   13D voting groups with their members, every OWNS edge with its source, `until` and
   filing type, every SUCCEEDED_BY edge (item 89: the 11-08b verify had the count alone), the run log. `diff_snapshots.py <previous after.json> <new after.json>` —
@@ -126,6 +131,10 @@ start time (Vienna) and the commit in the findings list's state line. Progress, 
   history` …) and, for the run-all phases, each source's share (`6.A … · sec_edgar`,
   `· wikidata`; run-all's per-source `seconds`). `after.json` keeps them and the diff's
   last section compares them with the last rebuild — report the big ones in the verify.
+- **Calls by step** (findings item 135): the table "Calls to the outside sources, by step" at the
+  end of the log and the diff's last section — EDGAR's requests per step, with what was asked most
+  (the filer record, a filing document …). A step that asks far more than last time, or one pass
+  asking for the same kind of record thousands of times, is where a request can be saved.
 - Then `/finding verify` against the last rebuild's `after.json`; record the run (times,
   counts, lessons) in the memory `reference-rebuild-from-agent`.
 

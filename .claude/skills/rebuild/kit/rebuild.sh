@@ -15,9 +15,20 @@ R="$(cd "$(dirname "$0")" && pwd)"     # the kit folder this copy lives in
 # phases, each source's time; the snapshot keeps the file in after.json, so the
 # verify's diff compares them with the last rebuild (the user, 2026-11-11).
 TIMINGS="$R/timings.tsv"; : > "$TIMINGS"
+# … and the calls each step made to the outside sources go to calls.tsv
+# (`calls_by_step.py`, findings item 135): the totals of `SourceCall` so far, less
+# those at the step before. From step 2a on — step 1 creates the database the
+# counter lives in — and inside step 7 after each command, inside the replay
+# after each phase: the passes over the whole graph are where a filer's record is
+# asked for thousands of times, and one number per rebuild did not say which.
+: > "$R/calls.tsv"; rm -f "$R/calls_state.json"
+calls() { python3 "$R/calls_by_step.py" "$1" 2>&1 | grep -v "^WARNING\|^INFO" || true; }
 STEP=""; STEP_T0=0
 close_step() {
-  if [ -n "$STEP" ]; then printf '%s\t%s\n' "$STEP" $(( $(date +%s) - STEP_T0 )) >> "$TIMINGS"; fi
+  if [ -n "$STEP" ]; then
+    printf '%s\t%s\n' "$STEP" $(( $(date +%s) - STEP_T0 )) >> "$TIMINGS"
+    case "$STEP" in 0*|1*) ;; *) calls "$STEP" ;; esac
+  fi
   STEP=""
 }
 t() { close_step; STEP="$*"; STEP_T0=$(date +%s); echo; echo "######## $* ($(date +%H:%M:%S))"; }
@@ -65,6 +76,7 @@ t "7 finishing what the scrapes added"
 # GLEIF's catalogue switch is its only gate; it downloads ~33 MB once a day. First,
 # because it re-keys sec: nodes to lei: — LEIs the succession step below must see.
 python3 manage.py gleif-isin-bridge --apply || echo "  ! securities bridge failed"
+calls "7 securities bridge"
 # The successions of every LEI the graph holds NOW (findings item 89): the chain's
 # steps 4/5 and 5/5 read them for the import's ~2,000 LEIs, and the replay adds
 # ~600 lei: nodes (the register pointer, the bridge, Exhibit 21 confirmations)
@@ -94,6 +106,7 @@ fi
 # lands on its live record here — item 88 stops it at the source).
 SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true SCRAPER_BODS_GLEIF_ENABLED=true \
   python3 manage.py dedupe-entities --limit 100000 || echo "  ! dedupe failed"
+calls "7 entity dedup (SEC/LEI bridge)"
 # the ends the replay and the succession step wrote (GLEIF's end events, item 85a;
 # Wikidata's P576): finish-import's step 2/5, repeated for what came after it
 python3 manage.py heal-ends-at-dissolution --apply 2>&1 | grep -v "^WARNING\|^INFO" | tail -3
@@ -101,16 +114,20 @@ python3 manage.py heal-ends-at-dissolution --apply 2>&1 | grep -v "^WARNING\|^IN
 # part wrote the same insiders under EDGAR's spelling (findings item 55)
 python3 manage.py dedupe-persons || echo "  ! dedupe-persons failed"
 python3 manage.py geocode || echo "  ! geocode failed"
+calls "7 geocode"
 python3 manage.py close-reported-by-parent || echo "  ! close-reported-by-parent failed"
 # the 13D/G holdings whose shares ceased to exist — a merger's 25-NSE, a takeover's
 # Form 15 (findings item 99); reads EDGAR, so the flags go on its own line (item 70)
 SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true \
   python3 manage.py close-ended-classes || echo "  ! close-ended-classes failed"
+calls "7 close-ended-classes"
 # … and those the issuer's own ownership table (proxy) no longer names (item 99)
 SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true \
   python3 manage.py close-absent-from-table || echo "  ! close-absent-from-table failed"
+calls "7 close-absent-from-table"
 # … and those whose holder is the issuer's own subsidiary (item 99 part 3)
 python3 manage.py close-held-by-subsidiary || echo "  ! close-held-by-subsidiary failed"
+calls "7 close-held-by-subsidiary"
 python3 manage.py mark-shortcuts || echo "  ! mark-shortcuts failed"
 python3 manage.py mark-stale || echo "  ! mark-stale failed"
 
@@ -123,6 +140,11 @@ python3 manage.py source-calls --from 2000-01-01 2>&1 | grep -v "^WARNING\|^INFO
 close_step                      # step 8 up to here; the snapshot below keeps every row in after.json
 # the snapshot also prints the companies over 100 % and the ownership cycles (item 97)
 python3 "$R/snapshot.py" "$R/after.json" 2>&1 | grep -v "^WARNING\|^INFO"
+echo
+echo "Calls to the outside sources, by step (bucket left out):"
+awk -F'\t' '$2 !~ /^bucket:/ { split($2, k, "/"); n[$1 "\t" k[1]] += $3; if (!($1 in seen)) { seen[$1]; order[++steps] = $1 } }
+  END { for (i = 1; i <= steps; i++) { line = ""; for (key in n) { split(key, p, "\t"); if (p[1] == order[i]) line = line "  " p[2] " " n[key] }
+        printf "  %-62s%s\n", order[i], line } }' "$R/calls.tsv"
 echo
 echo "Timings (min):"
 awk -F'\t' '{ printf "  %-62s %6.1f\n", $1, $2 / 60 }' "$TIMINGS"

@@ -408,3 +408,102 @@ class TestTimings:
         script = (KIT / "rebuild.sh").read_text()
         assert 't "2a bulk import: GLEIF' in script and 't "2b bulk import: UK PSC' in script
         assert "close_step" in script and "timings.tsv" in script and "Timings (min)" in script
+
+
+calls_by_step = _load("calls_by_step")
+
+
+class TestCallsByStep:
+    """Findings item 135: EDGAR was asked 14,399 times in a rebuild, 11,753 of
+    them for a filer's record — and nothing said in which step."""
+
+    ROWS = [{"source": "sec-edgar", "what": "filer-record", "n": 700},
+            {"source": "sec-edgar", "what": "full-text", "n": 30},
+            {"source": "sec-edgar", "what": "", "n": 5},             # counted before the types existed
+            {"source": "sec-edgar", "what": None, "n": 2},           # … a second untyped group of the same source
+            {"source": "gleif", "n": 40}, {"source": "bucket:edgar", "what": None, "n": 9},
+            {"source": None, "n": 3}]
+
+    def test_the_totals_are_keyed_by_source_and_request_type(self):
+        assert calls_by_step.totals(lambda q: self.ROWS) == {
+            "sec-edgar/filer-record": 700, "sec-edgar/full-text": 30, "sec-edgar": 7, "gleif": 40, "bucket:edgar": 9}
+        assert calls_by_step.totals(lambda q: None) == {}
+
+    def test_a_step_is_what_was_added_since_the_step_before(self, tmp_path):
+        tsv, state = str(tmp_path / "calls.tsv"), str(tmp_path / "state.json")
+        first = calls_by_step.record("2a GLEIF", {"gleif": 40}, tsv, state)
+        second = calls_by_step.record("6.A run-all", {"gleif": 40, "sec-edgar/filer-record": 700, "sec-edgar/xbrl": 20},
+                                      tsv, state)
+        third = calls_by_step.record("7 close-absent-from-table",
+                                     {"gleif": 41, "sec-edgar/filer-record": 5700, "sec-edgar/xbrl": 20}, tsv, state)
+        assert first == {"gleif": 40}                        # no state file: from zero
+        assert second == {"sec-edgar/filer-record": 700, "sec-edgar/xbrl": 20}   # an unchanged source is no row
+        assert third == {"gleif": 1, "sec-edgar/filer-record": 5000}
+        assert calls_by_step.read(tsv) == [["2a GLEIF", "gleif", 40],
+                                           ["6.A run-all", "sec-edgar/filer-record", 700],
+                                           ["6.A run-all", "sec-edgar/xbrl", 20],
+                                           ["7 close-absent-from-table", "gleif", 1],
+                                           ["7 close-absent-from-table", "sec-edgar/filer-record", 5000]]
+
+    def test_a_total_that_fell_counts_from_zero(self, tmp_path):
+        tsv, state = str(tmp_path / "calls.tsv"), str(tmp_path / "state.json")
+        calls_by_step.record("old database", {"gleif": 900}, tsv, state)
+        assert calls_by_step.record("2a GLEIF", {"gleif": 40}, tsv, state) == {"gleif": 40}
+
+    def test_a_broken_state_file_is_a_start_from_zero(self, tmp_path):
+        state = tmp_path / "state.json"
+        state.write_text("{half")
+        assert calls_by_step.record("2a", {"gleif": 40}, str(tmp_path / "calls.tsv"), str(state)) == {"gleif": 40}
+
+    def test_reading_skips_what_is_no_row(self, tmp_path):
+        f = tmp_path / "calls.tsv"
+        f.write_text("6.A\tsec-edgar/filer-record\t700\nhalf a line\n6.A\tgleif\tmany\n")
+        assert calls_by_step.read(str(f)) == [["6.A", "sec-edgar/filer-record", 700]]
+        assert calls_by_step.read(str(tmp_path / "none.tsv")) == []
+
+    def test_the_log_line_names_each_source_and_what_it_was_asked_most(self):
+        step = {"sec-edgar/filer-record": 3900, "sec-edgar/filing-document": 310, "wikidata": 12, "bucket:edgar": 80}
+        assert calls_by_step.line("7 x", step) == "  calls in 7 x: sec-edgar 4,210 (filer-record 3,900), wikidata 12"
+        assert calls_by_step.line("5 accounts", {"bucket:edgar": 3}) == "  calls in 5 accounts: none"
+        assert calls_by_step.by_source(step) == {"sec-edgar": 4210, "wikidata": 12, "bucket:edgar": 80}
+
+    def test_the_snapshot_keeps_the_kit_folder_s_calls(self, monkeypatch):
+        monkeypatch.setattr(snapshot.calls_by_step, "read", lambda path=None: [["6.A", "gleif", 4]])
+        assert snapshot.take(_fake_sql, _fake_cypher)["calls_by_step"] == [["6.A", "gleif", 4]]
+
+    def test_the_diff_prints_each_step_previous_against_new(self, capsys):
+        old = {"calls_by_step": [["6.A run-all", "sec-edgar/filer-record", 4000], ["6.A run-all", "sec-edgar/xbrl", 100],
+                                 ["6.A run-all", "bucket:edgar", 50]]}
+        new = {"calls_by_step": [["6.A run-all", "sec-edgar/filer-record", 900], ["6.A run-all", "sec-edgar/xbrl", 100],
+                                 ["6.A run-all", "wikidata", 7], ["7 close-absent-from-table", "sec-edgar/filer-record", 5000]]}
+        diff._print_calls_by_step(old, new)
+        out = capsys.readouterr().out.splitlines()
+        row = lambda *words: next(line.split() for line in out if all(w in line for w in words))  # noqa: E731
+        assert row("6.A run-all", "sec-edgar")[-3:] == ["4100", "->", "1000"]
+        assert row("filer-record", "4000")[-3:] == ["4000", "->", "900"]
+        assert row("6.A run-all", "wikidata")[-3:] == ["0", "->", "7"]     # the step was recorded, the source not asked
+        assert row("7 close-absent-from-table", "sec-edgar")[-3:] == ["-", "->", "5000"]
+        assert not any("bucket" in line for line in out)
+        diff._print_calls_by_step({}, {})
+        assert capsys.readouterr().out == ""
+
+    def test_the_steps_are_printed_once_in_their_own_section(self):
+        script = (KIT / "diff_snapshots.py").read_text()
+        assert '"calls_by_step")}' in script                    # kept out of the generic counts
+        assert script.count("    _print_calls_by_step(P, N)\n") == 1
+
+    def test_the_rebuild_records_after_every_step_that_asks_a_source(self):
+        script = (KIT / "rebuild.sh").read_text()
+        assert ': > "$R/calls.tsv"; rm -f "$R/calls_state.json"' in script
+        assert 'case "$STEP" in 0*|1*) ;; *) calls "$STEP" ;; esac' in script
+        for command in ("gleif-isin-bridge", "dedupe-entities", "geocode", "close-ended-classes",
+                        "close-absent-from-table", "close-held-by-subsidiary"):
+            after = script.split(f"manage.py {command}", 1)[1].split("\n", 2)[1]
+            assert after.startswith('calls "7 '), command
+        assert "by step (bucket left out)" in script
+
+    def test_the_replay_records_after_every_phase(self):
+        script = (KIT / "replay_scrapes.py").read_text()
+        assert "    timing(label, took)\n    calls(label)\n" in script
+        assert 'calls("F industry fill")' in script
+        assert script.index("source_calls.flush()") < script.index("calls_by_step.record(")
