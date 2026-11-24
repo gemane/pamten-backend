@@ -268,17 +268,23 @@ still to set up on the production box):
      or more is a warning, `ALERT_REFUSED_CRIT` (50) or more critical. A day's
      scraping has hundreds of 404s and none of these;
    - `probes`: one known request to each endpoint the scrapers depend on
-     (`app/source_contracts.py`, about a dozen requests): EDGAR's ticker
+     (`app/source_contracts.py`, about fifteen requests): EDGAR's ticker
      list, company-name and person-name search (the live one, whatever list is
      kept), the bulk name list where one is kept (`SEC_NAME_LIST_DIR`), a
-     filer's submissions, the 13D/G feed and the full-text search; a GLEIF record and a parent
+     filer's submissions, the 13D/G feed, a company's reporting owners (the insider page, asked
+     five times two seconds apart, each of which must answer: on 2026-11-24 it served SEC.gov's
+     maintenance page to three requests of four while everything else answered, findings item
+     153) and the full-text search; a GLEIF record and a parent
      relationship; a Wikidata item by a stated id, by name and its labels;
      a company's officers at Companies House (only with its key). Each goes
      through the scraper's own function, so the parameters probed are the
      ones a scrape sends, and is held to the one thing the scraper reads. A
      probe that fails is asked once more after five seconds; one that fails
      twice is a critical alert with the reason — for EDGAR, the request that
-     was lost. Off with `ALERT_SOURCE_PROBES=false`.
+     was lost; a page sent for an answer is quoted by its words, not its markup.
+     Every request type EDGAR is counted by (`source_calls.SEC_TYPES`) has a probe
+     or a stated reason for none (`SEC_NOT_PROBED`; the XBRL share counts have
+     none yet). Off with `ALERT_SOURCE_PROBES=false`.
 
    **Why the last two exist.** A source changes without telling us. EDGAR's
    search page accepted any `count` until November 2026 and then answered

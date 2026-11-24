@@ -7,9 +7,16 @@ import pytest
 
 from app import source_calls, source_contracts as sc
 from app.config import settings
-from app.scraper import ch_officers, legal_identity, sec_edgar, wikidata
+from app.scraper import ch_officers, legal_identity, sec_edgar, sec_roster, wikidata
 
 APPLE = sc.APPLE_CIK
+
+
+@pytest.fixture(autouse=True)
+def no_pause():
+    """The insider-page probe waits between its asks; no test does."""
+    with patch.object(sc.time, "sleep") as sleep:
+        yield sleep
 
 
 def _status_error(status, text=""):
@@ -47,6 +54,15 @@ class TestRun:
         [(_, why)] = sc.run([probe], sleep=lambda s: None)
         assert why == "HTTP 400: Invalid count, Received: 5"
 
+    def test_a_page_for_an_answer_is_reported_by_its_words(self):
+        # findings item 153: SEC.gov's maintenance page behind the insider page's 503
+        page = ("<!DOCTYPE html> <html lang=\"en\"><head><title>SEC.gov | File Unavailable</title>"
+                "<style>p { color: red }</style></head><body><!-- More Search Options -->"
+                "<p>This page is temporarily unavailable.</p><script>var a = 1;</script></body></html>")
+        probe = sc.Probe("sec-edgar", "x", MagicMock(side_effect=_status_error(503, page)))
+        [(_, why)] = sc.run([probe], sleep=lambda s: None)
+        assert why == "HTTP 503: This page is temporarily unavailable."
+
     def test_any_other_error_is_named(self):
         probe, _ = self._probe(httpx.ConnectError("no route"), httpx.ConnectError("no route"))
         [(_, why)] = sc.run([probe], sleep=lambda s: None)
@@ -73,6 +89,9 @@ CASES = [
      [{}, {"filings": {"recent": {"form": []}}}, {"filings": {"recent": {"form": ["10-K"]}}}]),
     (sc._sec_holder_feed, (sec_edgar, "_ownership_feed_entries"),
      iter([{"accession": "a", "index_url": "u"}]), [iter([]), iter([{"accession": "a"}])]),
+    (sc._sec_insider_page, (sec_roster, "issuer_owners"),
+     [{"name": "LEVINSON ARTHUR D", "cik": "0001214128"}, {"name": "COOK TIMOTHY D", "cik": sc.COOK_CIK}],
+     [[], [{"name": "LEVINSON ARTHUR D", "cik": "0001214128"}]]),
     (sc._sec_full_text, (sec_edgar, "_get"),
      {"hits": {"hits": [{"_source": {"ciks": ["320193"]}}]}},
      [{}, {"hits": {"hits": []}}, {"hits": {"hits": [{"_source": {}}]}}]),
@@ -154,6 +173,45 @@ class TestTheProbeList:
              patch.object(sec_edgar, "_search_person_ciks", return_value=[]), pytest.raises(sc.Broken):
             sc._sec_person_search()
         listed.assert_not_called()
+
+    def test_every_edgar_request_type_has_a_probe_or_a_reason(self):
+        # findings item 153: the insider page answered 503 for a day and no probe asked it
+        with patch.object(settings, "SEC_NAME_LIST_DIR", "/somewhere"):
+            probed = {p.asks for p in sc.probes() if p.source == "sec-edgar"}
+        assert "" not in probed, "an EDGAR probe that names no request type"
+        assert "insider-page" in probed
+        assert probed | set(sc.SEC_NOT_PROBED) == set(source_calls.SEC_TYPES)
+        assert not probed & set(sc.SEC_NOT_PROBED)
+
+    def test_the_insider_page_probe_goes_through_the_roster_s_own_reader(self):
+        page = ("<table><tr><th>Owner</th><th>Filings</th><th>Transaction Date</th><th>Type of Owner</th></tr>"
+                f"<tr><td>COOK TIMOTHY D</td><td>{int(sc.COOK_CIK)}</td><td>2026-10-01</td><td>officer: CEO</td></tr></table>")
+        with patch.object(sec_edgar, "_get_text", return_value=page) as get:
+            sc._sec_insider_page()
+        assert get.call_args.args == (sec_roster.OWNERS_URL, {"action": "getissuer", "CIK": sc.APPLE_CIK})
+        assert source_calls.request_type("sec-edgar", httpx.URL(sec_roster.OWNERS_URL, params=get.call_args.args[1])) \
+            == "insider-page"
+        # SEC.gov's maintenance page: a page, and no owner table in it
+        with patch.object(sec_edgar, "_get_text", return_value="<html>This page is temporarily unavailable.</html>"), \
+             pytest.raises(sc.Broken, match="0 owners read"):
+            sc._sec_insider_page()
+
+    def test_the_insider_page_must_answer_every_time_it_is_asked(self, no_pause):
+        # 2026-11-24: one request in four got through, and so did a probe that asked once
+        cook = [{"name": "COOK TIMOTHY D", "cik": sc.COOK_CIK}]
+        with patch.object(sec_roster, "issuer_owners", return_value=cook) as asked:
+            sc._sec_insider_page()
+        assert asked.call_count == sc.INSIDER_PAGE_ASKS == 5
+        assert no_pause.call_args_list == [((sc.INSIDER_PAGE_PAUSE,),)] * 4      # between the asks, not before
+        answers = [cook, cook, cook, cook, _status_error(503)]
+        with patch.object(sec_roster, "issuer_owners", side_effect=answers), pytest.raises(httpx.HTTPStatusError):
+            sc._sec_insider_page()
+
+    def test_a_refused_insider_page_is_reported_with_its_status(self):
+        probe = sc.Probe("sec-edgar", "a company's reporting owners", sc._sec(sc._sec_insider_page), "insider-page")
+        with patch.object(sec_edgar, "_get_text", side_effect=_status_error(503)):
+            [(_, why)] = sc.run([probe], sleep=lambda s: None)
+        assert "503" in why
 
     def test_every_source_with_a_scraper_has_a_probe(self):
         with patch.object(settings, "COMPANIES_HOUSE_API_KEY", "k"):
