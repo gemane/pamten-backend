@@ -496,7 +496,7 @@ class TestCallsByStep:
         script = (KIT / "rebuild.sh").read_text()
         assert ': > "$R/calls.tsv"; rm -f "$R/calls_state.json"' in script
         assert 'case "$STEP" in 0*|1*) ;; *) calls "$STEP" ;; esac' in script
-        for command in ("gleif-isin-bridge", "dedupe-entities", "geocode", "close-ended-classes",
+        for command in ("gleif-isin-bridge", "dedupe-entities", "ch-officers", "geocode", "close-ended-classes",
                         "close-absent-from-table", "close-held-by-subsidiary"):
             after = script.split(f"manage.py {command}", 1)[1].split("\n", 2)[1]
             assert after.startswith('calls "7 '), command

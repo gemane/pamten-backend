@@ -50,7 +50,9 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   the chain read them for the import's ~2,000 LEIs, the replay adds ~600 more — then dedupe
   entities — with the scraper flags on, so its SEC/LEI bridge may read EDGAR as it does on the
   server; findings item 70 — folding what the bridge and the succession step added, the
-  dissolution heal for the ends written after finish-import's own (item 85a), persons, geocode,
+  dissolution heal for the ends written after finish-import's own (item 85a), the serving officers
+  of the UK companies from the Companies House API (`ch-officers`, since 2026-11-24 — never `--history`;
+  needs `COMPANIES_HOUSE_API_KEY`, a few minutes; rebuilds before it hold no register officers), persons, geocode,
   close-reported-by-parent, close-ended-classes (the 13D/G holdings whose shares ceased — a
   merger's 25-NSE, a takeover's Form 15; reads EDGAR with the flags on, item 99), close-absent-from-table
   (those the issuer's own proxy table no longer names, item 99 — and it writes the table's 5 % holders no 13D/G covers, for every company it reads, item 113; first it reads and writes the 13D/G statements filed since each table and leaves out a holder that reported no position since, item 116 — about 4,200 statements, +25 min), close-held-by-subsidiary (those whose

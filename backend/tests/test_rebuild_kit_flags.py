@@ -155,3 +155,17 @@ def test_the_replay_adds_each_source_s_time_to_its_phase(tmp_path):
     assert got["6.A run-all over the list · wikidata"] == "24"
     assert "6.A run-all over the list" in got
     assert recorded == ["A run-all over the list"]
+
+
+def test_step_7_loads_the_serving_uk_officers_between_the_two_dedups():
+    # the user, 2026-11-24: the officers load was a manual command, so every rebuild
+    # left dev without one officer. After the entity dedup (a seat lands on the node
+    # that stays), before the person dedup (which folds an officer onto a scraped
+    # person) — and never with --history: former officers wait for the DPIA paragraph
+    step7 = _step(7)
+    [line] = [ln for ln in step7.splitlines() if "manage.py ch-officers" in ln]
+    assert "--history" not in line and "--dry-run" not in line and "--limit" not in line
+    assert "SCRAPER_" not in line                      # its gates are the API key and the catalogue switch
+    assert "|| echo" in line                           # a failed load is said, the rebuild goes on
+    assert step7.index("dedupe-entities") < step7.index(line) < step7.index("manage.py dedupe-persons")
+    assert "--history" not in "\n".join(ln for ln in SCRIPT.splitlines() if not ln.lstrip().startswith("#"))
