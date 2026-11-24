@@ -171,3 +171,57 @@ def test_the_rerun_finds_a_filer_re_keyed_after_the_sec_run(it_db):
     assert runner.seat_rerun_target(sec) == "lei:9DJT3UXIJIZJI4WXO774"
     assert runner.seat_rerun_target({**sec, "seats_asked": ["wd:Q109659430"]}) is None
     assert runner._node_id_now("lei:9DJT3UXIJIZJI4WXO774") == "lei:9DJT3UXIJIZJI4WXO774"  # a live id stays
+
+
+def _ask_alone(found=None):
+    """`run_sec_seat_holders` with EDGAR answering `found[name]` (nothing by default) → the names asked."""
+    from app.scraper import runner, sec_edgar
+    asked = []
+
+    def fake_holding(name, cik, shares_out, person_cik=None):
+        asked.append(name)
+        return (found or {}).get(name)
+    with patch.object(sec_edgar, "fetch_shares_outstanding_detail", return_value=None), \
+         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
+         patch.object(sec_edgar, "fetch_insider_holding", side_effect=fake_holding), \
+         patch.object(runner, "get_source_enabled", return_value=True), \
+         patch.object(runner.settings, "SCRAPER_ENABLED", True), \
+         patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
+        runner.run_sec_seat_holders("tsla", "0001318605", "Tesla, Inc.")
+    return asked
+
+
+def test_seat_holders_are_asked_in_turn(graph):
+    """findings item 154: fifteen are asked per run, by id — and a person asked
+    with nothing found kept the slot on every run, so at Bank of America and
+    Morgan Stanley whoever sorted behind the fifteenth was never asked. The
+    time of the ask goes on the seat; those never asked come first, then those
+    asked longest ago."""
+    from app.db import schema
+    from app.scraper import runner
+    graph.run_command("MATCH (p:Person {id:'wd:Q58345040'})-[r:HAS_ROLE]->() DELETE r")     # the fixture's own seats
+    names = [f"Director {i:02d}" for i in range(1, 19)]
+    for i, name in enumerate(names, 1):
+        graph.run_command(f"CREATE (p:Person {{id:'p{i:02d}', full_name:'{name}'}})")
+        graph.run_command(f"MATCH (p:Person {{id:'p{i:02d}'}}), (e:Entity {{id:'tsla'}}) "
+                          "CREATE (p)-[:HAS_ROLE {role:'Director', source_id:'wd'}]->(e)")
+    # a second open seat and an ended one for the first of them
+    graph.run_command("MATCH (p:Person {id:'p01'}), (e:Entity {id:'tsla'}) "
+                      "CREATE (p)-[:HAS_ROLE {role:'Chair', source_id:'wd'}]->(e)")
+    graph.run_command("MATCH (p:Person {id:'p01'}), (e:Entity {id:'tsla'}) "
+                      "CREATE (p)-[:HAS_ROLE {role:'Chief Executive Officer', until:'2020-01-01', source_id:'wd'}]->(e)")
+    assert runner.MAX_INSIDER_LOOKUPS == 15
+
+    assert _ask_alone() == names[:15]                             # nobody asked yet: by id
+    marks = {(r["id"], r["role"]): r["at"] for r in graph.run_command(
+        "MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id:'tsla'}) RETURN p.id AS id, r.role AS role, r.form4_asked_at AS at")}
+    assert marks[("p01", "Director")] and marks[("p01", "Chair")]             # every open seat of the person
+    assert marks[("p01", "Chief Executive Officer")] is None                   # not the ended one
+    assert marks[("p15", "Director")] and marks[("p16", "Director")] is None
+    assert not schema.undeclared_properties()                                  # the mark is a declared property
+
+    # the three never asked first, then the twelve asked longest ago
+    assert _ask_alone() == names[15:] + names[:12]
+    # a holding found takes its holder out; the turn goes on behind the last one asked
+    assert _ask_alone({"Director 13": HOLDING})[:3] == names[12:15]
+    assert "Director 13" not in _ask_alone()

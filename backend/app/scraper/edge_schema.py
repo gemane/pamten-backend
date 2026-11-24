@@ -136,6 +136,10 @@ ROLE_PROPS: tuple = (
     "source_date",
     "last_scraped_at",
     "read_from",
+    # when EDGAR was last asked for the holder's own Form 4s at the company
+    # (`runner._mark_seat_asked`, findings item 154): a merge carries it, or
+    # the seat pass would start its turns again at the merged node
+    "form4_asked_at",
 )
 
 #: `read_from` values, best first. The order is the rank: a grade further
