@@ -36,7 +36,7 @@ import xml.etree.ElementTree as ET
 
 import httpx
 
-from app.scraper.sec_edgar import (ARCHIVES_URL, SUBMISSIONS_URL, _cik10, _cik_int,
+from app.scraper.sec_edgar import (ARCHIVES_URL, _cik10, _cik_int, _filer_record,
                                    _get, _get_text, _iso_date)
 
 log = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ def recent_filings(cik: str, max_filings: int = MAX_FILINGS) -> list[dict]:
     "no such filer" → []. Older submission pages are not followed — two years
     of acquisitions is what the present needs."""
     try:
-        subs = _get(f"{SUBMISSIONS_URL}/CIK{_cik10(cik)}.json")
+        subs = _filer_record(cik, _get)       # the one read path for a filer's record
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             return []

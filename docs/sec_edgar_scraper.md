@@ -2199,8 +2199,29 @@ scrape and its writer together; `scrape_company` opens it for any other caller; 
 blocks share one memo. It ends with the scrape, so the next one reads every record anew
 — a cache that outlived the scrape would serve it the earlier one's `filings.recent`
 and miss what was filed since, which is why the record is cached nowhere else. A failed
-read is not kept. Every reader goes through `_submissions`; one that built the URL
-itself would pass the memo by, and a test counts them.
+read is not kept. Every reader goes through `_submissions` — or, when it fetches with
+its own module's `_get` (the Exhibit 21, Form D, acquisitions and proxy readers),
+through `_filer_record(cik, get)`, the same path with the reader's fetch. One that
+builds the URL itself passes the memo by; a test reads every scraper module for it
+(the first version read `sec_edgar.py` alone, and four readers beside it did).
+
+**A pass over the whole graph keeps the records it used last**
+(`filer_records_for_a_pass`). Measured on 2026-11-24 by running the passes for a sample
+against dev read-only: the pass that reads each issuer's ownership table and the 13D/G
+statements filed since made 292 requests for 40 companies, 276 of them a filer's record
+for 125 filers — the holders written at company after company (FMR's 20 times,
+BlackRock's 19). Over its 974 companies that is more than half of a rebuild's 11,753
+filer-record requests. `close_absent_from_tables` opens the block around its whole run.
+It is bounded (`FILER_RECORDS_KEPT = 64`, the ones used last): a record takes 0.8 MB in
+memory, BlackRock's 2.6 MB, and the pass meets some 1,700 filers; on the sample the
+newest 50 saved 143 of the 151 requests an unbounded memo would. So a record is never
+old either — it leaves a few companies later — and the block ends with the command.
+Never opened around a server's life. The sample with the block: 148 requests, the same
+result. **Reading a subsidiary list** (`run_sec_ex21`, `run_sec_ex21_history`) opens the
+scrape's memo for one company: 35 requests for 12 targets became 14.
+Not covered, each one read per company and command: the class-end pass (971 issuers, the
+same ones the table pass reads next — a second command, another process) and the
+industry fill (one record per filer without a SIC code, 1,728 in a rebuild).
 
 ### The bulk name list (`sec_names.py`, findings item 135)
 

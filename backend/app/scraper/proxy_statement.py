@@ -120,7 +120,7 @@ def find_latest_def14a(company_name: str, cik: str | None = None) -> tuple[str, 
     the caller holds, else `sec_edgar.search_company`. This module used to ask
     browse-edgar's name search, which matches the start of the registered
     name — "Amazon.com" never found AMAZON COM INC."""
-    from app.scraper.sec_edgar import search_company
+    from app.scraper.sec_edgar import _filer_record, search_company
     if not cik:
         company = search_company(company_name)
         if not company:
@@ -128,7 +128,7 @@ def find_latest_def14a(company_name: str, cik: str | None = None) -> tuple[str, 
         cik = company["cik"]
     cik = str(cik).zfill(10)
     try:
-        sub = _get_json(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+        sub = _filer_record(cik, _get_json)      # the one read path for a filer's record
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             return None

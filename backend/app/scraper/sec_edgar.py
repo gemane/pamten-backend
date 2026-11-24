@@ -43,6 +43,7 @@ How to verify:
      the XML at <Archives URL>/<accession>/<primary-doc>.xml.
 """
 
+import collections
 import contextlib
 import contextvars
 import functools
@@ -361,9 +362,43 @@ def _cik10(cik: str) -> str:
         return str(cik)
 
 
-#: The filer records read inside one scrape (`one_filer_record_per_scrape`),
-#: by padded CIK; None outside one — every read is then a request.
-_filer_records: contextvars.ContextVar[dict[str, dict] | None] = contextvars.ContextVar(
+#: How many filer records a whole-graph pass keeps at hand (`filer_records_for_a_pass`).
+#: A record is 0.8 MB in memory, BlackRock's 2.6 MB, and a pass over a thousand
+#: issuers meets some 1,700 filers — all of them kept would be gigabytes on a
+#: 4 GB host. The repeats are the big holders, met again within a few companies:
+#: on 40 companies of the table pass the newest 50 saved 143 of the 151 requests
+#: that keeping everything would have.
+FILER_RECORDS_KEPT = 64
+
+
+class _FilerRecords:
+    """The filer records at hand, by padded CIK; with ``keep``, only the
+    ``keep`` handed out or read most recently."""
+
+    def __init__(self, keep: int | None = None):
+        self.keep = keep
+        self._records: collections.OrderedDict[str, dict] = collections.OrderedDict()
+
+    def get(self, key: str) -> dict | None:
+        sub = self._records.get(key)
+        if sub is not None:
+            self._records.move_to_end(key)
+        return sub
+
+    def put(self, key: str, sub: dict) -> None:
+        self._records[key] = sub
+        self._records.move_to_end(key)
+        while self.keep and len(self._records) > self.keep:
+            self._records.popitem(last=False)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+
+#: The filer records read inside one scrape (`one_filer_record_per_scrape`) or
+#: one pass (`filer_records_for_a_pass`); None outside one — every read is then
+#: a request.
+_filer_records: contextvars.ContextVar[_FilerRecords | None] = contextvars.ContextVar(
     "sec_filer_records", default=None)
 
 
@@ -382,11 +417,38 @@ def one_filer_record_per_scrape():
     and sees the filings made since — the reason a process-long cache was
     refused (`_submissions`). Nested blocks share the outer one's memo: the
     runner opens it around a company's scrape AND its writer, `scrape_company`
-    opens it for a caller that did not. A failed read is not kept."""
+    opens it for a caller that did not; inside a pass's block
+    (`filer_records_for_a_pass`) it is the pass's. A failed read is not kept."""
     if _filer_records.get() is not None:
         yield
         return
-    token = _filer_records.set({})
+    token = _filer_records.set(_FilerRecords())
+    try:
+        yield
+    finally:
+        _filer_records.reset(token)
+
+
+@contextlib.contextmanager
+def filer_records_for_a_pass(keep: int = FILER_RECORDS_KEPT):
+    """Inside the block the ``keep`` filer records used last stay at hand — for
+    a pass over the whole graph, one command's run.
+
+    The pass that reads each issuer's ownership table and the 13D/G statements
+    filed since asks for the record of every holder it writes, and the same
+    holders stand at company after company: on 40 companies it made 292
+    requests, 276 of them a filer's record for 125 filers — FMR's 20 times,
+    BlackRock's 19 (measured 2026-11-24). It was over half of a rebuild's
+    11,753 filer-record requests.
+
+    Bounded, because a record is large (`FILER_RECORDS_KEPT`); and so a record
+    is also never old: it leaves once ``keep`` others were used after it, a
+    few companies later. The block ends with the pass — the next command reads
+    everything anew. Opened by the pass itself, never around a server's life."""
+    if _filer_records.get() is not None:
+        yield
+        return
+    token = _filer_records.set(_FilerRecords(keep))
     try:
         yield
     finally:
@@ -404,17 +466,29 @@ def _submissions(cik: str) -> dict:
     it. The SEC holdings tests failed immediately with one test seeing another's
     filings — the same bug in miniature.)
 
-    Within ONE scrape it is read once (`one_filer_record_per_scrape`): the
+    Within ONE scrape it is read once (`one_filer_record_per_scrape`), and a
+    whole-graph pass keeps the few it used last (`filer_records_for_a_pass`): the
     document a scrape works from is the one it read first. The callers read it,
     none changes it — the memo hands out the same object.
     """
+    return _filer_record(cik, _get)
+
+
+def _filer_record(cik: str, get) -> dict:
+    """`_submissions` for a reader that fetches with its own module's `_get`
+    (the Exhibit 21 and Form D readers, whose tests stub theirs): the record at
+    hand in the scrape's or the pass's block, else requested with ``get`` and
+    kept. One read path for the record, whoever fetches — a reader that built
+    the URL itself went past the memo, and the subsidiary list asked for its
+    filer's record three and four times a company."""
     key = _cik10(cik)
     memo = _filer_records.get()
-    if memo is not None and key in memo:
-        return memo[key]
-    sub = _get(f"{SUBMISSIONS_URL}/CIK{key}.json")
+    kept = memo.get(key) if memo is not None else None
+    if kept is not None:
+        return kept
+    sub = get(f"{SUBMISSIONS_URL}/CIK{key}.json")
     if memo is not None:
-        memo[key] = sub
+        memo.put(key, sub)
     return sub
 
 

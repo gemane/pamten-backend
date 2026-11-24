@@ -34,7 +34,7 @@ from html.parser import HTMLParser
 from app import former_names
 from app.scraper.edge_schema import READ_LAYOUT, READ_PROSE, READ_TABLE
 from app.scraper.mapper import normalize_entity_name, strip_edgar_tag
-from app.scraper.sec_edgar import SUBMISSIONS_URL, _cik10, _get, _get_text, _iso_date
+from app.scraper.sec_edgar import SUBMISSIONS_URL, _filer_record, _get, _get_text, _iso_date
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ def annual_filings(cik: str, include_older: bool = False) -> list[tuple[str, str
     into. A 404 on the submissions API (a stale CIK on an old filer) is "no
     filings", not an error."""
     try:
-        subs = _get(f"https://data.sec.gov/submissions/CIK{_cik10(cik)}.json")
+        subs = _filer_record(cik, _get)        # at hand within one company's read (item 135)
     except Exception as exc:  # noqa: BLE001 - stale CIKs 404; treat as absent
         log.info("submissions unavailable for CIK %s: %s", cik, exc)
         return []
@@ -2247,7 +2247,7 @@ def _all_filings(cik: str) -> list[tuple[str, str, str, str, str]]:
     """(form, accession, filing date, report date, file number) of every filing
     on the submissions API, older pages included."""
     try:
-        subs = _get(f"https://data.sec.gov/submissions/CIK{_cik10(cik)}.json")
+        subs = _filer_record(cik, _get)        # at hand within one company's read (item 135)
     except Exception as exc:  # noqa: BLE001 - a stale CIK is absent, not an error
         log.info("submissions unavailable for CIK %s: %s", cik, exc)
         return []
