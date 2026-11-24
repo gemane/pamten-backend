@@ -120,6 +120,28 @@ def test_an_edgar_registrant_of_exactly_that_name_is_written_by_its_cik(it_db):
     assert out["written"] == 1
 
 
+def test_with_the_bulk_name_list_a_holder_is_found_without_a_search(it_db, tmp_path):
+    """Findings item 135: the live index lists nothing for "Amgen Inc." with its
+    dot, so the 5 % row was dropped at every run; the list holds AMGEN INC, and
+    the filer's own record confirms the name it bears today."""
+    from app.scraper import sec_edgar, sec_names
+    from app.scraper.sec_writer import write_table_holders
+    _seed(it_db)
+    raw = b"AMGEN INC:0000318154:\n" + b"".join(b"ZZ FILLER %04d INC:%010d:\n" % (i, i) for i in range(1100))
+    index = sec_names.index_path(str(tmp_path), download=lambda: raw)
+    record = {"name": "AMGEN INC", "filings": {"recent": {"form": ["SC 13G"], "filingDate": ["2026-02-10"]}}}
+    with patch.object(sec_names, "index_path", return_value=index), \
+         patch.object(sec_edgar, "_browse_index") as live, \
+         patch.object(sec_edgar, "_submissions", return_value=record), \
+         patch("app.scraper.sec_writer.statement_persons", return_value=[]):
+        out = write_table_holders(ISSUER, FILING, {"as_of": None, "rows": [_row("Amgen Inc.", 9.6, "Class A")]}, SID,
+                                  {"filings": {"recent": {"form": ["10-K", "10-K/A"]}}})
+    live.assert_not_called()
+    node = it_db.run_command("MATCH (e:Entity {sec_cik: '0000318154'}) RETURN e.id AS id")
+    assert len(node) == 1 and node[0]["id"] in _edges(it_db)
+    assert out["written"] == 1
+
+
 def test_over_a_form4_count_the_table_wins_and_the_form4_reader_yields(it_db):
     from app.scraper.sec_writer import _upsert_owns_sec, stated_by_13dg
     _seed(it_db)

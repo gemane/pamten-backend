@@ -179,3 +179,123 @@ class TestTheCommand:
         with pytest.raises(SystemExit) as exit_:
             self._run(tmp_path, lambda: RAW, directory=False)
         assert exit_.value.code == 1 and "SEC_NAME_LIST_DIR" in capsys.readouterr().out
+
+
+# ── a company's exact name (findings item 135, the companies part) ───────────
+COMPANIES = (
+    "AMGEN INC:0000318154:\n"
+    "AMGEN INC /DE/:0000000501:\n"
+    "AMGEN INTERNATIONAL HOLDINGS:0000000502:\n"
+    "FRANKLIN RESOURCES INC:0000038777:\n"
+    "FRANKLIN TEMPLETON INC:0000038777:\n"
+    "NESTLE HOLDINGS INC:0001099999:\n"
+    "NESTLE SA:0001095119:\n"
+    "T ROWE PRICE GROUP INC:0000000601:\n"
+    "WALMART INC.:0000104169:\n"
+    "WALMART STORES:0000000701:\n"
+).encode("latin-1") + b"".join(b"ZZ FILLER %04d INC:%010d:\n" % (i, i) for i in range(1100))
+
+
+@pytest.fixture
+def companies(tmp_path):
+    return sec_names.index_path(str(tmp_path), download=lambda: COMPANIES)
+
+
+@pytest.mark.parametrize("name, prefix, ciks", [
+    # the dot the live index stumbles over, and EDGAR's tag: both the same name
+    ("Amgen Inc.", None, ["0000318154", "0000000501"]),
+    ("Walmart Inc", None, ["0000104169"]),
+    # another form word than the registrant's: only the base words list it
+    ("Amgen Corporation", None, []),
+    ("Amgen Corporation", "amgen", ["0000318154", "0000000501"]),
+    # the list is unaccented; the holding of the same first word is another name
+    ("Nestlé S.A.", None, ["0001095119"]),
+    ("Nestlé", "Nestlé", ["0001095119"]),
+    # a former name is listed like a current one — the caller confirms it
+    ("Franklin Resources, Inc.", None, ["0000038777"]),
+    ("Koch Industries, Inc.", None, []),
+    ("Inc.", None, []),
+])
+def test_registrants_named(companies, name, prefix, ciks):
+    assert sec_names.registrants_named(name, prefix, path=companies) == ciks
+
+
+def test_no_list_is_none_for_a_company_too():
+    assert sec_names.registrants_named("Amgen Inc.") is None
+
+
+class TestTheCompanyLookupAsksTheListFirst:
+    """`sec_edgar._exact_name_registrant`: the type-free pass of the name lookup
+    and the rule a proxy table's holder is found by."""
+
+    @staticmethod
+    def sub(name, forms=("SC 13G",)):
+        return {"name": name, "filings": {"recent": {"form": list(forms), "filingDate": ["2026-01-02"] * len(forms)}}}
+
+    def run(self, name, path, subs, listed_live=()):
+        asked = []
+
+        def record(cik):
+            asked.append(cik)
+            return subs[cik]
+        with patch.object(sec_names, "index_path", return_value=path), \
+             patch.object(sec_edgar, "_browse_index", return_value=list(listed_live)) as live, \
+             patch.object(sec_edgar, "_submissions", side_effect=record):
+            return sec_edgar._exact_name_registrant(name), asked, live
+
+    def test_a_name_the_live_index_misses_is_found_with_no_search_request(self, companies):
+        found, asked, live = self.run("Walmart Inc.", companies, {"0000104169": self.sub("Walmart Inc.")})
+        assert found == {"cik": "0000104169", "name": "Walmart Inc."}
+        live.assert_not_called()
+
+    def test_a_name_the_list_does_not_hold_asks_nobody(self, companies):
+        found, asked, live = self.run("Koch Industries, Inc.", companies, {})
+        assert found is None and asked == []
+        live.assert_not_called()
+
+    def test_a_former_name_is_not_taken(self, companies):
+        # the list holds FRANKLIN RESOURCES INC; the filer's record says what it is called today
+        found, asked, _ = self.run("Franklin Resources, Inc.", companies,
+                                   {"0000038777": self.sub("FRANKLIN TEMPLETON INC")})
+        assert found is None
+        assert asked == ["0000038777"]                  # held against the name once, not again by its base words
+
+    def test_a_dormant_duplicate_the_list_reaches_is_not_taken(self, companies):
+        # item 59: five no-action letters, not the filer (PRICE T ROWE GROUP INC);
+        # the live index, asked for the name as written, lists nothing either
+        found, _, live = self.run("T. Rowe Price Group, Inc.", companies,
+                                  {"0000000601": self.sub("T ROWE PRICE GROUP INC", forms=("NO ACT",))})
+        assert found is None
+        live.assert_called_once_with("T. Rowe Price Group, Inc.", "")
+
+    def test_a_holder_that_files_nothing_read_is_left_to_the_live_index(self, companies):
+        # a fund that files Form D alone is still the holder a proxy names: the
+        # live index took it before the list, and still does (12 of 752 names)
+        found, _, live = self.run("Walmart Inc.", companies, {"0000104169": self.sub("Walmart Inc.", forms=("D",))},
+                                  listed_live=[("0000104169", "Walmart Inc.")])
+        assert found == {"cik": "0000104169", "name": "Walmart Inc."}
+        live.assert_called_once_with("Walmart Inc.", "")
+
+    def test_of_two_registrants_of_one_name_the_one_filing_what_is_read_wins(self, companies):
+        found, _, _ = self.run("Amgen Inc.", companies, {
+            "0000318154": self.sub("AMGEN INC", forms=("10-K", "4")),
+            "0000000501": self.sub("AMGEN INC /DE/", forms=("REGDEX",))})
+        assert found == {"cik": "0000318154", "name": "AMGEN INC"}
+
+    def test_another_form_word_is_found_by_the_base_words(self, companies):
+        found, _, _ = self.run("Walmart Corporation", companies, {"0000104169": self.sub("Walmart Inc.")})
+        assert found == {"cik": "0000104169", "name": "Walmart Inc."}
+
+    def test_without_a_list_the_live_index_is_asked_and_a_lone_match_needs_no_filing_check(self):
+        with patch.object(sec_edgar, "_browse_index", return_value=[("0000104169", "Walmart Inc.")]) as live, \
+             patch.object(sec_edgar, "_submissions") as record:
+            assert sec_edgar._exact_name_registrant("Walmart Inc.") == {"cik": "0000104169", "name": "Walmart Inc."}
+        live.assert_called_once_with("Walmart Inc.", "")
+        record.assert_not_called()
+
+    def test_the_table_holder_lookup_goes_through_it(self):
+        import inspect
+
+        from app.scraper import sec_writer
+        source = inspect.getsource(sec_writer._table_holder_node)
+        assert "_exact_name_registrant(name)" in source and "_browse_index" not in source

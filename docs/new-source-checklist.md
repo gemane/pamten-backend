@@ -149,6 +149,16 @@ parser. Anything that does not map is either a new property (document it) or noi
       director tables it emptied hold no 5 % row. Their record date went with them, the
       statements pass began later, and Whirlpool lost a 13D filed in between (findings
       item 142, 2026-11-22). Count all rows and every derived field, old against new.
+- [ ] **A wider lookup is run against the old one on every name it will meet, and a
+      rule that reads safer is checked for what it drops.** The bulk name list finds a
+      company the live index misses over a dot ("Amgen Inc."), and reaches EDGAR's dormant
+      duplicates too — so a list hit had to "file what the scraper reads". On 752 real
+      holder names that rule lost 12 the live index had found: funds that file Form D
+      alone, brokers filing 13F notices — holders a proxy names all the same. They are
+      now left to the live index, asked as before; the guard then showed none lost, 156
+      gained, 4 moved to the record that files the holder's statements (findings item
+      135, 2026-11-24). A list of names also holds FORMER names: confirm a hit against
+      the record's current name.
 - [ ] **A local copy that replaces a live lookup is measured against it on the same
       questions.** EDGAR's bulk name list answers a person's name search without a request;
       the first version matched whole words, which read stricter and better — and lost 9 of

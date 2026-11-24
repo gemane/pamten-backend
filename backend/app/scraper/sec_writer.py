@@ -1146,8 +1146,8 @@ def _table_holder_node(name: str, source_id: str, entity_only: bool) -> tuple[st
             return None
         people = run_query("MATCH (p:Person) WHERE p.full_name = $n RETURN DISTINCT p.id AS id LIMIT 3", {"n": name}) or []
         return (people[0]["id"], "Person") if len(people) == 1 else None
-    registrants = sec_edgar._browse_index(name, "")
-    match = sec_edgar._exact_registrant(name, registrants) if registrants else None
+    # the bulk name list when there is one, else the live index (item 135)
+    match = sec_edgar._exact_name_registrant(name)
     if not match:
         return None
     return _upsert_entity_by_name(name, cik=match["cik"], source_id=source_id), "Entity"
