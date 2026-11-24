@@ -695,7 +695,7 @@ HEAD = "Name and Address of Beneficial Owner|Shares Beneficially Owned|Percent o
     (["Significant Shareholders", "The Vanguard Group 100 Vanguard Blvd. Malvern, PA 19355|7,286,181|11.06%",
       "FMR LLC 245 Summer Street Boston, MA 02210|5,575,253|8.46%"], ["The Vanguard Group", "FMR LLC"]),
     # a fund's ticker alone on a row, then its holder with "c/o" inside the cell
-    (["RSF", "Patrick W. Galley c/o 360 South Rosemary Avenue|214,920|5.60%"], ["Patrick W. Galley c/o"]),
+    (["RSF", "Patrick W. Galley c/o 360 South Rosemary Avenue|214,920|5.60%"], ["Patrick W. Galley"]),
     # a number in front of a name with a legal form is no street
     (["Principal Stockholders", "59 North Capital Management, LP|1,000,000|5.3%",
       "1607 Capital Partners, LLC|900,000|6.99%"], ["59 North Capital Management, LP", "1607 Capital Partners, LLC"]),
@@ -708,6 +708,45 @@ HEAD = "Name and Address of Beneficial Owner|Shares Beneficially Owned|Percent o
 ])
 def test_what_stands_above_a_row_is_taken_for_its_name_only_over_an_address(rows, names):
     assert [r["name"] for r in read_holder_table(_rows_html(HEAD, *rows))["rows"]] == names
+
+
+@pytest.mark.parametrize("rows, names", [
+    # Ovintiv 2026: the table numbers its holders (findings item 151)
+    (["1 The Vanguard Group (1)|26,000,000|10.3%", "2 BlackRock, Inc. (2)|21,000,000|8.3%",
+      "3 FMR LLC (3)|18,000,000|7.3%"], ["The Vanguard Group", "BlackRock, Inc.", "FMR LLC"]),
+    (["1. The Vanguard Group|26,000,000|10.3%", "2) BlackRock, Inc.|21,000,000|8.3%"],
+     ["The Vanguard Group", "BlackRock, Inc."]),
+    # … beside rows without one
+    (["1 The Vanguard Group|26,000,000|10.3%", "2 BlackRock, Inc.|21,000,000|8.3%", "Jane Doe|100|1.2%"],
+     ["The Vanguard Group", "BlackRock, Inc.", "Jane Doe"]),
+    # one row beginning with a number is a name
+    (["1 Main Street Capital, LP|1,000,000|5.3%", "FMR LLC|900,000|6.99%"], ["1 Main Street Capital, LP", "FMR LLC"]),
+    # numbers that do not count from 1 are names
+    (["2 Sigma Partners, LP|1,000,000|5.3%", "3 Arrows Capital, LLC|900,000|6.99%"],
+     ["2 Sigma Partners, LP", "3 Arrows Capital, LLC"]),
+    # … nor those that count in another order
+    (["2 Sigma Partners, LP|1,000,000|5.3%", "1 Main Street Capital, LP|900,000|6.99%"],
+     ["2 Sigma Partners, LP", "1 Main Street Capital, LP"]),
+    (["59 North Capital Management, LP|1,000,000|5.3%", "65 Equity Partners|900,000|9.22%"],
+     ["59 North Capital Management, LP", "65 Equity Partners"]),
+    (["3M Company|1,000,000|5.3%", "1st Source Bank|900,000|9.22%"], ["3M Company", "1st Source Bank"]),
+])
+def test_the_numbers_of_a_numbered_table_are_no_part_of_the_names(rows, names):
+    table = read_holder_table(_rows_html(HEAD, *rows))["rows"]
+    assert [r["name"] for r in table] == names
+    assert [r["names"] for r in table] == [[n] for n in names]   # what the writer looks the holder up by
+
+
+@pytest.mark.parametrize("cell, group", [
+    ("John C. Malone c/o Liberty Media Corporation", False),   # an address, the stake is his own (item 152)
+    ("Patrick W. Galley c/o 360 South Rosemary Avenue", False),
+    ("Warren E. Buffett and affiliated entities", True),
+    ("Entities affiliated with Legal & General", True),
+    ("FMR LLC", False),
+])
+def test_a_care_of_address_makes_no_group(cell, group):
+    row = read_holder_table(_rows_html(HEAD, f"{cell}|1,000,000|5.3%"))["rows"][0]
+    assert row["group"] is group
 
 
 def test_two_percent_columns_under_no_header_are_not_guessed():

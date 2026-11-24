@@ -378,8 +378,15 @@ def read_ownership_tables(html: str) -> dict:
 
 _TRAILING_NOTE = re.compile(r"[\s,]+\d{1,2}(\s*,\s*\d{1,2})*$|\s*\(\s*\d{1,2}\s*\)")
 #: proxies that name a group by its controlling person add these words
-_GROUP_WORDS = re.compile(r"\s+(and|&)\s+(certain\s+)?(affiliated|related)\s+(entities|parties|persons)\b.*$"
-                          r"|\s+c/o\s+.*$", re.IGNORECASE)
+_GROUP_WORDS = re.compile(r"\s+(and|&)\s+(certain\s+)?(affiliated|related)\s+(entities|parties|persons)\b.*$",
+                          re.IGNORECASE)
+#: the holder's postal address, begun in the name's own cell: "John C. Malone
+#: c/o Liberty Media Corporation". No group — the stake is the person's own —
+#: and often all that is left of it once the street is cut: "Patrick W. Galley
+#: c/o 360 South Rosemary Avenue" (RiverNorth, findings item 152)
+_CARE_OF = re.compile(r"\s+c/o(\s+.*)?$", re.IGNORECASE)
+#: a row's number in front of its holder: "1 The Vanguard Group (1)"
+_ROW_NUMBER = re.compile(r"^(\d{1,2})[.)]?\s+(?=\D)")
 
 
 def holder_name(text: str) -> str:
@@ -388,7 +395,7 @@ def holder_name(text: str) -> str:
     affiliated entities" → "Warren E. Buffett"; "John C. Malone c/o Liberty
     Media Corporation" → "John C. Malone")."""
     name = _clean_name(text)
-    name = _GROUP_WORDS.sub("", name)
+    name = _CARE_OF.sub("", _GROUP_WORDS.sub("", name))
     return _TRAILING_NOTE.sub("", name).strip(" ,")  # "(5 )", " 3", " 2, 4"
 
 
@@ -596,7 +603,23 @@ def _holder_rows(table) -> list[dict] | None:
     for r in rows:
         r.pop("classes", None)
         r.pop("chain", None)
+    _drop_row_numbers(rows)
     return rows
+
+
+def _drop_row_numbers(rows: list[dict]) -> None:
+    """A table that numbers its holders — Ovintiv's "1 The Vanguard Group (1)",
+    "2 BlackRock, Inc. (2)", "3 FMR LLC (3)" — is read without the numbers
+    (findings item 151). Only when the rows that begin with a number count 1,
+    2, 3 … in the table's order, two of them at least: a number alone does
+    not tell a row's from a name's ("59 North Capital Management, LP", "65
+    Equity Partners", "3M Company")."""
+    numbered = [(r, int(m.group(1))) for r in rows for m in [_ROW_NUMBER.match(r["raw"])] if m]
+    if len(numbered) < 2 or [n for _, n in numbered] != list(range(1, len(numbered) + 1)):
+        return
+    for r, _ in numbered:
+        r["name"] = _ROW_NUMBER.sub("", r["name"])
+        r["raw"] = _ROW_NUMBER.sub("", r["raw"])
 
 
 #: how `_column_header` and a class cell mark a security the reader has no

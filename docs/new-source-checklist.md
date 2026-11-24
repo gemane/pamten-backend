@@ -138,6 +138,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       ends with an address is not an address line. Search the replay's OUTPUT for values of
       the wrong kind too (a name that starts with a digit, a place, a heading): 26 holders
       named "50 Hudson Yards" or "Malvern, PA 19355" had sat in it since the reader was built.
+      One pattern doing two jobs is a third blind spot: "c/o …" sat in the pattern that cuts
+      "and affiliated entities" from a name, and the same pattern set the row's group flag —
+      so a person named with a postal address was a "group" and never written (findings
+      item 152, eight holders). When a pattern is reused for a decision, read what else it
+      matches.
       And the replay compares EVERYTHING the reader returns, not only what the writer
       uses today: that replay looked at the rows of 5 % and more, so a rule that refused
       every percent header stating a figure ("Percentage (* Less than 1%)") passed — the

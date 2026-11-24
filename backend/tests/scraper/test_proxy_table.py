@@ -23,6 +23,9 @@ def _rows(name):
     ("Kathleen A. Waters 5", "Kathleen A. Waters"),
     ("Warren E. Buffett and affiliated entities", "Warren E. Buffett"),
     ("John C. Malone c/o Liberty Media Corporation", "John C. Malone"),
+    ("Patrick W. Galley c/o", "Patrick W. Galley"),           # the street was cut first (item 152)
+    ("Patrick W. Galley c/o 360 South Rosemary Avenue", "Patrick W. Galley"),
+    ("Costco Wholesale Corporation", "Costco Wholesale Corporation"),
     ("The Vanguard Group (2)", "The Vanguard Group"),
     ("Dodge & Cox", "Dodge & Cox"),
     ("3M Company", "3M Company"),
