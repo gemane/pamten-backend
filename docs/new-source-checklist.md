@@ -166,6 +166,14 @@ parser. Anything that does not map is either a new property (document it) or noi
       takes them all and can serve nothing stale (findings item 135, 2026-11-23). And
       route every reader through the one function the memo sits in: three built the URL
       themselves.
+      The same log for a pass over the whole graph gave another scope: there the repeats
+      are across companies (the big holders, at issuer after issuer), so the pass keeps the
+      records it used last for its run — and a bound, once one record was weighed (1–2.6 MB;
+      all 1,700 of a pass would be gigabytes). A pass that writes can be measured on the
+      shared database without writing: send every statement to ArcadeDB's `/query`
+      endpoint, which refuses a write itself. And hold the "one function" rule against
+      every module, not the one the memo lives in — four more readers built the URL
+      themselves in the modules beside it (2026-11-24).
 - [ ] **A writer that looks its parties up in the graph depends on the order of the scrapes
       — and a guard on a populated database cannot see it.** The ownership-table writer
       finds a holder among the nodes the graph holds. Checked on dev, where every node

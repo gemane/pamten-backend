@@ -30,7 +30,7 @@ import re
 import httpx
 import xml.etree.ElementTree as ET
 
-from app.scraper.sec_edgar import _cik10, _get, _get_text, _iso_date
+from app.scraper.sec_edgar import _filer_record, _get, _get_text, _iso_date
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def latest_form_d(cik: str) -> dict | None:
     the accession. Older Form Ds hold earlier boards — history for a later
     iteration, not silently mixed into the present.
     """
-    subs = _get(f"https://data.sec.gov/submissions/CIK{_cik10(cik)}.json")
+    subs = _filer_record(cik, _get)          # the one read path for a filer's record
     recent = (subs.get("filings") or {}).get("recent") or {}
     rows = zip(recent.get("form") or [], recent.get("accessionNumber") or [],
                recent.get("filingDate") or [])

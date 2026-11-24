@@ -12,6 +12,7 @@ All entry points:
 - Write using MERGE so repeated runs are safe (no duplicates).
 """
 
+import functools
 import os
 import re
 import logging
@@ -1216,7 +1217,22 @@ def _same_filer(a: str | None, b: str | None) -> bool:
     return bool(a and b) and key(a) == key(b)
 
 
+def _one_filer_record(fn):
+    """The company's filer record is requested once for the whole call
+    (`sec_edgar.one_filer_record_per_scrape`): reading a subsidiary list asked
+    for the filer's own record three times — once to find the filing, again
+    for its name and its address (32 requests for 11 filers, measured
+    2026-11-24; findings item 135)."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        from app.scraper.sec_edgar import one_filer_record_per_scrape
+        with one_filer_record_per_scrape():
+            return fn(*args, **kwargs)
+    return wrapper
+
+
 @_with_autodedup
+@_one_filer_record
 def run_sec_ex21(company: str, force: bool = False) -> dict:
     """Ingest one issuer's statutory subsidiary list from its latest annual
     filing's Exhibit 21 (10-K) or Exhibit 8.1 (20-F).
@@ -1610,6 +1626,7 @@ def run_sec_acquisitions(company: str, force: bool = False,
 
 
 @_with_autodedup
+@_one_filer_record
 def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
     """Date an issuer's subsidiary edges by their OLDEST listing: "owned since
     at least".

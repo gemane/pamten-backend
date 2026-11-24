@@ -840,35 +840,39 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
         issuers = issuers[:limit]
     out: dict = {"companies": len(issuers), "tables": 0, "read": 0, "failed": 0, "closed": 0, "written": 0,
                  "statements": 0, "exited": 0, "lines": []}
-    for eid, cik, name in issuers:
-        try:
-            res = read_table_and_close(eid, cik, write=True, source_id=source_id, statements_for=name)
-        except Exception as exc:  # noqa: BLE001 — one company's filing lost is not the run's
-            out["failed"] += 1
-            log.warning("SEC: ownership table of %s (CIK %s) not read: %s", name, cik, exc)
-            continue
-        out["read"] += 1
-        if res["filing"]:
-            out["tables"] += 1
-        since = res.get("statements") or {}
-        if since.get("written"):
-            out["statements"] += since["written"]
-            out["lines"].append(f"{name}: {since['written']} statement holders written — 13D/G filed since its "
-                                f"{res['filing']['form']} of {res['filing']['date']}")
-        left = (res.get("written") or {}).get("exited") or 0
-        if left:
-            out["exited"] += left
-            out["lines"].append(f"{name}: {left} not written — in its {res['filing']['form']} of "
-                                f"{res['filing']['date']}, no position reported since")
-        written = (res.get("written") or {}).get("written") or 0
-        if written:
-            out["written"] += written
-            out["lines"].append(f"{name}: {written} written — named in its {res['filing']['form']} "
-                                f"of {res['filing']['date']}, in no 13D/G")
-        if res["closed"]:
-            out["closed"] += res["closed"]
-            out["lines"].append(f"{name}: {res['closed']} closed — not in its {res['filing']['form']} "
-                                f"of {res['filing']['date']} ({res['rows']} holders listed)")
+    # the same holders stand at company after company: their records stay at
+    # hand for the run (`filer_records_for_a_pass`, findings item 135)
+    from app.scraper.sec_edgar import filer_records_for_a_pass
+    with filer_records_for_a_pass():
+        for eid, cik, name in issuers:
+            try:
+                res = read_table_and_close(eid, cik, write=True, source_id=source_id, statements_for=name)
+            except Exception as exc:  # noqa: BLE001 — one company's filing lost is not the run's
+                out["failed"] += 1
+                log.warning("SEC: ownership table of %s (CIK %s) not read: %s", name, cik, exc)
+                continue
+            out["read"] += 1
+            if res["filing"]:
+                out["tables"] += 1
+            since = res.get("statements") or {}
+            if since.get("written"):
+                out["statements"] += since["written"]
+                out["lines"].append(f"{name}: {since['written']} statement holders written — 13D/G filed since its "
+                                    f"{res['filing']['form']} of {res['filing']['date']}")
+            left = (res.get("written") or {}).get("exited") or 0
+            if left:
+                out["exited"] += left
+                out["lines"].append(f"{name}: {left} not written — in its {res['filing']['form']} of "
+                                    f"{res['filing']['date']}, no position reported since")
+            written = (res.get("written") or {}).get("written") or 0
+            if written:
+                out["written"] += written
+                out["lines"].append(f"{name}: {written} written — named in its {res['filing']['form']} "
+                                    f"of {res['filing']['date']}, in no 13D/G")
+            if res["closed"]:
+                out["closed"] += res["closed"]
+                out["lines"].append(f"{name}: {res['closed']} closed — not in its {res['filing']['form']} "
+                                    f"of {res['filing']['date']} ({res['rows']} holders listed)")
     return out
 
 
