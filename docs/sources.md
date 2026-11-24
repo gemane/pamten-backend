@@ -183,7 +183,7 @@ GET https://api.company-information.service.gov.uk/company/{number}/officers
 
 `manage.py ch-officers` reads it for every company in the graph with a Companies House
 number (`--company 00102498,…`, `--limit N`, `--dry-run` — which writes nothing, not
-even a run-log row). **Run by hand; no schedule calls it.** It needs
+even a run-log row). **Run by hand; no schedule calls it** — the dev rebuild runs it once in its step 7 (serving officers only), so a rebuilt dev has its UK officers again. It needs
 `COMPANIES_HOUSE_API_KEY`: a REST key of a *live* application registered at
 developer.company-information.service.gov.uk, sent as the basic-auth user with an
 empty password. The key allows 600 requests per five minutes; the reader follows the

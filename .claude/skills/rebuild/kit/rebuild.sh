@@ -110,6 +110,16 @@ calls "7 entity dedup (SEC/LEI bridge)"
 # the ends the replay and the succession step wrote (GLEIF's end events, item 85a;
 # Wikidata's P576): finish-import's step 2/5, repeated for what came after it
 python3 manage.py heal-ends-at-dissolution --apply 2>&1 | grep -v "^WARNING\|^INFO" | tail -3
+# the serving officers of the UK companies the graph holds now (Companies House API;
+# the user, 2026-11-24: a rebuild left dev without any officer, the load being a
+# manual command). After the entity dedup, so a seat lands on the node that stays;
+# before the person dedup, which folds an officer onto the person a scrape wrote.
+# Serving people only — never `--history`: former officers wait for the DPIA
+# paragraph (legal repository). Needs COMPANIES_HOUSE_API_KEY in the backend .env;
+# without it, or with a company the register did not answer for, the line below
+# says so and the rebuild goes on. ~600 requests per five minutes, a few minutes.
+python3 manage.py ch-officers || echo "  ! ch-officers failed (no key, or companies not read — see above)"
+calls "7 UK officers"
 # the persons two scopes wrote twice — a Wikidata part retried hours after the SEC
 # part wrote the same insiders under EDGAR's spelling (findings item 55)
 python3 manage.py dedupe-persons || echo "  ! dedupe-persons failed"
