@@ -139,6 +139,20 @@ def timing(label: str, seconds: float) -> None:
         print(f"  ! timing not written: {exc}", flush=True)
 
 
+def calls(label: str) -> None:
+    """What this phase asked of the outside sources, into the kit folder's
+    calls.tsv (`calls_by_step.py`, findings item 135): the counter is flushed
+    first — it writes on its own only every few hundred calls and at exit."""
+    try:
+        import calls_by_step
+        from app import source_calls
+        from app.db.arcadedb import run_sql
+        source_calls.flush()
+        print(calls_by_step.line(label, calls_by_step.record(f"6.{label}", calls_by_step.totals(run_sql))), flush=True)
+    except Exception as exc:  # noqa: BLE001 — a count not taken must not stop the replay
+        print(f"  ! calls not recorded: {exc}", flush=True)
+
+
 def phase(label, names, fn):
     print(f"\n=== {label}: {len(names)} ({time.strftime('%H:%M:%S')})", flush=True)
     started = time.time()
@@ -157,6 +171,7 @@ def phase(label, names, fn):
     print(f"=== {label} done: {ok} ok, {failed} failed ({time.strftime('%H:%M:%S')}, "
           f"{took / 60:.1f} min)", flush=True)
     timing(label, took)
+    calls(label)
     # a run-all phase: each source's share (SEC, Wikidata, …)
     for source, secs in sorted(SOURCE_SECONDS.items()):
         print(f"    {source}: {secs / 60:.1f} min", flush=True)
@@ -219,5 +234,6 @@ if "F" in steps:
     started = time.time()
     res = industry_backfill()
     timing("F industry fill", time.time() - started)
+    calls("F industry fill")
     print({k: v for k, v in res.items() if not isinstance(v, list)}, flush=True)
 print("REPLAY DONE", flush=True)

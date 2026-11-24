@@ -219,9 +219,35 @@ def _print_timings(P: dict, N: dict) -> None:
         print(f"  {label:<62} {fmt(old):>6} -> {fmt(new):>6}{change}")
 
 
+def _print_calls_by_step(P: dict, N: dict) -> None:
+    """Each step's calls to the outside sources beside the last rebuild's
+    (findings item 135): per step and source, and under EDGAR what was asked
+    most. The bucket is left out; a step one of the two did not record shows '-'."""
+    def table(snap):
+        out: dict = {}
+        for step, key, n in snap.get("calls_by_step") or []:
+            if not key.startswith("bucket:"):
+                out.setdefault(step, {})[key] = out.get(step, {}).get(key, 0) + n
+        return out
+    a, b = table(P), table(N)
+    if not (a or b):
+        return
+    total = lambda step, src: sum(n for k, n in step.items() if k.split("/")[0] == src)  # noqa: E731
+    print("\n== calls by step (previous -> new):")
+    for label in list(dict.fromkeys([*b, *a])):
+        old, new = a.get(label), b.get(label)
+        for src in sorted({k.split("/")[0] for step in (old or {}, new or {}) for k in step}):
+            fmt = lambda step: "-" if step is None else str(total(step, src))  # noqa: E731
+            print(f"  {label:<50} {src:<16} {fmt(old):>6} -> {fmt(new):>6}")
+            types = sorted({k for step in (old or {}, new or {}) for k in step if k.startswith(src + "/")},
+                           key=lambda k: (-(new or {}).get(k, 0), k))
+            for k in types[:3]:
+                print(f"      {k.split('/', 1)[1]:<60} {(old or {}).get(k, '-'):>6} -> {(new or {}).get(k, '-'):>6}")
+
+
 def main() -> None:
     P, N = load(sys.argv[1]), load(sys.argv[2])
-    _print_counts({k: v for k, v in P.items() if k not in ("source_calls", "source_call_types")}, N)
+    _print_counts({k: v for k, v in P.items() if k not in ("source_calls", "source_call_types", "calls_by_step")}, N)
     _print_source_calls(P, N)
     _print_nodes(P, N)
     for k in ("lei_and_cik", "wikidata_entities", "users"):
@@ -231,6 +257,7 @@ def main() -> None:
     _print_succession(P, N)
     _print_checks(P, N)
     _print_timings(P, N)
+    _print_calls_by_step(P, N)
 
 
 if __name__ == "__main__":

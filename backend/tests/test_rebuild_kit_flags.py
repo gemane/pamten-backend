@@ -141,7 +141,8 @@ def test_the_replay_adds_each_source_s_time_to_its_phase(tmp_path):
     rows = tmp_path / "timings.tsv"
     import os
     import time
-    ns: dict = {"TIMINGS": str(rows), "SOURCE_SECONDS": {}, "time": time, "os": os}
+    recorded: list = []          # the phase's calls to the sources (`calls`, findings item 135)
+    ns: dict = {"TIMINGS": str(rows), "SOURCE_SECONDS": {}, "time": time, "os": os, "calls": recorded.append}
     exec(compile(ast.Module(body=fns, type_ignores=[]), "replay_scrapes.py", "exec"), ns)
 
     def fake_run_all(name):
@@ -153,3 +154,4 @@ def test_the_replay_adds_each_source_s_time_to_its_phase(tmp_path):
     assert got["6.A run-all over the list · sec_edgar"] == "60"
     assert got["6.A run-all over the list · wikidata"] == "24"
     assert "6.A run-all over the list" in got
+    assert recorded == ["A run-all over the list"]

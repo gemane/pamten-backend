@@ -7,6 +7,9 @@ import json
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # the kit folder's own modules
+import calls_by_step  # noqa: E402
+
 BACKEND = "/home/administrator/github/pamten-backend/backend"
 
 
@@ -109,6 +112,9 @@ def take(q, cy) -> dict:
     snap["cycles"] = cycles(live)
     snap["users"] = [r["email"] for r in q("SELECT email FROM User")]
     snap["timings"] = timings()
+    # the calls each step made to the outside sources ([[step, source[/type], n]],
+    # `calls_by_step.py`, findings item 135); [] for a snapshot taken by hand
+    snap["calls_by_step"] = calls_by_step.read(os.path.join(os.path.dirname(os.path.abspath(__file__)), "calls.tsv"))
     return snap
 
 

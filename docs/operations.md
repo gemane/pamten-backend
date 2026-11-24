@@ -216,7 +216,7 @@ at most its last minute. Not counted: downloads made by shell scripts (`curl` in
 the golden-copy refresh and the bulk-import steps) and the database itself. The
 rebuild prints it in step 8 (every row of the fresh database is the rebuild's) and
 keeps it in `after.json`, so `diff_snapshots.py` shows the change from the last
-rebuild. Off with `SOURCE_CALLS_ENABLED=false`.
+rebuild. Off with `SOURCE_CALLS_ENABLED=false`. The rebuild also records the calls of each of its steps — every replay phase, every command of step 7 that asks a source — in the kit folder's `calls.tsv` (`calls_by_step.py`): one total per rebuild did not say which pass asks for a filer's record thousands of times.
 
 The Graph section also lists **groups with more than 500 direct subsidiaries**
 (`LARGE_GROUP_THRESHOLD`), largest first — the ones the profile's section cap
