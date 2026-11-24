@@ -3008,26 +3008,7 @@ def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, share
 
     asked: list[str] = []
     if cik:
-        # Each person once, only seats still held, in a fixed order: a person
-        # with two seats took two of the slots, and the cap cut a different
-        # set on every run (findings item 29).
-        # Only the living: a founder's role stays open after the death
-        # (`roles.end_seats_at_death`), and the newest Form 4 of a dead person
-        # is not what they hold — Steve Jobs († 2011) got his Form 4 of 2007
-        # as an open Apple stake once his name resolved to a CIK (findings item 149).
-        with db.get_session() as session:
-            known = [
-                {"id": r.get("id"), "name": r.get("name"), "cik": r.get("cik")}
-                for r in session.run(
-                    """
-                    MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
-                    WHERE r.until IS NULL AND p.death_date IS NULL AND NOT (p)-[:OWNS]->(e)
-                    RETURN DISTINCT p.id AS id, p.full_name AS name, p.sec_cik AS cik
-                    ORDER BY id LIMIT $cap
-                    """,
-                    id=target_id, cap=MAX_INSIDER_LOOKUPS,
-                )
-            ]
+        known = _seats_to_ask(target_id)
         vehicles: list[dict] | None = None
         for row in known:
             pname, pid = row["name"], row["id"]
@@ -3035,6 +3016,7 @@ def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, share
                 continue
             asked.append(pid)
             holding = fetch_insider_holding(pname, cik, shares_out, person_cik=row.get("cik"))
+            _mark_seat_asked(pid, target_id)
             if holding and (vehicles := vehicles if vehicles is not None else _form4_vehicles(target_id)):
                 # a shared vehicle is the vehicle's, not this person's (item 111)
                 holding = without_vehicles(holding, vehicles, shares_out)
@@ -3068,6 +3050,58 @@ def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, share
             log.info("SEC EDGAR: person-centric insider OWNS %r → %r (%s shares)",
                      pname, company_name, holding.get("shares_owned"))
     return asked
+
+
+def _seats_to_ask(target_id: str) -> list[dict]:
+    """The seat holders `_seat_holders_pass` asks EDGAR about on this run:
+    [{id, name, cik}], `MAX_INSIDER_LOOKUPS` at most.
+
+    Each person once, only seats still held: a person with two seats took two
+    of the slots, and the cap cut a different set on every run (findings item
+    29). Only the living: a founder's role stays open after the death
+    (`roles.end_seats_at_death`), and the newest Form 4 of a dead person is not
+    what they hold — Steve Jobs († 2011) got his Form 4 of 2007 as an open
+    Apple stake once his name resolved to a CIK (findings item 149).
+
+    In turn (findings item 154): those never asked first, then those asked
+    longest ago (`form4_asked_at` on the seat, `_mark_seat_asked`), by id within
+    a tie. Ordered by id alone, a person asked with nothing found — no Form 4
+    of their own, as most directors a knowledge base names — kept the slot on
+    every run, and at a company with more than fifteen such seats whoever
+    sorted behind them was never asked: 11 of 54 passes of the 2026-11-23
+    rebuild asked exactly fifteen, Bank of America's and Morgan Stanley's among
+    them. Sorted here, not by the database: a missing property has no place in
+    its order that every version agrees on."""
+    seats: dict[str, dict] = {}
+    with db.get_session() as session:
+        for r in session.run(
+                """
+                MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
+                WHERE r.until IS NULL AND p.death_date IS NULL AND NOT (p)-[:OWNS]->(e)
+                RETURN p.id AS id, p.full_name AS name, p.sec_cik AS cik, r.form4_asked_at AS asked
+                """,
+                id=target_id):
+            if not r.get("id"):
+                continue
+            seat = seats.setdefault(r["id"], {"id": r["id"], "name": r.get("name"), "cik": r.get("cik"), "asked": ""})
+            # asked on any of the person's seats here is asked: the newest counts
+            seat["asked"] = max(seat["asked"], str(r.get("asked") or ""))
+    turn = sorted(seats.values(), key=lambda s: (s["asked"], s["id"]))[:MAX_INSIDER_LOOKUPS]
+    return [{"id": s["id"], "name": s["name"], "cik": s["cik"]} for s in turn]
+
+
+def _mark_seat_asked(person_id: str, target_id: str) -> None:
+    """EDGAR was asked for this person's own Form 4s at the company: the time
+    goes on their open seats there, so the next run asks somebody else first
+    (`_seats_to_ask`, findings item 154). On the seat, not the person — it is
+    about this company's filings. A holding found is an OWNS edge and takes
+    the person out of the pass by itself; one not found is asked again when
+    its turn comes round, since a director may file a first Form 4 later."""
+    with db.get_session() as session:
+        session.run(
+            """MATCH (p:Person {id: $p})-[r:HAS_ROLE]->(e:Entity {id: $e})
+               WHERE r.until IS NULL SET r.form4_asked_at = $now""",
+            p=person_id, e=target_id, now=datetime.now(timezone.utc).isoformat())
 
 
 def seat_holders_without_holdings(entity_id: str | None) -> frozenset[str]:

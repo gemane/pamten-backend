@@ -2523,3 +2523,51 @@ class TestTheQuerysNodeAnchorsTheItem:
                  patch("app.scraper.runner._ensure_source", return_value="src"):
                 run_scrape("SHENANDOAH TELECOMMUNICATIONS CO", depth=0)
             assert node.call_args.kwargs["anchor"] is None
+
+
+class TestSeatsToAsk:
+    """findings item 154: who the seat-holder pass asks, and in which order."""
+
+    @staticmethod
+    def _seats(rows):
+        from app.scraper import runner
+        ctx, session = _make_session_mock()
+        session.run.return_value = rows
+        with patch("app.scraper.runner.db.get_session", ctx):
+            return runner._seats_to_ask("lei:X")
+
+    def test_never_asked_first_then_longest_ago_then_by_id(self):
+        rows = [{"id": "sec:3", "name": "C", "cik": "3", "asked": "2026-11-24T08:00:00.000001+00:00"},
+                {"id": "wd:Q9", "name": "Z", "cik": None, "asked": None},
+                {"id": "sec:1", "name": "A", "cik": "1", "asked": "2026-11-20T08:00:00.000001+00:00"},
+                {"id": "sec:2", "name": "B", "cik": "2", "asked": None},
+                {"id": "sec:4", "name": "D", "cik": "4", "asked": "2026-11-20T08:00:00.000001+00:00"}]
+        assert [s["id"] for s in self._seats(rows)] == ["sec:2", "wd:Q9", "sec:1", "sec:4", "sec:3"]
+        assert self._seats(rows)[0] == {"id": "sec:2", "name": "B", "cik": "2"}
+
+    def test_a_person_with_two_seats_is_one_and_asked_on_either_is_asked(self):
+        rows = [{"id": "p1", "name": "A", "cik": None, "asked": None},
+                {"id": "p1", "name": "A", "cik": None, "asked": "2026-11-24T08:00:00+00:00"},
+                {"id": "p2", "name": "B", "cik": None, "asked": "2026-11-01T08:00:00+00:00"},
+                {"id": None, "name": "nobody", "cik": None, "asked": None}]
+        assert [s["id"] for s in self._seats(rows)] == ["p2", "p1"]
+
+    def test_the_cap_cuts_after_the_order(self):
+        from app.scraper import runner
+        rows = [{"id": f"p{i:02d}", "name": str(i), "cik": None, "asked": "2026-11-24T08:00:00+00:00"} for i in range(1, 20)]
+        rows.append({"id": "wd:Q1", "name": "late", "cik": None, "asked": None})
+        got = [s["id"] for s in self._seats(rows)]
+        assert len(got) == runner.MAX_INSIDER_LOOKUPS == 15
+        assert got[0] == "wd:Q1" and got[1:] == [f"p{i:02d}" for i in range(1, 15)]
+
+    def test_the_ask_is_marked_on_the_open_seats(self):
+        from app.scraper import runner
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            runner._mark_seat_asked("wd:Q9", "lei:X")
+        (query,), params = session.run.call_args
+        assert "r.until IS NULL" in query and "SET r.form4_asked_at = $now" in query
+        assert params["p"] == "wd:Q9" and params["e"] == "lei:X"
+        from app.db.schema import _TIMESTAMP_PATTERN
+        import re
+        assert re.match(_TIMESTAMP_PATTERN, params["now"])

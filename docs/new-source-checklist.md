@@ -1351,6 +1351,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       subsidiary on one rebuild and not the next (findings item 24, 2026-10-31). Sort before
       capping, the records that can be written first, and cap the expensive step (the recursion),
       not the list.
+- [ ] **A capped pass that runs again must take turns.** A fixed order makes the cap repeatable,
+      and with it the same front of the list is served on every run: the seat-holder pass asked
+      EDGAR about fifteen people per company by id, a person asked with nothing found stayed in
+      front, and at eleven companies whoever sorted behind the fifteenth was never asked (findings
+      item 154, 2026-11-24). Record when each item was last served and serve the ones waiting
+      longest first; sort in code when the database has no agreed place for a missing value.
 - [ ] **Bound a "newest N documents" read by time, not by count, when N decides who is listed.**
       Fifty newest Form 4s was a request budget that silently became the definition of a
       board: a few officers' repeat filings used them up and Bank of America listed 8 of

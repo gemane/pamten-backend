@@ -44,6 +44,7 @@ _SAMPLE = {
     "validation_sources": "FULLY_CORROBORATED", "validation_documents": "ACCOUNTS_FILING",
     "role": "CEO", "relation": "group_member",
     "until_source_url": "https://sec.example.test/8k-item-502",
+    "form4_asked_at": "2026-11-24T08:00Z",
 }
 
 

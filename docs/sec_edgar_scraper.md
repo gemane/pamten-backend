@@ -1692,7 +1692,15 @@ instead of Form 4 (WesBanco) are in neither list.
 After the issuer-side scan, every person who holds an **open seat** at the company
 (from Wikidata or an earlier scrape) and has no ownership edge to it is looked up
 by their own filings (`runner._seat_holders_pass`, `fetch_insider_holding`): each
-person once, in id order, up to `MAX_INSIDER_LOOKUPS = 15`. **Only the living are asked**: a
+person once, up to `MAX_INSIDER_LOOKUPS = 15` per pass, **in turn**: those never asked first,
+then those asked longest ago, by id within a tie (`runner._seats_to_ask`; the time of the ask
+is `form4_asked_at` on the person's open seats at the company, `_mark_seat_asked`). In id
+order alone, a person asked with nothing found — no Form 4 of their own, as most directors a
+knowledge base names — kept the slot on every run, and at a company with more than fifteen
+such seats whoever sorted behind them was never asked: 11 of the 54 passes of the 2026-11-23
+rebuild asked exactly fifteen, Bank of America's and Morgan Stanley's among them (findings
+item 154). The requests per pass are the same; a run-all's second pass now asks the next
+fifteen. **Only the living are asked**: a
 founder's role stays open after the death (`roles.end_seats_at_death`), and the newest Form 4
 of a dead person is not what they hold — Steve Jobs († 2011) got his Form 4 of 2007 as an open
 Apple stake once the bulk name list resolved his name, and 31 dead founders (Henri Nestlé,

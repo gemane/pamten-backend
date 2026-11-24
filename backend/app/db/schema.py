@@ -362,7 +362,10 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
         "until_source_url",
     ),
     "HAS_ROLE": ("role", "since", "until", "source_id", "source_url", "source_date", "last_scraped_at", "read_from",
-                 "until_source_url"),
+                 "until_source_url",
+                 # when EDGAR was last asked for the holder's own Form 4s at the
+                 # company (`runner._mark_seat_asked`, findings item 154)
+                 "form4_asked_at"),
     # `source_url` / `source_date`: the 13F affiliate writer stamps them
     # (`runner._upsert_affiliate`); the ledger lacked them until 2026-10-26
     "RELATED_TO": ("relation", "source_id", "source_url", "source_date", "last_scraped_at"),
@@ -510,7 +513,7 @@ _TIMESTAMPS: list[tuple[str, str]] = [
     ("Entity", "scrape_incomplete_at"),
     ("Person", "created_at"),
     ("VotingGroup", "created_at"), ("VotingGroup", "last_scraped_at"),
-    ("OWNS", "last_scraped_at"), ("HAS_ROLE", "last_scraped_at"), ("RELATED_TO", "last_scraped_at"),
+    ("OWNS", "last_scraped_at"), ("HAS_ROLE", "last_scraped_at"), ("HAS_ROLE", "form4_asked_at"), ("RELATED_TO", "last_scraped_at"),
     ("MEMBER_OF", "last_scraped_at"),
     ("Claim", "first_seen_at"), ("Claim", "last_seen_at"),
     ("StakeHistory", "recorded_at"),
