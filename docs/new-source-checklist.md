@@ -2020,6 +2020,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       reaches a source must be off in every test by default (`_no_source_probes` in
       `tests/conftest.py`): the integration suite calls a plain `alerts.collect()`, and
       the first CI run of the probes sent twelve real requests and failed on them.
+      "Every endpoint" needs a list to be held against: the probes covered six of EDGAR's
+      pages and not the insider page, which then served a maintenance page to three requests
+      of four for a day while the rest answered (findings item 153) — a rebuild met it as
+      rosters "lost to the network". A test now holds the probes against the request types the
+      calls are counted by. And an endpoint that fails some of the time gets through a probe
+      that asks once and is retried: ask it several times, each of which must answer.
 - [ ] **Count the source's calls by what they ask for, and measure before you cut them.**
       A source with more than one endpoint gets a rule in `source_calls.request_type`
       (EDGAR: `SEC_TYPES`), and a new endpoint of a typed source a rule of its own — a

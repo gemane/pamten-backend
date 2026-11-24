@@ -16,7 +16,7 @@ scrape sends, and held to the one thing the scraper reads from the answer. A
 probe that fails is asked once more after a pause: a source that is slow for a
 moment is not a changed source.
 
-About ten requests a run. `manage.py alerts` runs them as its `probes` check
+About fifteen requests a run. `manage.py alerts` runs them as its `probes` check
 (daily from the alerts cron); nothing is written.
 """
 from __future__ import annotations
@@ -34,6 +34,9 @@ APPLE_QID = "Q312"
 COOK_CIK = "0001214156"            # COOK TIMOTHY D, Apple's chief executive
 TESCO_NUMBER = "00445790"          # TESCO PLC at Companies House
 RETRY_PAUSE = 5.0
+#: how often the insider page is asked in one probe (`_sec_insider_page`)
+INSIDER_PAGE_ASKS = 5
+INSIDER_PAGE_PAUSE = 2.0
 
 
 class Broken(Exception):
@@ -45,6 +48,7 @@ class Probe:
     source: str                    # the name app/source_calls.py counts it under
     name: str                      # what is asked, in words an alert mail can carry
     run: Callable[[], None]        # raises when the answer is not the expected one
+    asks: str = ""                 # EDGAR's request type it stands for (`source_calls.SEC_TYPES`)
 
 
 def _expect(ok, what: str) -> None:
@@ -112,6 +116,25 @@ def _sec_holder_feed() -> None:
             f"the 13D/G feed about Apple gave {first!r}")
 
 
+def _sec_insider_page() -> None:
+    """The issuer's reporting owners (`cgi-bin/own-disp`), which the board
+    roster is built from. On 2026-11-24 it answered HTTP 503 with SEC.gov's
+    maintenance page to four requests of five while every other endpoint
+    answered: a rebuild met it as eight companies' insiders "lost to the
+    network", and nothing else would have told us (findings item 153)."""
+    from app.scraper import sec_roster
+    # Asked INSIDER_PAGE_ASKS times, each of which must answer: the page was
+    # not gone but answering one request in four, and a probe is retried — a
+    # single ask got through on two mornings of three while a scrape lost most
+    # of its rosters.
+    for i in range(INSIDER_PAGE_ASKS):
+        if i:
+            time.sleep(INSIDER_PAGE_PAUSE)     # the failures came in runs of a few seconds
+        owners = sec_roster.issuer_owners(APPLE_CIK)
+        _expect(any(o.get("cik") == COOK_CIK for o in owners),
+                f"Apple's reporting owners do not list its chief executive ({len(owners)} owners read)")
+
+
 def _sec_full_text() -> None:
     from app.scraper import sec_edgar
     data = sec_edgar._get(sec_edgar.SEARCH_URL, {"q": '"Apple Inc"', "forms": "10-K"})
@@ -176,17 +199,31 @@ def _companies_house_officers() -> None:
             f"an officer has no name or no officer link (keys {sorted(items[0])[:6]})")
 
 
+#: EDGAR's request types (`source_calls.SEC_TYPES`) no probe stands for, and
+#: why — so a type that gets neither a probe nor a line here is a test failure,
+#: not a page that fails for days unheard (findings item 153: the insider page
+#: had none).
+SEC_NOT_PROBED = {
+    "filer-record-page": "the older pages of a filer's record: the same service and shape as the record itself",
+    "filing-document": "a file of the archive, fetched by the path the record or a feed gave",
+    "filing-folder": "a folder of the same archive",
+    "xbrl": "no probe yet: the share counts come from here, a failure shows as stakes without a percent",
+    "other": "whatever has no type",
+}
+
+
 def probes() -> list[Probe]:
     """The probes this instance can run: Companies House only with its key, the
     bulk name list only where one is kept."""
     from app.config import settings
     out = [
-        Probe("sec-edgar", "ticker list", _sec(_sec_tickers)),
-        Probe("sec-edgar", "company-name search", _sec(_sec_company_search)),
-        Probe("sec-edgar", "person-name search", _sec(_sec_person_search)),
-        Probe("sec-edgar", "a filer's submissions", _sec(_sec_submissions)),
-        Probe("sec-edgar", "13D/G feed about a company", _sec(_sec_holder_feed)),
-        Probe("sec-edgar", "full-text search", _sec(_sec_full_text)),
+        Probe("sec-edgar", "ticker list", _sec(_sec_tickers), "tickers"),
+        Probe("sec-edgar", "company-name search", _sec(_sec_company_search), "company-search"),
+        Probe("sec-edgar", "person-name search", _sec(_sec_person_search), "person-search"),
+        Probe("sec-edgar", "a filer's submissions", _sec(_sec_submissions), "filer-record"),
+        Probe("sec-edgar", "13D/G feed about a company", _sec(_sec_holder_feed), "filing-feed"),
+        Probe("sec-edgar", "a company's reporting owners", _sec(_sec_insider_page), "insider-page"),
+        Probe("sec-edgar", "full-text search", _sec(_sec_full_text), "full-text"),
         Probe("gleif", "an LEI record", _gleif_record),
         Probe("gleif", "an LEI's parent relationship", _gleif_relationship),
         Probe("wikidata", "item by a stated id", _wikidata_by_statement),
@@ -194,7 +231,7 @@ def probes() -> list[Probe]:
         Probe("wikidata", "an item's labels", _wikidata_entity),
     ]
     if settings.SEC_NAME_LIST_DIR:
-        out.insert(3, Probe("sec-edgar", "bulk name list", _sec(_sec_name_list)))
+        out.insert(3, Probe("sec-edgar", "bulk name list", _sec(_sec_name_list), "name-list"))
     if settings.COMPANIES_HOUSE_API_KEY:
         out.append(Probe("companies-house", "a company's officers", _companies_house_officers))
     return out
@@ -206,7 +243,13 @@ def _why(exc: BaseException) -> str:
     if isinstance(exc, Broken):
         return str(exc)
     if isinstance(exc, httpx.HTTPStatusError):
-        body = " ".join((exc.response.text or "").split())[:140]
+        body = exc.response.text or ""
+        if body.lstrip().startswith("<"):
+            # a page, not a message: its words without the markup — SEC.gov's
+            # maintenance page read "<!DOCTYPE html> <html lang=…" (item 153)
+            import re
+            body = re.sub(r"(?is)<(script|style|head)\b.*?</\1>|<!--.*?-->|<[^>]+>", " ", body)
+        body = " ".join(body.split())[:140]
         return f"HTTP {exc.response.status_code}" + (f": {body}" if body else "")
     return f"{type(exc).__name__}: {exc}"[:200]
 
