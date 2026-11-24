@@ -2021,6 +2021,16 @@ alone did not explain:
   heading or a line ending in ":" ends what stood above; a cell that begins with a name
   and goes on with the address is the holder's own row; a number in front of a name
   with a legal form ("59 North Capital Management, LP") is no street.
+- *A numbered table* — Ovintiv's "1 The Vanguard Group (1)", "2 BlackRock, Inc. (2)",
+  "3 FMR LLC (3)" (findings item 151). The numbers are dropped only when the rows that
+  begin with one count 1, 2, 3 … in the table's order, two of them at least: a number
+  alone does not tell a row's from a name's ("65 Equity Partners", "3M Company").
+- *"c/o" is an address, not a group* (findings item 152) — "John C. Malone c/o Liberty
+  Media Corporation" is cut to the name like "… and affiliated entities" is, but the
+  stake stays the person's own: it was flagged a group's, and a group's stake is written
+  on a company only, so eight such holders of 663 tables (Malone at three issuers,
+  Tilman J. Fertitta at Wynn, Peter R. Kellogg) were never written. Where the street is
+  cut first, the "c/o" left alone at the end goes too ("Patrick W. Galley c/o").
 
 A voting-power column
 is `voting_power_pct`; the table's **record date** ("Shares Beneficially Owned
