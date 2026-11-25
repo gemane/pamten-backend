@@ -85,9 +85,12 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   keyed as edge ends are (item 97). `save_accounts.py` / `restore_accounts.py` — `User` and
   `RefreshToken` rows by key, so nobody has to log in again (file 0600, never in memory).
 
-A step a merged change added to `finish-import.sh` usually also belongs in step 7, because
-the replay writes after the import's finish (#517 added close-reported-by-parent to both;
-item 89 the succession pass and the dissolution heal). The chain's own subset files are
+Step 7's passes are the `after-scrapes` profile of the backend's one list of finishing steps
+(`backend/app/finishing.py`, `manage.py finish --profile after-scrapes --dry-run` prints them); the kit runs
+them one by one (`--only`) to record each step's calls, and keeps only the succession pass itself (its inputs
+are the kit's). A pass a change adds after a load goes into that file — the `import` profile for
+`finish-import.sh`, `after-scrapes` for step 7, usually both, because the replay writes after the import's
+finish (#517 added close-reported-by-parent to both; item 89 the succession pass and the dissolution heal). The chain's own subset files are
 `mktemp` files in /tmp — RAM, gone after the run; what the verify may need is written into the
 kit folder (the scripts repo's chain still uses /tmp: changing it is the user's word).
 

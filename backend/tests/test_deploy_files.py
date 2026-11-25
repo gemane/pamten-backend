@@ -115,23 +115,26 @@ def test_the_backup_marker_is_one_alerts_can_read():
         os.unlink(f.name)
 
 
-def test_the_import_merges_across_sources_before_finishing():
+def test_the_import_ends_with_the_backend_s_finishing_steps():
     # no importer merges GLEIF's company with its Companies House record or a
-    # PSC foreign owner: without this step a rebuild left 13 doubled companies
-    finish = OPS[OPS.index('step "finishing"'):OPS.index("cmd_backup()")]
-    dedupe = finish.index("run_manage dedupe-entities")
-    assert dedupe < finish.index("run_manage geocode")
-    assert dedupe < finish.index("run_manage mark-shortcuts")
-    assert dedupe < finish.index("rebuild-search")
-
-
-def test_the_import_closes_what_ended_with_a_dissolved_company():
-    # the bulk importers store dissolved_on without closing anything (dev:
-    # Altaba, dissolved 2019, still had 104 open edges): after the merge (one
-    # company, one date), before the shortcuts (a closed edge is no path)
-    finish = OPS[OPS.index('step "finishing"'):OPS.index("cmd_backup()")]
-    close = finish.index("run_manage heal-ends-at-dissolution --apply")
-    assert finish.index("run_manage dedupe-entities") < close < finish.index("run_manage mark-shortcuts")
+    # PSC foreign owner (a rebuild left 13 doubled companies), and the bulk
+    # importers store dissolved_on without closing anything (Altaba, dissolved
+    # 2019, still had 104 open edges). The steps and their order are the `import`
+    # profile of app/finishing.py — until 2026-11-25 they were written out here,
+    # without `close-reported-by-parent`, which the dev import ran.
+    from app import finishing
+    finish = OPS[OPS.index('step "finishing"'):OPS.index("cmd_gleif_update() {")]
+    code = "\n".join(ln for ln in finish.splitlines() if not ln.lstrip().startswith("#"))
+    assert 'if [ "$mode" = test ]; then run_manage finish --profile import\n' in code
+    # a --bulk-load chain leaves the FULL_TEXT index complete; rebuilding it takes hours
+    assert "else run_manage finish --profile import --skip search-index; fi" in code
+    assert code.count("run_manage") == 2                      # nothing written out beside the list
+    order = finishing.known_order("import")
+    assert order[0] == "entity-dedup" and order[-1] == "mark-shortcuts"
+    assert order.index("entity-dedup") < order.index("dissolution-heal") < order.index("mark-shortcuts")
+    assert "close-reported-by-parent" in order
+    assert all(use.fatal for use in finishing.PROFILES["import"])     # a failed step fails the import (set -e)
+    assert "set -euo pipefail" in OPS
 
 
 def test_the_gleif_history_keeps_its_file_where_the_host_sees_it():
@@ -143,25 +146,21 @@ def test_the_gleif_history_keeps_its_file_where_the_host_sees_it():
     assert "gleif-history" not in SETUP          # manual, run once — never cron
 
 
-def test_the_daily_delta_closes_dissolutions_and_rederives_shortcuts():
+def test_the_daily_delta_ends_with_the_backend_s_finishing_steps():
     # a delta stores a dissolution without closing anything and can retire the
-    # direct edge a shortcut stood in for; the cron runs `ops.sh gleif-update`
+    # direct edge a shortcut stood in for; issuers a scrape gave a CUSIP join
+    # their LEI daily (findings item 71) — the `nightly` profile of
+    # app/finishing.py: the bridge first and never fatal, then the dissolution
+    # pass, then the shortcuts. The cron runs `ops.sh gleif-update`.
+    from app import finishing
     body = OPS[OPS.index("cmd_gleif_update() {"):]
     body = body[:body.index("\n}")]
-    delta = body.index("run_manage gleif-update")
-    close = body.index("run_manage heal-ends-at-dissolution --apply")
-    assert delta < close < body.index("run_manage mark-shortcuts")
+    code = "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+    delta = code.index("run_manage gleif-update")
+    # the LEI-ISIN file lives in /data (the container's home is gone with it); no geocoding here
+    assert delta < code.index("run_manage finish --profile nightly --skip geocode --isin-dir /data/gleif-isin")
+    assert code.count("run_manage") == 2
+    assert finishing.known_order("nightly")[:3] == ["securities-bridge", "dissolution-heal", "mark-shortcuts"]
+    assert not finishing.PROFILES["nightly"][0].fatal
     assert 'gleif-update)          cmd_gleif_update "$@"' in OPS
-
-
-
-def test_the_daily_delta_runs_the_securities_bridge_and_keeps_its_file():
-    # findings item 71: issuers a scrape gave a CUSIP join their LEI daily; the
-    # file lives in /data (the container's home is gone with it), the run is never
-    # fatal, and it comes before the dissolution pass and the shortcuts
-    body = OPS[OPS.index("cmd_gleif_update() {"):]
-    body = body[:body.index("\n}")]
-    bridge = body.index("run_manage gleif-isin-bridge --apply --dir /data/")
-    assert body.index("run_manage gleif-update") < bridge < body.index("run_manage heal-ends-at-dissolution")
-    assert "|| echo" in body[bridge:body.index("run_manage heal-ends-at-dissolution")]
     assert "gleif-isin" not in SETUP        # no cron line of its own: it rides on the delta

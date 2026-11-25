@@ -173,17 +173,14 @@ cmd_import() {
     step "4/4 their names";          run_manage ch-company-data --file "$basic" --only-file "$companies"
   fi
   step "finishing"
-  # a --bulk-load chain rebuilds the FULL_TEXT index itself; the curated one does not
-  # first: imports never merge across sources (GLEIF vs Companies House vs a
-  # PSC foreign owner); the index, geocoding and shortcuts need the merged graph
-  run_manage dedupe-entities --limit 100000
-  # the bulk importers store dissolved_on without closing anything: close a
-  # dissolved company's holdings and seats on that day, before the shortcuts
-  # (a closed edge is no path)
-  run_manage heal-ends-at-dissolution --apply
-  [ "$mode" = test ] && run_manage rebuild-search
-  run_manage geocode
-  run_manage mark-shortcuts
+  # The finishing steps of an import — the entity dedup first (imports never merge
+  # across sources; the index, geocoding and shortcuts need the merged graph), the
+  # dissolution heal, close-reported-by-parent, geocoding, the shortcuts — are the
+  # backend's one list (app/finishing.py, profile `import`); any of them failing
+  # fails the import. A --bulk-load chain rebuilds the FULL_TEXT index itself; the
+  # curated one does not.
+  if [ "$mode" = test ]; then run_manage finish --profile import
+  else run_manage finish --profile import --skip search-index; fi
   # (the GLEIF entity import records the baseline the daily delta continues from)
   echo "✅ import ($mode) done in $(( ($(date +%s) - t0) / 60 )) min"
 }
@@ -197,14 +194,11 @@ cmd_import() {
 cmd_gleif_update() {
   watch_job gleif-update
   run_manage gleif-update "$@"
-  # the securities bridge (findings item 71): issuers whose CUSIP a scrape stored
-  # since yesterday join their LEI through GLEIF's LEI-ISIN file. Before the
-  # dissolution pass and the shortcuts (an attach writes GLEIF's record, a join
-  # merges two nodes). Never fatal: a GLEIF mapping hiccup must not fail the delta.
-  run_manage gleif-isin-bridge --apply --dir /data/gleif-isin \
-    || echo "  ! securities bridge failed — the delta itself was fine"
-  run_manage heal-ends-at-dissolution --apply
-  run_manage mark-shortcuts
+  # what the finished graph needs after a delta, from the backend's one list
+  # (app/finishing.py, profile `nightly`): the securities bridge (never fatal — a
+  # GLEIF mapping hiccup must not fail the delta), the dissolution heal, the
+  # shortcuts. No geocoding here.
+  run_manage finish --profile nightly --skip geocode --isin-dir /data/gleif-isin
 }
 
 cmd_backup() {

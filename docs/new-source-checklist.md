@@ -898,7 +898,8 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       umbrella and none of them (findings item 71, 2026-11-07).
       Run such a bridge where its input exists: the CUSIPs arrive with the scrapes (13F,
       13D/G covers), not with a bulk import, so the bridge runs after the daily GLEIF
-      delta and the rebuild's replay, never in `finish-import.sh` — there it would
+      delta and the rebuild's replay (the `nightly` and `after-scrapes` profiles of
+      `app/finishing.py`), never in the `import` profile — there it would
       download 33 MB to find nothing (findings item 71, 2026-11-07).
 - [ ] **A register's record of an entity that ceased is not the registrant that files today.**
       A company can be replaced by a new legal entity that keeps its public ids: a US
@@ -1760,15 +1761,23 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       is (its data may be dropped). After the production start a heal ships with its
       change, runs once, and the next PR removes it. 33 one-off `manage.py` heals were
       removed on 2026-10-27.
-- [ ] **A step after a load goes into all four chains.** What the finished graph needs
-      (merge across sources, close what a dissolution ended, mark shortcuts, search
-      index, geocode) runs in two full imports — dev `~/scripts/steps/finish-import.sh`,
-      production `deploy/ops.sh import` — and the parts a daily delta can change run
-      again in two nightly updates — dev `~/scripts/cron-gleif-update.sh`, production
-      `ops.sh gleif-update`. Adding a step to one means checking the other three:
+- [ ] **A step after a load goes into the one list, `app/finishing.py`.** What the
+      finished graph needs (merge across sources, close what a dissolution ended, mark
+      shortcuts, search index, geocode, the passes after a batch of scrapes) is a
+      `Step` there, used by the profiles that need it: `import` (dev
+      `~/scripts/steps/finish-import.sh`, production `deploy/ops.sh import`), `nightly`
+      (dev `~/scripts/cron-gleif-update.sh`, production `ops.sh gleif-update`) and
+      `after-scrapes` (the rebuild kit's step 7); each caller is one line,
+      `manage.py finish --profile <name>`. An order that must hold goes into `RULES`
+      with its reason — a profile that breaks one does not load. Until 2026-11-25
+      these were five shell lists kept in step by hand, and they drifted twice:
       production's GLEIF update never re-marked shortcuts, which the dev cron always
-      did (found 2026-10-27). `backend/tests/test_deploy_files.py` pins the production
-      order; the scripts repo has no tests, so read its two scripts.
+      did (found 2026-10-27), and production's import never ran
+      `close-reported-by-parent`, which the dev import did (found when the lists were
+      merged). The same day showed a flag the kit had passed for weeks
+      (`SCRAPER_BODS_GLEIF_ENABLED`) that no setting reads: a list in code can be
+      tested against the settings and the commands, a list in a shell script cannot.
+      `backend/tests/test_finishing.py` pins the three profiles in full.
 - [ ] **`register()` validates against the catalogue** — the `KNOWN_SOURCES` entry must
       exist, the kind must match, and the settings flag must be real (Pydantic rejects
       unknown fields, so a test cannot monkeypatch a flag that was never declared). Patch
