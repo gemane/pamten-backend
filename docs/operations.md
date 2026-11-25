@@ -320,6 +320,44 @@ the retention window belongs in the Art. 30 record, and an erasure request has t
 to copies sitting in backups. The usual answer — copies age out on a documented cycle rather than
 being surgically edited — is defensible, but only if it is written down.
 
+## Finishing steps (`manage.py finish`)
+
+A load leaves the graph unfinished: companies two sources wrote are not merged,
+a dissolved company's holdings are still open, new nodes have no coordinates,
+the shortcut flags are stale. The passes that finish it are one list,
+`backend/app/finishing.py`, and every caller runs it through one command:
+
+| Profile | Run after | Callers | A failed step |
+|---|---|---|---|
+| `import` | a bulk import | `~/scripts/steps/finish-import.sh`, `deploy/ops.sh import` | stops the run (the import fails) |
+| `nightly` | the daily GLEIF delta | `~/scripts/cron-gleif-update.sh`, `deploy/ops.sh gleif-update` | the bridge and geocoding are said and passed over; the dissolution heal and the shortcuts stop the run |
+| `after-scrapes` | a batch of scrapes | the rebuild kit, step 7 | is said; the rest still run |
+
+```bash
+python manage.py finish --profile import                       # run the profile
+python manage.py finish --profile import --skip search-index   # after a --bulk-load chain
+python manage.py finish --profile nightly --skip geocode --isin-dir /data/gleif-isin
+python manage.py finish --profile after-scrapes --dry-run      # print the commands, run nothing
+python manage.py finish --profile after-scrapes --list         # name<TAB>label per step
+python manage.py finish --profile after-scrapes --only uk-officers   # one step; its own exit code
+```
+
+Each step is a `manage.py` command run as its own process. The profile says
+which steps run in which order, which stop the run, and which get the scraper
+flags (`SCRAPER_ENABLED`, `SCRAPER_SEC_EDGAR_ENABLED`) for their own process —
+the entity dedup and the two passes that read EDGAR, after scrapes only.
+`--only` and `--skip` take step names of that profile; a name that is none of
+them is an error (exit 2), so a typo runs neither everything nor nothing.
+
+The orders that must hold (`RULES` in `finishing.py`, each with its reason):
+the securities bridge before the entity dedup, the dedup before the dissolution
+heal, the officers load between the entity and the person dedup, and the
+shortcuts after everything that changes an edge. A profile that breaks one does
+not load. Former officers (`ch-officers --history`) are in no profile.
+
+To add a pass: a `Step`, a `Use` in each profile that needs it, a rule if its
+place matters, and the profile's pinned list in `backend/tests/test_finishing.py`.
+
 ## Service accounts after a rebuild
 
 `new-database.sh` drops the database, and users live in it. Only the account named
@@ -481,6 +519,7 @@ python3 manage.py init-schema
 | Command | Description |
 |---|---|
 | `init-schema` | Create vertex/edge types and lookup indexes (idempotent) |
+| `finish --profile import\|nightly\|after-scrapes` | The finishing steps a load needs, in order — see *Finishing steps* above. `--dry-run` prints the commands, `--list` the steps, `--only`/`--skip` select |
 | `list-mixed-generations` | Persons whose own names carry both "Sr." and "Jr." (or II and III) — a relative folded in by a merge before the duplicate scan learned to tell them apart (2026-10-25). Report only; split by hand (see docs/deduplication.md) |
 | `heal-ends-at-dissolution` | Close every open holding and seat of a dissolved company on its `dissolved_on` (`until_reason = dissolution`, cited by the company's Wikidata item) — the rule the Wikidata writer applies since 2026-10-25, for a database written before it or loaded in bulk (the GLEIF and Companies House importers set the date without closing anything). Founders stay open; an edge the source dates after the dissolution is reported, not closed. Every import chain runs it with `--apply` after the dedup (`finish-import.sh`, `ops.sh import`), and so does the daily GLEIF update before it re-marks the shortcuts (`cron-gleif-update.sh`, `ops.sh gleif-update`). A scrape needs no step: its scope applies the rule to every company it touched or wrote an edge onto. Dry run unless `--apply` |
 | `wikidata-suggestions` | What GLEIF and EDGAR would correct on Wikidata's LEI (P1278) and CIK (P5531) statements: a CSV of findings (`missing` / `differs` / `unknown` / `several`, with the register's name and record page; `link = refused` for an item the scraper refuses for a node, found by the node's register ids) and a QuickStatements batch of the confident additions, for a person to review and submit. Reads the graph, Wikidata and the registers; writes to none of them. `--out DIR`, `--limit N` |

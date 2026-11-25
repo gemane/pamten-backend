@@ -496,10 +496,9 @@ class TestCallsByStep:
         script = (KIT / "rebuild.sh").read_text()
         assert ': > "$R/calls.tsv"; rm -f "$R/calls_state.json"' in script
         assert 'case "$STEP" in 0*|1*) ;; *) calls "$STEP" ;; esac' in script
-        for command in ("gleif-isin-bridge", "dedupe-entities", "ch-officers", "geocode", "close-ended-classes",
-                        "close-absent-from-table", "close-held-by-subsidiary"):
-            after = script.split(f"manage.py {command}", 1)[1].split("\n", 2)[1]
-            assert after.startswith('calls "7 '), command
+        # step 7 runs the backend's finishing list one step at a time and records after each
+        loop = script[script.index("while IFS=$'\\t' read -r name label; do"):script.index('done <<< "$FINISHING"')]
+        assert loop.index("manage.py finish --profile after-scrapes --only") < loop.index('calls "7 $label"')
         assert "by step (bucket left out)" in script
 
     def test_the_replay_records_after_every_phase(self):

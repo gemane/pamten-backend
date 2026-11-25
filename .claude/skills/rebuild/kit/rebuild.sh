@@ -70,76 +70,42 @@ t "6 replaying the scrapes"
 python3 "$R/replay_scrapes.py" || echo "  ! replay ended with an error (see above)"
 
 t "7 finishing what the scrapes added"
-# the securities bridge (findings item 71): an EDGAR issuer's CUSIP -> its US ISIN ->
-# GLEIF's daily LEI-ISIN file -> its LEI. The CUSIPs arrive with the replay's 13F and
-# 13D/G reads, so it runs here and not in finish-import (a bulk import stores none).
-# GLEIF's catalogue switch is its only gate; it downloads ~33 MB once a day. First,
-# because it re-keys sec: nodes to lei: — LEIs the succession step below must see.
-python3 manage.py gleif-isin-bridge --apply || echo "  ! securities bridge failed"
-calls "7 securities bridge"
-# The successions of every LEI the graph holds NOW (findings item 89): the chain's
-# steps 4/5 and 5/5 read them for the import's ~2,000 LEIs, and the replay adds
-# ~600 lei: nodes (the register pointer, the bridge, Exhibit 21 confirmations)
-# whose successions nobody read — 84 of the 86 pairs of the 11-08 guard touched
-# dev's final LEI set, 46 the import's. The list and the endpoints go into the kit
-# folder, not /tmp (the chain's mktemp files were gone when the verify needed them);
-# the endpoints the subset lacked are then named from the golden copy, as the chain
-# does. The same rule as every finish-import step repeated here: the replay writes
-# after the import's finish.
-LEICDF="$DATA/lei-cdf/gleif-lei2.json.zip"
-python3 "$R/lei_ids.py" "$R/leis_after_replay.txt" || echo "  ! LEI list failed"
-if [ -s "$R/leis_after_replay.txt" ]; then
-  python3 manage.py gleif-succession --file "$LEICDF" --only-file "$R/leis_after_replay.txt" \
-    --emit-leis "$R/succession_leis.txt" || echo "  ! succession after the replay failed"
-  if [ -s "$R/succession_leis.txt" ]; then
-    python3 manage.py gleif-lei-cdf --file "$LEICDF" --only-file "$R/succession_leis.txt" \
-      || echo "  ! naming the succession endpoints failed"
+# The steps, their order and which of them read EDGAR with the scraper flags on
+# are the backend's `after-scrapes` profile (app/finishing.py; `manage.py finish
+# --profile after-scrapes --dry-run` prints the commands): one list, shared with
+# the import and the nightly delta, instead of one written out here. Run one by
+# one, so each step's calls to the outside sources are recorded after it; a step
+# that fails is said and the rebuild goes on.
+#
+# After the securities bridge, the successions of every LEI the graph holds NOW
+# (findings item 89): the chain's steps 4/5 and 5/5 read them for the import's
+# ~2,000 LEIs, and the replay adds ~600 lei: nodes (the register pointer, the
+# bridge — which re-keys sec: nodes to lei: —, Exhibit 21 confirmations) whose
+# successions nobody read. The list and the endpoints go into the kit folder, not
+# /tmp (the chain's mktemp files were gone when the verify needed them); the
+# endpoints the subset lacked are then named from the golden copy, as the chain
+# does. Before the entity dedup, which folds what this adds. It stays here: it
+# reads the kit's own LEI list and the golden copy, which no other caller has.
+successions_after_the_replay() {
+  LEICDF="$DATA/lei-cdf/gleif-lei2.json.zip"
+  python3 "$R/lei_ids.py" "$R/leis_after_replay.txt" || echo "  ! LEI list failed"
+  if [ -s "$R/leis_after_replay.txt" ]; then
+    python3 manage.py gleif-succession --file "$LEICDF" --only-file "$R/leis_after_replay.txt" \
+      --emit-leis "$R/succession_leis.txt" || echo "  ! succession after the replay failed"
+    if [ -s "$R/succession_leis.txt" ]; then
+      python3 manage.py gleif-lei-cdf --file "$LEICDF" --only-file "$R/succession_leis.txt" \
+        || echo "  ! naming the succession endpoints failed"
+    fi
   fi
-fi
-# The entity dedup's SEC/LEI bridge reads EDGAR (`_bridge_sec_lei`, gated by
-# `_sec_lei_check_enabled`), and the backend .env has scraping off: every
-# rebuild's step 7 printed "Merged 0 entities" and never asked a filing for a
-# same-name LEI/CIK pair — on the server ops.sh runs with the flags on. The
-# replay forces them in-process; this step gets them for the dedupe alone
-# (findings item 70, 2026-11-06). After the bridge and the succession step, so
-# it folds what they added (a DUPLICATE registration read as a predecessor
-# lands on its live record here — item 88 stops it at the source).
-SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true SCRAPER_BODS_GLEIF_ENABLED=true \
-  python3 manage.py dedupe-entities --limit 100000 || echo "  ! dedupe failed"
-calls "7 entity dedup (SEC/LEI bridge)"
-# the ends the replay and the succession step wrote (GLEIF's end events, item 85a;
-# Wikidata's P576): finish-import's step 2/5, repeated for what came after it
-python3 manage.py heal-ends-at-dissolution --apply 2>&1 | grep -v "^WARNING\|^INFO" | tail -3
-# the serving officers of the UK companies the graph holds now (Companies House API;
-# the user, 2026-11-24: a rebuild left dev without any officer, the load being a
-# manual command). After the entity dedup, so a seat lands on the node that stays;
-# before the person dedup, which folds an officer onto the person a scrape wrote.
-# Serving people only — never `--history`: former officers wait for the DPIA
-# paragraph (legal repository). Needs COMPANIES_HOUSE_API_KEY in the backend .env;
-# without it, or with a company the register did not answer for, the line below
-# says so and the rebuild goes on. ~600 requests per five minutes, a few minutes.
-python3 manage.py ch-officers || echo "  ! ch-officers failed (no key, or companies not read — see above)"
-calls "7 UK officers"
-# the persons two scopes wrote twice — a Wikidata part retried hours after the SEC
-# part wrote the same insiders under EDGAR's spelling (findings item 55)
-python3 manage.py dedupe-persons || echo "  ! dedupe-persons failed"
-python3 manage.py geocode || echo "  ! geocode failed"
-calls "7 geocode"
-python3 manage.py close-reported-by-parent || echo "  ! close-reported-by-parent failed"
-# the 13D/G holdings whose shares ceased to exist — a merger's 25-NSE, a takeover's
-# Form 15 (findings item 99); reads EDGAR, so the flags go on its own line (item 70)
-SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true \
-  python3 manage.py close-ended-classes || echo "  ! close-ended-classes failed"
-calls "7 close-ended-classes"
-# … and those the issuer's own ownership table (proxy) no longer names (item 99)
-SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true \
-  python3 manage.py close-absent-from-table || echo "  ! close-absent-from-table failed"
-calls "7 close-absent-from-table"
-# … and those whose holder is the issuer's own subsidiary (item 99 part 3)
-python3 manage.py close-held-by-subsidiary || echo "  ! close-held-by-subsidiary failed"
-calls "7 close-held-by-subsidiary"
-python3 manage.py mark-shortcuts || echo "  ! mark-shortcuts failed"
-python3 manage.py mark-stale || echo "  ! mark-stale failed"
+}
+FINISHING="$(python3 manage.py finish --profile after-scrapes --list 2>/dev/null)"
+[ -n "$FINISHING" ] || die "the finishing steps could not be listed (manage.py finish --profile after-scrapes --list)"
+while IFS=$'\t' read -r name label; do
+  python3 manage.py finish --profile after-scrapes --only "$name" </dev/null \
+    || echo "  ! $label failed (see above)"
+  calls "7 $label"
+  if [ "$name" = securities-bridge ]; then successions_after_the_replay; fi
+done <<< "$FINISHING"
 
 t "8 checks (read-only)"
 python3 manage.py schema-audit 2>&1 | grep -v "^WARNING\|^INFO" | tail -5

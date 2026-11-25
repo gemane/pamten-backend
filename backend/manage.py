@@ -981,6 +981,22 @@ def cmd_list_mixed_generations(args):
               f"{'/'.join(r['marks'])} — aliases: {', '.join(r['alias'])}")
 
 
+def cmd_finish(args):
+    """The finishing steps a caller's profile needs, in order (app/finishing.py)."""
+    from app import finishing
+    skip = [name for part in (args.skip or []) for name in part.split(",") if name]
+    try:
+        if args.list:
+            print("\n".join(finishing.listing(args.profile, skip)))
+            return
+        code = finishing.run(args.profile, only=args.only, skip=skip, db_url=args.db_url,
+                             isin_dir=args.isin_dir, geocode_limit=args.geocode_limit, dry_run=args.dry_run)
+    except ValueError as exc:
+        print(f"finish: {exc}", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(code)
+
+
 def cmd_heal_ends_at_dissolution(args):
     """Close every open holding and seat of a dissolved company on its
     `dissolved_on` (app.dissolution.heal_ends_at_dissolution): the rule the
@@ -1762,6 +1778,26 @@ def _build_parser():
     p_eu.add_argument('--confirm-database', required=True,
                       help='Must match the configured database — this mints a privileged account')
     p_eu.set_defaults(func=cmd_ensure_user)
+
+    # finish: the one list of finishing steps (app/finishing.py) — what the import
+    # scripts, the nightly delta and the rebuild each run after their load.
+    p_fin = subparsers.add_parser('finish',
+        help="Run the finishing steps a load needs, in order: --profile import (after a bulk import), "
+             "nightly (after the GLEIF delta) or after-scrapes (after a batch of scrapes)")
+    p_fin.add_argument('--profile', required=True, choices=['import', 'nightly', 'after-scrapes'])
+    p_fin.add_argument('--list', action='store_true',
+                       help='Print the steps (name<TAB>label) and run nothing')
+    p_fin.add_argument('--dry-run', dest='dry_run', action='store_true',
+                       help='Print each manage.py command the run would make and run nothing')
+    p_fin.add_argument('--only', help='Run this one step and exit with its exit code')
+    p_fin.add_argument('--skip', action='append',
+                       help='Leave a step out (repeat, or separate with commas)')
+    p_fin.add_argument('--db-url', dest='db_url', help='Direct database URL, for the steps that take one')
+    p_fin.add_argument('--isin-dir', dest='isin_dir',
+                       help="Where GLEIF's LEI-ISIN file is kept (the securities bridge)")
+    p_fin.add_argument('--geocode-limit', dest='geocode_limit', type=int,
+                       help='Max entities the geocode step takes this run')
+    p_fin.set_defaults(func=cmd_finish)
 
     # backup-database: server-side online backup (app/db/backup.py explains why a
     # disk snapshot is not a substitute).

@@ -16,53 +16,58 @@ def _step(n: int) -> str:
     return m.group(1)
 
 
-def test_step_7_runs_the_entity_dedup_with_the_scraper_flags_on():
-    lines = [ln for ln in _step(7).splitlines() if "dedupe-entities" in ln and not ln.lstrip().startswith("#")]
-    assert len(lines) == 1, lines
-    command = _step(7)[: _step(7).index(lines[0]) + len(lines[0])]
-    # the flags sit on the dedupe's own invocation (a continued line), not exported for the whole run
-    invocation = "\n".join(command.splitlines()[-2:])
-    for flag in ("SCRAPER_ENABLED=true", "SCRAPER_SEC_EDGAR_ENABLED=true", "SCRAPER_BODS_GLEIF_ENABLED=true"):
-        assert flag in invocation, flag
-    assert "export SCRAPER_ENABLED" not in SCRIPT, "the flags must not leak into the other steps"
-
-
-def test_the_other_finishing_steps_run_without_the_flags():
+def test_step_7_runs_the_backend_s_one_list_step_by_step():
+    # the steps, their order and their flags were written out here until
+    # 2026-11-25, beside four other lists that had drifted apart; they are the
+    # `after-scrapes` profile of app/finishing.py now (tests/test_finishing.py
+    # pins it: the flags on the dedup and the two EDGAR passes, the bridge first,
+    # the officers between the two dedups, the shortcuts last)
     step7 = _step(7)
-    for cmd in ("gleif-succession", "gleif-lei-cdf", "heal-ends-at-dissolution", "dedupe-persons", "geocode",
-                "close-reported-by-parent", "mark-shortcuts", "mark-stale"):
-        [line] = [ln for ln in step7.splitlines() if f"manage.py {cmd}" in ln]
-        assert "SCRAPER_" not in line, line
+    assert 'FINISHING="$(python3 manage.py finish --profile after-scrapes --list 2>/dev/null)"' in step7
+    assert 'python3 manage.py finish --profile after-scrapes --only "$name" </dev/null' in step7
+    assert 'done <<< "$FINISHING"' in step7
+    # a step that fails is said and the rebuild goes on …
+    assert '|| echo "  ! $label failed (see above)"' in step7.replace("\\\n   ", "")
+    # … but a list that cannot be read is no rebuild without finishing steps
+    assert '[ -n "$FINISHING" ] || die ' in step7
+    # no finishing command is written out here any more
+    code = "\n".join(ln for ln in step7.splitlines() if not ln.lstrip().startswith("#"))
+    for cmd in ("dedupe-entities", "heal-ends-at-dissolution", "ch-officers", "dedupe-persons", "geocode",
+                "close-reported-by-parent", "close-ended-classes", "close-absent-from-table",
+                "close-held-by-subsidiary", "mark-shortcuts", "mark-stale", "gleif-isin-bridge"):
+        assert f"manage.py {cmd}" not in code, cmd
+    assert "SCRAPER_" not in code and "export SCRAPER_ENABLED" not in SCRIPT   # the profile gives each step its flags
 
 
-def test_step_7_runs_the_securities_bridge_before_the_dedup_and_the_shortcuts():
-    # findings item 71: the replay stores the CUSIPs (13F, 13D/G covers), so the
-    # bridge belongs after it; a join merges two nodes, so before mark-shortcuts —
-    # and before the dedup, which folds what the bridge attached (item 89 moved it)
+def test_step_7_records_each_step_s_calls_under_the_label_the_diff_compares():
+    # findings item 135: "7 <label>" rows in calls.tsv; the labels are the profile's
     step7 = _step(7)
-    [line] = [ln for ln in step7.splitlines() if "manage.py gleif-isin-bridge" in ln]
-    assert "--apply" in line
-    assert "SCRAPER_" not in line          # GLEIF's catalogue switch is its only gate
-    at = step7.index(line)
-    assert at < step7.index("dedupe-entities") < step7.index("manage.py mark-shortcuts")
+    loop = step7[step7.index("while IFS="):step7.index('done <<< "$FINISHING"')]
+    assert loop.index("manage.py finish") < loop.index('calls "7 $label"')
 
 
 def test_step_7_reads_the_successions_of_every_lei_after_the_bridge_and_before_the_dedup():
     # findings item 89: the chain read them for the import's LEIs; the replay and the
     # bridge add lei: nodes, so the pass runs again here — the list and the endpoints
-    # in the kit folder, the endpoints named, the dedup folding what it added, the
-    # dissolution heal after it for the ends written since finish-import's own
+    # in the kit folder, the endpoints named, the dedup folding what it added. It is
+    # the one finishing pass that stays in the kit (its inputs are the kit's own).
+    from app import finishing
     step7 = _step(7)
-    order = [step7.index(s) for s in ("manage.py gleif-isin-bridge", 'lei_ids.py" "$R/leis_after_replay.txt"',
-                                      "manage.py gleif-succession", "manage.py gleif-lei-cdf", "dedupe-entities",
-                                      "manage.py heal-ends-at-dissolution --apply", "manage.py dedupe-persons")]
-    assert order == sorted(order), order
-    # the two invocations continue over a second line; read them as one
+    loop = step7[step7.index("while IFS="):step7.index('done <<< "$FINISHING"')]
+    assert 'if [ "$name" = securities-bridge ]; then successions_after_the_replay; fi' in loop
+    assert loop.index('calls "7 $label"') < loop.index("successions_after_the_replay")
+    order = finishing.known_order("after-scrapes")
+    assert order.index("securities-bridge") + 1 == order.index("entity-dedup")     # so: bridge, successions, dedup
     joined = step7.replace("\\\n", " ")
-    [succ] = [ln for ln in joined.splitlines() if "manage.py gleif-succession" in ln]
+    body = joined[joined.index("successions_after_the_replay() {"):joined.index("FINISHING=")]
+    order = [body.index(s) for s in ('lei_ids.py" "$R/leis_after_replay.txt"', "manage.py gleif-succession",
+                                     "manage.py gleif-lei-cdf")]
+    assert order == sorted(order), order
+    [succ] = [ln for ln in body.splitlines() if "manage.py gleif-succession" in ln]
     assert '--only-file "$R/leis_after_replay.txt"' in succ and '--emit-leis "$R/succession_leis.txt"' in succ
-    [names] = [ln for ln in joined.splitlines() if "manage.py gleif-lei-cdf" in ln]
+    [names] = [ln for ln in body.splitlines() if "manage.py gleif-lei-cdf" in ln]
     assert '--only-file "$R/succession_leis.txt"' in names
+    assert "SCRAPER_" not in body
     assert "/tmp/" not in step7                       # the kit folder, not RAM (the chain's mktemp lesson)
 
 
@@ -157,15 +162,10 @@ def test_the_replay_adds_each_source_s_time_to_its_phase(tmp_path):
     assert recorded == ["A run-all over the list"]
 
 
-def test_step_7_loads_the_serving_uk_officers_between_the_two_dedups():
-    # the user, 2026-11-24: the officers load was a manual command, so every rebuild
-    # left dev without one officer. After the entity dedup (a seat lands on the node
-    # that stays), before the person dedup (which folds an officer onto a scraped
-    # person) — and never with --history: former officers wait for the DPIA paragraph
-    step7 = _step(7)
-    [line] = [ln for ln in step7.splitlines() if "manage.py ch-officers" in ln]
-    assert "--history" not in line and "--dry-run" not in line and "--limit" not in line
-    assert "SCRAPER_" not in line                      # its gates are the API key and the catalogue switch
-    assert "|| echo" in line                           # a failed load is said, the rebuild goes on
-    assert step7.index("dedupe-entities") < step7.index(line) < step7.index("manage.py dedupe-persons")
+def test_the_rebuild_never_loads_former_officers():
+    # the user, 2026-11-24: the serving officers are loaded by the rebuild (the
+    # `uk-officers` step of the profile, between the two dedups) — never with
+    # --history: former officers wait for the DPIA paragraph
+    from app import finishing
+    assert "uk-officers" in finishing.known_order("after-scrapes")
     assert "--history" not in "\n".join(ln for ln in SCRIPT.splitlines() if not ln.lstrip().startswith("#"))
