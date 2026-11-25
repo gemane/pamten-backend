@@ -28,8 +28,8 @@ HOWARD = {"name": "Howard Buffett", "role": "Director", "title": "", "former": F
 def _scrape(window, roster):
     """`scrape_company` for real up to its two insider readers: the window's
     list is given, the roster's is added to it as the scrape does."""
-    from app.scraper import (runner, sec_13dg, sec_client, sec_filer, sec_holdings, sec_insiders, sec_lookup,
-                             sec_roster, sec_shares)
+    from app.scraper import (runner, runner_sec, sec_13dg, sec_client, sec_filer, sec_holdings, sec_insiders,
+                             sec_lookup, sec_roster, sec_shares)
     with patch.object(sec_lookup, "search_company", return_value={"cik": "0001067983", "name": "BERKSHIRE HATHAWAY INC"}), \
          patch.object(sec_filer, "fetch_former_names", return_value=[]), \
          patch.object(sec_filer, "fetch_company_lei", return_value=None), \
@@ -45,11 +45,11 @@ def _scrape(window, roster):
          patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch.object(sec_insiders, "fetch_insider_holding", return_value=None), \
          patch.object(sec_client, "_submissions", return_value={"cik": "1067983", "filings": {"recent": {}}}), \
-         patch.object(runner, "_record_sec_industry", return_value=None), \
+         patch.object(runner_sec, "_record_sec_industry", return_value=None), \
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        runner.run_scrape_sec_edgar("BERKSHIRE HATHAWAY INC")
+        runner_sec.run_scrape_sec_edgar("BERKSHIRE HATHAWAY INC")
     return asked
 
 

@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch
 
 from app.config import settings
-from app.scraper import runner
+from app.scraper import runner, runner_sec_filings
 from app.scraper.sec_writer import _upsert_owns_sec
 
 pytestmark = pytest.mark.integration
@@ -48,7 +48,7 @@ def _alphabet(it_db):
 
 def _run(data=ALPHABET_DATA, **kw):
     with patch("app.scraper.sec_acquisitions.fetch_acquisitions", return_value=data):
-        return runner.run_sec_acquisitions("Alphabet", **kw)
+        return runner_sec_filings.run_sec_acquisitions("Alphabet", **kw)
 
 
 def _edge(it_db, name):
@@ -215,7 +215,7 @@ def test_no_cik_asks_for_the_sec_scrape_first(it_db):
     it_db.run_command(
         "CREATE (:Entity {id: 'nocik', name: 'Private GmbH', name_normalized: 'private', "
         "search_text: 'Private GmbH', type: 'company'})")
-    result = runner.run_sec_acquisitions("Private GmbH")
+    result = runner_sec_filings.run_sec_acquisitions("Private GmbH")
     assert result["status"] == "needs_sec_scrape"
     n = it_db.run_command("MATCH ()-[r:OWNS]->() RETURN count(r) AS n")
     assert dict(n[0])["n"] == 0

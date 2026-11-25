@@ -27,12 +27,12 @@ def world(monkeypatch, fake_sources):
     monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
     state = {"calls": [], "seats": set(), "wd_adds": {"wd:Q92764"}, "sec_status": "ok",
              "filer": "sec:0001652044", "renamed": {}}
-    monkeypatch.setattr("app.scraper.runner._stored_entity", lambda q, c=None: None)
+    monkeypatch.setattr("app.scraper.runner_sec._stored_entity", lambda q, c=None: None)
     # the seats live on the node under the id it has now; the old id of a
     # re-keyed node answers nothing, as the graph does (findings item 67 b)
-    monkeypatch.setattr("app.scraper.runner.seat_holders_without_holdings",
+    monkeypatch.setattr("app.scraper.runner_sec.seat_holders_without_holdings",
                         lambda eid: frozenset(state["seats"]) if eid == state["filer"] else frozenset())
-    monkeypatch.setattr("app.scraper.runner._node_id_now", lambda eid: state["renamed"].get(eid, eid))
+    monkeypatch.setattr("app.scraper.runner_sec._node_id_now", lambda eid: state["renamed"].get(eid, eid))
 
     def sec(q, d, c=None):
         state["calls"].append("sec_edgar")
@@ -51,7 +51,7 @@ def world(monkeypatch, fake_sources):
         state["pass_args"] = (entity_id, cik, company_name)
         return {"status": "ok", "company": company_name, "entity_id": entity_id, "total": 1, "scraped": [],
                 "seats_asked": sorted(state["seats"])}
-    monkeypatch.setattr("app.scraper.runner.run_sec_seat_holders", seat_pass)
+    monkeypatch.setattr("app.scraper.runner_sec.run_sec_seat_holders", seat_pass)
     register(ScraperSpec("sec_edgar", sec, lambda: True))
     register(ScraperSpec("wd", wd, lambda: True, depth_aware=True))
     return state
@@ -99,7 +99,7 @@ class TestRunScrapeAll:
     def test_a_failed_pass_is_reported_not_raised(self, world, monkeypatch):
         def boom(entity_id, cik, company_name):
             raise RuntimeError("EDGAR down")
-        monkeypatch.setattr("app.scraper.runner.run_sec_seat_holders", boom)
+        monkeypatch.setattr("app.scraper.runner_sec.run_sec_seat_holders", boom)
         out = self._run()
         assert out["results"]["sec_edgar"]["seats_rerun"] == {"status": "error", "detail": "EDGAR down"}
         assert out["results"]["sec_edgar"]["status"] == "ok"

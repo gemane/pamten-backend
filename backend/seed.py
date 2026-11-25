@@ -25,7 +25,8 @@ from app.config import settings
 settings.SCRAPER_ENABLED           = True
 settings.SCRAPER_SEC_EDGAR_ENABLED = True
 
-from app.scraper.runner import run_scrape, run_scrape_sec_edgar
+from app.scraper.runner import run_scrape
+from app.scraper.runner_sec import run_scrape_sec_edgar
 from app.scraper.sources import _ensure_sources
 from app.database import db
 

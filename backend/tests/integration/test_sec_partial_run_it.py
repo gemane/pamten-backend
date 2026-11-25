@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from app.config import settings
-from app.scraper import runner
+from app.scraper import runner, runner_sec
 from app.scraper.ondemand import decide_scrape
 
 pytestmark = pytest.mark.integration
@@ -40,7 +40,7 @@ def _data(failed):
 
 def _scrape(failed):
     with patch("app.scraper.sec_edgar.scrape_company", return_value=_data(failed)):
-        return runner.run_scrape_sec_edgar("GitLab Inc.")
+        return runner_sec.run_scrape_sec_edgar("GitLab Inc.")
 
 
 def _node(it_db):
@@ -132,7 +132,7 @@ def test_a_source_that_raised_flags_the_company_incomplete(it_db, monkeypatch):
             raise httpx.ReadTimeout("The read operation timed out")
         return {"status": "no_results", "total": 0}
     register(ScraperSpec("wikidata", wikidata, lambda: True, depth_aware=True, reads_stored_ids=True))
-    register(ScraperSpec("sec_edgar", lambda q, d, c=None: runner.run_scrape_sec_edgar(q, c), lambda: True))
+    register(ScraperSpec("sec_edgar", lambda q, d, c=None: runner_sec.run_scrape_sec_edgar(q, c), lambda: True))
 
     with patch("app.scraper.sec_edgar.scrape_company", return_value=_data([])):
         out = runner.run_scrape_all("GitLab Inc.", 1)

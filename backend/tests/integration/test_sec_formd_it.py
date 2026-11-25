@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import patch
 
 from app.config import settings
-from app.scraper import runner
+from app.scraper import runner_sec_filings
 
 pytestmark = pytest.mark.integration
 
@@ -41,7 +41,7 @@ def _issuer(it_db):
 def test_roles_jurisdiction_and_the_corporate_skip(it_db):
     _issuer(it_db)
     with patch("app.scraper.sec_formd.latest_form_d", return_value=DATA):
-        res = runner.run_sec_formd("Space Exploration Technologies Corp.")
+        res = runner_sec_filings.run_sec_formd("Space Exploration Technologies Corp.")
     assert res["status"] == "ok"
     assert res["total"] == 3                    # Musk x2 roles + Shotwell x1
     assert res["corporate_skipped"] == 1        # the GP LLC stayed out
@@ -63,9 +63,9 @@ def test_roles_jurisdiction_and_the_corporate_skip(it_db):
 def test_the_accession_gate_and_force(it_db):
     _issuer(it_db)
     with patch("app.scraper.sec_formd.latest_form_d", return_value=DATA):
-        first = runner.run_sec_formd("Space Exploration Technologies Corp.")
-        second = runner.run_sec_formd("Space Exploration Technologies Corp.")
-        forced = runner.run_sec_formd("Space Exploration Technologies Corp.", force=True)
+        first = runner_sec_filings.run_sec_formd("Space Exploration Technologies Corp.")
+        second = runner_sec_filings.run_sec_formd("Space Exploration Technologies Corp.")
+        forced = runner_sec_filings.run_sec_formd("Space Exploration Technologies Corp.", force=True)
     assert first["status"] == "ok"
     assert second["status"] == "fresh"
     assert forced["status"] == "ok"
@@ -77,5 +77,5 @@ def test_the_accession_gate_and_force(it_db):
 def test_no_cik_asks_for_the_sec_scrape_first(it_db):
     it_db.run_command("CREATE (:Entity {id:'x', name:'Private GmbH', "
                       "name_normalized:'private', search_text:'Private GmbH', type:'company'})")
-    res = runner.run_sec_formd("Private GmbH")
+    res = runner_sec_filings.run_sec_formd("Private GmbH")
     assert res["status"] == "needs_sec_scrape"

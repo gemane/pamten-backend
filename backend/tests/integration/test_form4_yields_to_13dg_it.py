@@ -43,7 +43,7 @@ def graph(it_db):
 
 
 def _scrape(filings, executives):
-    from app.scraper import runner, sec_edgar, sec_filer, sec_insiders
+    from app.scraper import runner, runner_sec, sec_edgar, sec_filer, sec_insiders
     payload = {"name": "Tesla, Inc.", "cik": "0001318605", "ownership_filings": filings,
                "executives": executives, "holdings": [], "former_names": [], "lei": None}
     with patch.object(sec_edgar, "scrape_company", return_value=payload), \
@@ -55,7 +55,7 @@ def _scrape(filings, executives):
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        return runner.run_scrape_sec_edgar("Tesla, Inc.")
+        return runner_sec.run_scrape_sec_edgar("Tesla, Inc.")
 
 
 def _owner_rows(graph):

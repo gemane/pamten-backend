@@ -62,7 +62,7 @@ class TestTheUpsertResolvesByLei:
 
 
 def _scrape(confirmed):
-    from app.scraper import runner, sec_edgar, sec_filer, sec_insiders
+    from app.scraper import runner_sec, sec_edgar, sec_filer, sec_insiders
     payload = {"name": "UNILEVER PLC", "cik": CIK, "lei": None, "former_names": [],
                "ownership_filings": [], "holdings": [], "executives": []}
     with patch.object(sec_edgar, "scrape_company", return_value=payload), \
@@ -73,7 +73,7 @@ def _scrape(confirmed):
          patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch("app.scraper.sec_lei.confirm_filer_lei",
                return_value={"source_url": URL} if confirmed else None) as confirm:
-        runner.run_scrape_sec_edgar("Unilever")
+        runner_sec.run_scrape_sec_edgar("Unilever")
     return confirm
 
 

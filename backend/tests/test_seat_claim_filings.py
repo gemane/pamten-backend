@@ -10,7 +10,8 @@ import pytest
 
 from app.scraper import sec_writer
 
-RUNNER = pathlib.Path(__file__).resolve().parents[1] / "app" / "scraper" / "runner.py"
+#: the runner and the pipelines that were part of it until 2026-11-25
+RUNNERS = sorted((pathlib.Path(__file__).resolve().parents[1] / "app" / "scraper").glob("runner*.py"))
 
 
 class TestFormLabel:
@@ -63,7 +64,8 @@ class TestEveryRunnerCallSitePassesIt:
     def test_each_seat_write_in_the_runner_names_its_filing(self):
         """The sibling-path rule: a Form D seat, a Form 3/4 seat, a "Former …"
         close and an 8-K close each say their record."""
-        text = RUNNER.read_text()
+        assert len(RUNNERS) == 5
+        text = "\n".join(path.read_text() for path in RUNNERS)
         calls = [m.group("args") for m in self._CALL.finditer(text)]
         assert len(calls) >= 4
         assert all("filing_type=" in args for args in calls), [a[:60] for a in calls if "filing_type=" not in a]

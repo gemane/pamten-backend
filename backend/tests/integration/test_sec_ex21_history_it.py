@@ -112,14 +112,14 @@ def _history():
 class TestTheRunner:
     def test_dates_what_predates_the_newest_filing(self, it_db, monkeypatch):
         from app.config import settings
-        from app.scraper import runner
+        from app.scraper import runner_sec_filings
         monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
         monkeypatch.setattr(settings, "SCRAPER_SEC_EDGAR_ENABLED", True)
         _seed(it_db)
         with patch("app.routers.search.resolve_best_entity",
                    return_value={"id": "nc", "sec_cik": "0001564708"}), \
              patch("app.scraper.sec_ex21.fetch_subsidiary_history", return_value=_history()):
-            res = runner.run_sec_ex21_history("News Corp")
+            res = runner_sec_filings.run_sec_ex21_history("News Corp")
         assert res["status"] == "ok"
         # Dated by the fiscal year-end of the oldest list in the unbroken run:
         # Dow Jones back to FY2024 (then an unreadable year), HarperCollins to

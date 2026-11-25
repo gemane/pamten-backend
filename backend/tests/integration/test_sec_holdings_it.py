@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.scraper import runner
+from app.scraper import runner, runner_sec, runner_sec_filings
 
 pytestmark = pytest.mark.integration
 
@@ -38,7 +38,7 @@ def _run(it_db, holdings=None, cik="0002100119", name="VANGUARD CAPITAL MANAGEME
          patch("app.scraper.sec_13f.fetch_affiliated_managers", return_value=[]), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        return runner.run_sec_holdings(cik, succeeds_cik=succeeds)
+        return runner_sec_filings.run_sec_holdings(cik, succeeds_cik=succeeds)
 
 
 def _edges(it_db) -> list[dict]:
@@ -125,7 +125,7 @@ def test_an_unknown_filer_writes_nothing(it_db):
     with patch("app.scraper.sec_filer.fetch_filer_name", return_value=None), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        result = runner.run_sec_holdings("0009999999")
+        result = runner_sec_filings.run_sec_holdings("0009999999")
     assert result["status"] == "no_results"
     assert result_count(it_db) == 0
 
@@ -151,7 +151,7 @@ def _run_with_affiliates(affiliates=None, holdings=None):
                return_value=AFFILIATES if affiliates is None else affiliates), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        return runner.run_sec_holdings("0000102909")
+        return runner_sec_filings.run_sec_holdings("0000102909")
 
 
 def test_affiliates_are_linked_with_a_named_relation(it_db):
@@ -218,7 +218,7 @@ def _write_issuer_side(it_db, filings, holdings=None):
          patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        return runner.run_scrape_sec_edgar("Apple Inc")
+        return runner_sec.run_scrape_sec_edgar("Apple Inc")
 
 
 def _filing(**over):

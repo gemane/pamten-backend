@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from app.config import settings
-from app.scraper import gleif_isin, runner
+from app.scraper import gleif_isin, runner_sec
 
 pytestmark = pytest.mark.integration
 
@@ -32,7 +32,7 @@ def _offline():
 
 def _scrape(data):
     with patch("app.scraper.sec_edgar.scrape_company", return_value=data):
-        return runner.run_scrape_sec_edgar("Nestlé")
+        return runner_sec.run_scrape_sec_edgar("Nestlé")
 
 
 def _node(it_db):

@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from app.config import settings
-from app.scraper import runner
+from app.scraper import runner, runner_oc, runner_sec
 
 
 # Whole scrapes run here: their helpers that query through run_sql themselves
@@ -145,7 +145,7 @@ def _proceeded_past_the_check(filer_country, requested):
     scrape, country = _sec(filer_country)
     with scrape, country, patch("app.scraper.runner._ensure_source", side_effect=Reached):
         try:
-            runner.run_scrape_sec_edgar("Alphabet", country=requested)
+            runner_sec.run_scrape_sec_edgar("Alphabet", country=requested)
         except Reached:
             return True
     return False
@@ -155,7 +155,7 @@ class TestSecEdgar:
     def test_a_us_filer_is_rejected_for_a_german_query(self):
         scrape, country = _sec("US")
         with scrape, country, patch("app.scraper.runner._ensure_source") as src:
-            out = runner.run_scrape_sec_edgar("Alphabet", country="DE")
+            out = runner_sec.run_scrape_sec_edgar("Alphabet", country="DE")
         assert out["status"] == "country_mismatch" and out["total"] == 0
         # Rejected before the source row is even created, let alone the entity.
         src.assert_not_called()
@@ -185,7 +185,7 @@ class TestOpenCorporates:
         with patch("app.scraper.open_corporates.scrape_company",
                    return_value={"name": "ALPHABET INC.", "jurisdiction_code": "us_de"}), \
              patch("app.scraper.runner._ensure_source") as src:
-            out = runner.run_scrape_open_corporates("Alphabet", country="DE")
+            out = runner_oc.run_scrape_open_corporates("Alphabet", country="DE")
         assert out["status"] == "country_mismatch" and out["found_country"] == "US"
         src.assert_not_called()
 
@@ -194,5 +194,5 @@ class TestOpenCorporates:
                    return_value={"name": "ALPHABET GMBH", "jurisdiction_code": "de"}), \
              patch("app.scraper.runner._ensure_source", return_value="s1"), \
              patch("app.scraper.runner._upsert_entity_by_name", return_value="e1"):
-            out = runner.run_scrape_open_corporates("Alphabet", country="DE")
+            out = runner_oc.run_scrape_open_corporates("Alphabet", country="DE")
         assert out["status"] != "country_mismatch"

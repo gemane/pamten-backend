@@ -85,7 +85,7 @@ def test_an_ended_direct_chain_proves_no_shortcut(it_db):
 
 def test_opencorporates_incorporation_dates_the_company(it_db):
     from unittest.mock import patch
-    from app.scraper import runner
+    from app.scraper import runner, runner_oc
     data = {"name": "Example Trading Ltd", "jurisdiction_code": "gb", "company_number": "01234567",
             "registered_address": {}, "incorporation_date": "1987-02-03", "company_type": "Private",
             "status": "Active", "officers": []}
@@ -93,7 +93,7 @@ def test_opencorporates_incorporation_dates_the_company(it_db):
          patch.object(runner.settings, "SCRAPER_OPENCORPORATES_ENABLED", True), \
          patch("app.scraper.runner.get_source_enabled", return_value=True), \
          patch("app.scraper.open_corporates.scrape_company", return_value=data):
-        runner.run_scrape_open_corporates("Example Trading Ltd")
+        runner_oc.run_scrape_open_corporates("Example Trading Ltd")
     row = it_db.run_command("MATCH (e:Entity) WHERE e.name = 'Example Trading Ltd' "
                             "RETURN e.incorporated_on AS d, e.founded AS y")[0]
     assert (row["d"], row["y"]) == ("1987-02-03", None)    # the register's date; the year is Wikidata's

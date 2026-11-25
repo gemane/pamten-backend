@@ -172,18 +172,18 @@ def test_sec_ex21_run_requires_contributor(client, make_token):
 
 def test_sec_ex21_run_delegates_and_maps_needs_scrape_to_409(client, make_token, monkeypatch):
     from app.config import settings
-    import app.scraper.runner as runner
+    import app.scraper.runner_sec_filings as runner_sec_filings
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
     monkeypatch.setattr(settings, "SCRAPER_SEC_EDGAR_ENABLED", True)
     tok = {"Authorization": f"Bearer {make_token(role='contributor')}"}
 
-    monkeypatch.setattr(runner, "run_sec_ex21",
+    monkeypatch.setattr(runner_sec_filings, "run_sec_ex21",
                         lambda company, force=False: {"status": "ok", "total": 12, "company": company})
     r = client.post("/scraper/sec-ex21/run", params={"company": "Apple"}, headers=tok)
     assert r.status_code == 200 and r.json()["total"] == 12
 
     # a company without a CIK yet → 409, the same contract 13F uses
-    monkeypatch.setattr(runner, "run_sec_ex21",
+    monkeypatch.setattr(runner_sec_filings, "run_sec_ex21",
                         lambda company, force=False: {"status": "needs_sec_scrape",
                                                       "detail": "run the SEC EDGAR scrape first"})
     r = client.post("/scraper/sec-ex21/run", params={"company": "Apple"}, headers=tok)
@@ -748,7 +748,7 @@ def test_sec_acquisitions_run_requires_contributor(client, make_token):
 
 def test_sec_acquisitions_run_delegates_and_maps_needs_scrape_to_409(client, make_token, monkeypatch):
     from app.config import settings
-    import app.scraper.runner as runner
+    import app.scraper.runner_sec_filings as runner_sec_filings
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
     monkeypatch.setattr(settings, "SCRAPER_SEC_EDGAR_ENABLED", True)
     tok = {"Authorization": f"Bearer {make_token(role='contributor')}"}
@@ -757,7 +757,7 @@ def test_sec_acquisitions_run_delegates_and_maps_needs_scrape_to_409(client, mak
     def fake(company, force=False, max_filings=None):
         seen.update(company=company, force=force, max_filings=max_filings)
         return {"status": "ok", "total": 2, "company": company}
-    monkeypatch.setattr(runner, "run_sec_acquisitions", fake)
+    monkeypatch.setattr(runner_sec_filings, "run_sec_acquisitions", fake)
     r = client.post("/scraper/sec-acquisitions/run",
                     params={"company": "Alphabet", "force": "true", "max_filings": 3}, headers=tok)
     assert r.status_code == 200 and r.json()["total"] == 2
@@ -766,7 +766,7 @@ def test_sec_acquisitions_run_delegates_and_maps_needs_scrape_to_409(client, mak
     assert client.post("/scraper/sec-acquisitions/run", params={"company": "Alphabet", "max_filings": 0},
                        headers=tok).status_code == 422
 
-    monkeypatch.setattr(runner, "run_sec_acquisitions",
+    monkeypatch.setattr(runner_sec_filings, "run_sec_acquisitions",
                         lambda company, force=False, max_filings=None: {
                             "status": "needs_sec_scrape", "detail": "run the SEC EDGAR scrape first"})
     r = client.post("/scraper/sec-acquisitions/run", params={"company": "Alphabet"}, headers=tok)

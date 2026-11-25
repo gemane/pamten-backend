@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.config import settings
-from app.scraper import runner, sec_client
+from app.scraper import runner, runner_sec_filings, sec_client
 
 ROWS: list[dict] = []
 FETCHED: list = []
@@ -42,7 +42,7 @@ def _read(result, lose=0):
             sec_client._request_lost("https://www.sec.gov/x", None, httpx.ReadTimeout("x"), True)
         return result
     with patch("app.scraper.proxy_statement.fetch_proxy_ownership", side_effect=fetch):
-        return runner.run_proxy_statement("Alphabet Inc.")
+        return runner_sec_filings.run_proxy_statement("Alphabet Inc.")
 
 
 OWNERS = [{"name": "Larry Page", "voting_power_pct": 27.4},
@@ -79,7 +79,7 @@ class TestTheReadRun:
 class TestTheWriteRun:
     def _write(self, result):
         with patch("app.scraper.proxy_write.write_proxy_ownership", return_value=result) as w:
-            out = runner.run_proxy_write("Alphabet Inc.", "e-goog")
+            out = runner_sec_filings.run_proxy_write("Alphabet Inc.", "e-goog")
         w.assert_called_once_with("Alphabet Inc.", "e-goog")
         return out
 
@@ -94,8 +94,8 @@ class TestTheWriteRun:
 
 
 @pytest.mark.parametrize("flag", ["SCRAPER_ENABLED", "SCRAPER_SEC_EDGAR_ENABLED"])
-@pytest.mark.parametrize("call", [lambda: runner.run_proxy_statement("Acme"),
-                                  lambda: runner.run_proxy_write("Acme")])
+@pytest.mark.parametrize("call", [lambda: runner_sec_filings.run_proxy_statement("Acme"),
+                                  lambda: runner_sec_filings.run_proxy_write("Acme")])
 def test_a_switched_off_scraper_refuses_and_writes_no_row(flag, call):
     with patch.object(settings, flag, False):
         with pytest.raises(PermissionError):
@@ -107,7 +107,7 @@ def test_a_switched_off_scraper_refuses_and_writes_no_row(flag, call):
                                            ("proxy_statement_write", "run_proxy_write")])
 def test_the_endpoints_answer_403_when_switched_off(endpoint, name):
     from app.scraper import router
-    with patch.object(runner, name, side_effect=PermissionError("Scraper is disabled.")):
+    with patch.object(runner_sec_filings, name, side_effect=PermissionError("Scraper is disabled.")):
         with pytest.raises(HTTPException) as exc:
             getattr(router, endpoint)(company="Acme", _={"id": "u"}) if endpoint.endswith("run") \
                 else getattr(router, endpoint)(company="Acme", entity_id=None, _={"id": "u"})

@@ -210,7 +210,27 @@ MY_SOURCE_API_KEY=
 
 ## Step 4 — Add runner functions
 
-**File:** `backend/app/scraper/runner.py`
+**File:** `backend/app/scraper/runner.py`, or a module beside it for a pipeline of
+its own. The runner was one file of 4,000 lines until November 2026 and is five
+modules now, split with no change of behaviour:
+
+| Module | What it holds |
+|---|---|
+| `runner.py` | What every pipeline shares: the entity and person upserts, the recursive scrape, the Wikidata scrape, a person, run-all, the scraper registry |
+| `runner_sec.py` | The SEC EDGAR scrape of one company (`run_scrape_sec_edgar`) and its seat holders |
+| `runner_sec_filings.py` | The SEC pipelines with their own command: Exhibit 21 and its history, acquisitions, the proxy statement, Form D, 13F, a filer's holdings |
+| `runner_oc.py` | The OpenCorporates scrape |
+| `runner_imports.py` | The GLEIF and Companies House imports and deltas |
+
+`runner.py` imports the database, the settings and the write layer, and the
+other four reach them **through it** (`runner.db`, `runner.settings`,
+`runner._upsert_role`) instead of importing them again. That is deliberate:
+several hundred tests replace `runner.db` or `runner.get_source_enabled` to
+keep a scrape away from the database, and one patch on the runner has to cover
+every pipeline. A new pipeline module does the same; a module that imported
+`db` itself would run against the real database in those tests. `runner.py`
+imports the pipeline modules at its end, just above the registry, because they
+reach back into it.
 
 Add constants at the top:
 
@@ -366,16 +386,16 @@ Wikidata does (it reads the node's QID, CIK and LEI before any name search). A
 source in a later band may still write an id only after this one has looked (a
 register that is off, a filer the name search misses). Both dispatchers then run the
 source once more when it answered `no_results` or `not_a_company` and the node the
-query names now holds an id it did not hold before (`runner.rerun_for_new_ids`).
+query names now holds an id it did not hold before (`runner_sec.rerun_for_new_ids`).
 The result carries `"rerun": "new_ids"`, and the on-demand run log has a second row
 with that reason (findings item 27, Toast, Inc.). The mirror for people: the SEC's
 seat-holders pass (the Form 4s and 8-K departures of everyone with an open seat at the
 company) reads the graph's persons, and the knowledge bases that write officers run after
 it — so both dispatchers run that pass once more at the end when the filer gained seat
-holders without a holding during the run (`runner.rerun_for_new_seats` →
+holders without a holding during the run (`runner_sec.rerun_for_new_seats` →
 `run_sec_seat_holders`; the result carries `seats_rerun`, the on-demand run log a row with
 reason `new_seats`; findings item 67). It asks under the id the filer has at that
-moment — a later source may have re-keyed it `sec:` → `lei:` (`runner.seat_rerun_target`;
+moment — a later source may have re-keyed it `sec:` → `lei:` (`runner_sec.seat_rerun_target`;
 item 67 b). A
 source that raises comes back as `{"status": "error", "detail": …}`; the run-all
 endpoint then finishes its `ScrapeRun` row as `failed`, naming the source.

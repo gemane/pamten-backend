@@ -364,10 +364,10 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     "HAS_ROLE": ("role", "since", "until", "source_id", "source_url", "source_date", "last_scraped_at", "read_from",
                  "until_source_url",
                  # when EDGAR was last asked for the holder's own Form 4s at the
-                 # company (`runner._mark_seat_asked`, findings item 154)
+                 # company (`runner_sec._mark_seat_asked`, findings item 154)
                  "form4_asked_at"),
     # `source_url` / `source_date`: the 13F affiliate writer stamps them
-    # (`runner._upsert_affiliate`); the ledger lacked them until 2026-10-26
+    # (`runner_sec_filings._upsert_affiliate`); the ledger lacked them until 2026-10-26
     "RELATED_TO": ("relation", "source_id", "source_url", "source_date", "last_scraped_at"),
     # A party of a 13D filing group pointing at the group (2026-10-26; was
     # RELATED_TO {relation: group_member})

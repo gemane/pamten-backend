@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import patch
 
 from app.config import settings
-from app.scraper import runner
+from app.scraper import runner_sec_filings
 
 pytestmark = pytest.mark.integration
 
@@ -35,7 +35,7 @@ def test_a_co_registrant_keeps_its_branch_and_the_groups_list_it_was_given_dims(
              "group_of": "EVERSOURCE ENERGY"}
     for data in (older, newer):
         with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-            result = runner.run_sec_ex21("NSTAR Electric")
+            result = runner_sec_filings.run_sec_ex21("NSTAR Electric")
     assert result["status"] == "ok" and result["group_of"] == "EVERSOURCE ENERGY"
     assert result["total"] == 1 and result["stale"] == 1
     got = {r["name"]: r.get("stale") for r in it_db.run_command(
@@ -58,7 +58,7 @@ def test_a_co_registrant_without_a_branch_writes_nothing_and_dims_what_it_was_gi
              "url": f"{folder}/000006598426000174/ex21.htm", "group_of": "ENTERGY CORP /DE/"}
     for data in (older, newer):
         with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-            result = runner.run_sec_ex21("Entergy Texas")
+            result = runner_sec_filings.run_sec_ex21("Entergy Texas")
     assert result["status"] == "ok" and result["total"] == 0 and result["stale"] == 1
     assert it_db.run_command("MATCH (e:Entity {id:'etx'}) RETURN e.sec_ex21_ingested AS u")[0]["u"] == newer["url"]
 
@@ -80,13 +80,13 @@ def test_a_partnership_with_its_own_list_reads_it_not_the_reits(it_db):
     older = {"subsidiaries": [{"name": "Kilroy Realty Corporation Only Sub, LLC", "jurisdiction": "Delaware"}],
              "form": "10-K", "filing_date": "2025-02-10", "url": base.replace("26007051", "25007051") + "ex21.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=older):
-        runner.run_sec_ex21("Kilroy Realty, L.P.")
+        runner_sec_filings.run_sec_ex21("Kilroy Realty, L.P.")
     with patch("app.scraper.sec_ex21.annual_filings", return_value=[("10-K", acc, "2026-02-10", "2025-12-31")]), \
          patch("app.scraper.sec_ex21.exhibit_candidates", return_value=cands), \
          patch("app.scraper.sec_ex21.co_registrants",
                return_value=[("1025996", "KILROY REALTY CORP"), ("1493976", "Kilroy Realty, L.P.")]), \
          patch("app.scraper.sec_ex21._get_text", side_effect=lambda u: (fx / u.rsplit("/", 1)[1]).read_text()):
-        result = runner.run_sec_ex21("Kilroy Realty, L.P.")
+        result = runner_sec_filings.run_sec_ex21("Kilroy Realty, L.P.")
     assert result["status"] == "ok" and result["total"] == 77 and "group_of" not in result
     rows = it_db.run_command(
         "MATCH (:Entity {id:'krlp'})-[r:OWNS]->(b:Entity) WHERE r.until IS NULL "

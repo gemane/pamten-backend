@@ -235,26 +235,26 @@ class TestBatchWriterClaims:
 
 class TestRunnerPermissions:
     def test_gleif_raises_when_master_disabled(self, monkeypatch):
-        from app.scraper import runner as r
+        from app.scraper import runner as r, runner_imports
 
         monkeypatch.setattr(r.settings, "SCRAPER_ENABLED", False)
 
         with pytest.raises(PermissionError, match="SCRAPER_ENABLED"):
-            r.run_import_gleif_lei_cdf("dummy.zip")
+            runner_imports.run_import_gleif_lei_cdf("dummy.zip")
 
 
 class TestPostBodsImport:
     """Every BODS import auto-runs nominee flagging + edge dedup, best-effort."""
 
     def test_runs_nominees_and_edge_dedup(self):
-        from app.scraper import runner as r
+        from app.scraper import runner_imports as r
         with patch("app.scraper.maintenance.flag_nominee_entities", return_value={"flagged": 3}), \
              patch("app.scraper.maintenance.deduplicate_owns_edges", return_value={"duplicates_removed": 5}):
             out = r._post_bods_import()
         assert out == {"nominees": {"flagged": 3}, "edge_dedup": {"duplicates_removed": 5}}
 
     def test_best_effort_one_step_failing_still_runs_the_other(self):
-        from app.scraper import runner as r
+        from app.scraper import runner_imports as r
         with patch("app.scraper.maintenance.flag_nominee_entities", side_effect=RuntimeError("boom")), \
              patch("app.scraper.maintenance.deduplicate_owns_edges", return_value={"duplicates_removed": 0}):
             out = r._post_bods_import()
@@ -464,7 +464,7 @@ def test_the_lei_cdf_import_labels_registration_day_starts(monkeypatch):
     # the test import loads the families' companies AFTER their relationships:
     # the RR pass found no registration dates (0 labelled on the 2026-10-07
     # rebuild), so the company import runs the same pass when it brings them
-    from app.scraper import runner as r, gleif_lei_cdf, gleif_incremental, gleif_rr
+    from app.scraper import runner as r, runner_imports, gleif_lei_cdf, gleif_incremental, gleif_rr
     monkeypatch.setattr(r.settings, "SCRAPER_ENABLED", True)
     monkeypatch.setattr(r, "_ensure_source", lambda *a, **k: "gleif")
     monkeypatch.setattr(gleif_lei_cdf, "import_lei_cdf_entities", lambda **k: {"entities": 1})
@@ -472,7 +472,7 @@ def test_the_lei_cdf_import_labels_registration_day_starts(monkeypatch):
     monkeypatch.setattr(r, "_duplicate_name_summary", lambda: {})
     calls = []
     monkeypatch.setattr(gleif_rr, "mark_registration_day", lambda: calls.append(1) or 7)
-    res = r.run_import_gleif_lei_cdf("dummy.zip")
+    res = runner_imports.run_import_gleif_lei_cdf("dummy.zip")
     assert calls == [1] and res["registration_day"] == 7
 
 

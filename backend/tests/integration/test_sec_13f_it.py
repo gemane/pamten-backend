@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.scraper import runner
+from app.scraper import runner, runner_sec_filings
 
 pytestmark = pytest.mark.integration
 
@@ -48,7 +48,7 @@ def _run(it_db, holders=None, outstanding=13_100_000_000, force=False):
                return_value=outstanding) as outs, \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        res = runner.run_sec_13f("SpaceX", force=force)
+        res = runner_sec_filings.run_sec_13f("SpaceX", force=force)
     return res, fetched, outs
 
 
@@ -124,7 +124,7 @@ def test_first_run_does_a_cusip_second_pass_and_merges_new_filers(it_db):
                return_value=13_100_000_000), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        res = runner.run_sec_13f("SpaceX")
+        res = runner_sec_filings.run_sec_13f("SpaceX")
     assert fetched.call_count == 2, "cusip discovered → second search pass"
     assert fetched.call_args_list[1].kwargs.get("cusips") == ["84615Q103"]
     names = {r["n"] for r in it_db.run_command(
@@ -151,7 +151,7 @@ def test_a_second_cusip_joins_the_union_and_future_searches(it_db):
                return_value=13_100_000_000), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        runner.run_sec_13f("SpaceX")
+        runner_sec_filings.run_sec_13f("SpaceX")
     assert fetched.call_count == 2
     assert fetched.call_args_list[1].kwargs["cusips"] == ["69608A108", "84615Q103"]
     stored = it_db.run_command("MATCH (e:Entity {id:'sx'}) RETURN e.cusips AS cs, e.cusip AS c")[0]
@@ -339,7 +339,7 @@ def test_an_explicit_window_wins_over_the_refresh_shrink(it_db):
                return_value=13_100_000_000), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        runner.run_sec_13f("SpaceX", force=True, window_days=135)
+        runner_sec_filings.run_sec_13f("SpaceX", force=True, window_days=135)
     assert fetched.call_args.kwargs.get("window_days") == 135, \
         "explicit 135 must not shrink to days-since-last-run"
 
@@ -372,7 +372,7 @@ def test_a_graph_known_filer_outside_the_relevance_sweep_lands(it_db):
          patch("app.scraper.sec_shares.fetch_shares_outstanding", return_value=13_100_000_000), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        res = runner.run_sec_13f("SpaceX", limit=2)
+        res = runner_sec_filings.run_sec_13f("SpaceX", limit=2)
     assert any("0001713833" in s.get("ciks", "").split(",") for s in searches)
     owners = {r["id"] for r in it_db.run_command(
         "MATCH (a:Entity)-[:OWNS]->(:Entity {id:'sx'}) RETURN a.id AS id")}
