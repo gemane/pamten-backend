@@ -354,3 +354,55 @@ def test_a_registered_funds_statements_are_not_read(it_db):
         res = read_table_and_close(ISSUER, "0002041610", subs, write=True, source_id=SID, statements_for="Skydance Corp")
     since.assert_not_called()
     assert res["written"]["fund"] is True
+
+
+# ── A scrape that lost its 13D/G owners (findings item 156) ──────────────────
+
+def _scrape(table, failed_sections):
+    """The issuer's own SEC scrape written to the graph, its table given and
+    its 13D/G owners read (`[]`: none filed) or lost to the network."""
+    from app.scraper import runner_sec
+    subs = {"cik": "2041610", "filings": {"recent": {"form": ["10-K", "10-K/A"]}}}
+    data = {"name": "Skydance Corp", "cik": "0002041610", "ownership_filings": [], "executives": [],
+            "holdings": [], "failed_sections": failed_sections}
+    with patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
+         patch("app.scraper.sec_filer.fetch_filer_website", return_value=None), \
+         patch("app.scraper.sec_filer.fetch_filer_sic", return_value=None), \
+         patch("app.scraper.sec_insiders.fetch_departures", return_value=[]), \
+         patch("app.scraper.sec_class_end.class_ends", return_value=[]), \
+         patch("app.scraper.sec_client._submissions", return_value=subs), \
+         patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
+         patch("app.scraper.sec_client._get_text", return_value="<html></html>"), \
+         patch("app.scraper.sec_lookup._browse_index", return_value=[]), \
+         patch("app.scraper.proxy_statement.read_holder_rows",
+               return_value=[{"name": r["name"], "percents": [r["stake_pct"]]} for r in table["rows"]]), \
+         patch("app.scraper.proxy_statement.read_holder_table", return_value=table), \
+         patch("app.scraper.sec_writer.statement_persons", return_value=[]):
+        return runner_sec._write_sec_edgar("Skydance Corp", data, "US")
+
+
+def test_a_scrape_that_lost_its_owners_writes_no_table_holder(it_db):
+    # Morgan Stanley, rebuild 2026-11-24: the proxy names "BlackRock, Inc." (7 %),
+    # whose 13G/A the scrape could not read — a read timeout on the owners' list.
+    # Written from the table, it stood beside the 13G/A the retry read from
+    # BlackRock Finance; SmartStop's three (rebuild 2026-11-25b) left their DEF 14A
+    # claims behind an edge the statement had taken over.
+    _seed(it_db)
+    table = {"as_of": "2026-04-17", "rows": [_row("BlackRock, Inc.", 7.0, "Class B"),
+                                             _row("Harbor Lights Entertainment, Inc.", 100.0, "Class A")]}
+    out = _scrape(table, ["13D/G owners"])
+    assert out["status"] == "partial" and out["failed_sections"] == ["13D/G owners"]
+    assert _edges(it_db) == {}
+    assert it_db.run_command("MATCH (c:Claim) WHERE c.kind = 'owns' RETURN count(c) AS n")[0]["n"] == 0
+    # the retry reads the owners (none filed a statement here) and the table is applied
+    assert _scrape(table, [])["status"] == "ok"
+    edges = _edges(it_db)
+    assert set(edges) == {BLK, HARBOR} and {e["ft"] for e in edges.values()} == {"10-K/A"}
+
+
+def test_a_scrape_that_lost_another_section_applies_its_table(it_db):
+    _seed(it_db)
+    table = {"as_of": "2026-04-17", "rows": [_row("Harbor Lights Entertainment, Inc.", 100.0, "Class A")]}
+    assert _scrape(table, ["insiders"])["status"] == "partial"
+    assert set(_edges(it_db)) == {HARBOR}
+

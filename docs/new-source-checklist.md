@@ -1771,6 +1771,17 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       (`runner.db`), one patch still covers them all, and the test edits were
       limited to the functions that moved. `sec_edgar.py`, split the same day, had
       no such names — there a caller reaches a function through its home module.
+- [ ] **A rule that reads "nothing says otherwise" off the graph must know that
+      everything was read.** A partial scrape writes what arrived, and a later rule
+      in the same scrape that takes an absence for a fact turns the network loss into
+      data. The SEC scrape applies the issuer's ownership table to "the holders no
+      13D/G covers" — after a scrape that lost its 13D/G owners to a read timeout,
+      that was all of them: BlackRock twice on Morgan Stanley, three orphaned claims
+      at SmartStop (findings item 156, rebuilds 2026-11-24 and 11-25b). A retry does
+      not undo it: the second pass writes the right edges and leaves the wrong ones.
+      Before writing such a rule, list the sections it depends on and skip it when
+      one of them is in `failed_sections`; the retry or the whole-graph pass applies
+      it then.
 - [ ] **A step after a load goes into the one list, `app/finishing.py`.** What the
       finished graph needs (merge across sources, close what a dissolution ended, mark
       shortcuts, search index, geocode, the passes after a batch of scrapes) is a

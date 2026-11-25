@@ -2157,6 +2157,20 @@ claim under the same key would erase the stake.
 its date (`close_absent_from_table`, `until_reason` not_in_issuer_table); the
 table that wrote it never does.
 
+**Not after a scrape that lost its owners (findings item 156).** "No statement
+covers this holder" is read off the statements the scrape has just written. When
+the issuer's list of 13D/G owners was lost to the network (`failed_sections`
+holds `13D/G owners`, the run is `partial`), none were written and every holder
+of the table looks uncovered. Morgan Stanley's scrape of 2026-11-24 timed out on
+page 5 of that list: the proxy's "BlackRock, Inc." was written from the table,
+and the retry then read the 13G/A from BlackRock Finance — BlackRock twice.
+SmartStop's three table holders (2026-11-25) were taken over by their 13G/As in
+the retry and left their DEF 14A claims without an edge. So the issuer's own
+scrape applies its table — the holders and the closes — only when it read its
+owners (`runner_sec._owners_were_lost`); the class ends, which do not depend on
+them, are applied either way. The retry of a partial company applies the table,
+and so does the whole-graph pass, which reads the statements itself.
+
 **Measured 2026-11-12** on the 64 scrape targets with a table (read-only
 guard): 204 rows of 5 % or more; 187 covered by a statement, 5 shared, 11
 unresolved (MUFG, GAMCO's two spellings, the Johnsons of Franklin under their
