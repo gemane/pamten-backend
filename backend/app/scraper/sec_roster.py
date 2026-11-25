@@ -1,7 +1,7 @@
 """The directors and officers an issuer's own proxy names, whose seat the
 insider window misses (findings item 115).
 
-`sec_edgar.fetch_executives` lists an insider from a Form 3/4 filed inside
+`sec_insiders.fetch_executives` lists an insider from a Form 3/4 filed inside
 `FORM4_WINDOW_DAYS`, on the assumption that every sitting director files at
 least once a year (the annual grant). A board that gets no stock grants does
 not: Berkshire Hathaway's window held 2 of its 13 directors, Tesla's 3. The
@@ -106,8 +106,8 @@ def parse_owners(html: str) -> list[dict]:
 def issuer_owners(cik: str) -> list[dict]:
     """Every reporting owner EDGAR lists for the issuer (one request; the
     owner table is not paged — JPMorgan's 95 owners come on the first page)."""
-    from app.scraper import sec_edgar
-    return parse_owners(sec_edgar._get_text(OWNERS_URL, {"action": "getissuer", "CIK": sec_edgar._cik10(cik)}))
+    from app.scraper import sec_client
+    return parse_owners(sec_client._get_text(OWNERS_URL, {"action": "getissuer", "CIK": sec_client._cik10(cik)}))
 
 
 def _words(text: str) -> list[str]:
@@ -234,12 +234,12 @@ def own_form3(person_cik: str, issuer_cik: str) -> dict | None:
     it (Kenneth Chenault's Berkshire Form 3 of 2020 lies behind his Airbnb
     filings). ``silent_since``: the person filed no Form 4 or 5 after it,
     about any company."""
-    from app.scraper import sec_edgar
+    from app.scraper import sec_client, sec_insiders
     try:
-        recent = (sec_edgar._submissions(person_cik).get("filings") or {}).get("recent") or {}
+        recent = (sec_client._submissions(person_cik).get("filings") or {}).get("recent") or {}
     except httpx.HTTPError:
         return None
-    issuer = sec_edgar._cik_int(issuer_cik)
+    issuer = sec_client._cik_int(issuer_cik)
     opened = 0
     for form, acc, doc, filed in zip(recent.get("form") or [], recent.get("accessionNumber") or [],
                                      recent.get("primaryDocument") or [], recent.get("filingDate") or []):
@@ -252,14 +252,14 @@ def own_form3(person_cik: str, issuer_cik: str) -> dict | None:
             continue
         opened += 1
         try:
-            xml = sec_edgar._get_text(f"{sec_edgar.ARCHIVES_URL}/{sec_edgar._cik_int(person_cik)}/"
+            xml = sec_client._get_text(f"{sec_client.ARCHIVES_URL}/{sec_client._cik_int(person_cik)}/"
                                       f"{acc.replace('-', '')}/{doc}")
         except httpx.HTTPError:
             continue
-        record = sec_edgar._parse_form34_xml(xml)
-        if not record or not record.get("issuer_cik") or sec_edgar._cik_int(record["issuer_cik"]) != issuer:
+        record = sec_insiders._parse_form34_xml(xml)
+        if not record or not record.get("issuer_cik") or sec_client._cik_int(record["issuer_cik"]) != issuer:
             continue
-        record["source_url"] = sec_edgar._filing_index_url(issuer_cik, acc) or None
+        record["source_url"] = sec_client._filing_index_url(issuer_cik, acc) or None
         record["source_date"] = filed
         # nothing filed since, about any company: a director with no grants
         record["silent_since"] = not any(
@@ -277,14 +277,14 @@ def filed_jointly(person_cik: str, issuer_cik: str, since: str | None) -> dict |
     person's own submissions, at most MAX_PERSON_LATER documents."""
     import xml.etree.ElementTree as ET
 
-    from app.scraper import sec_edgar
+    from app.scraper import sec_client, sec_insiders
     if not since:
         return None
     try:
-        recent = (sec_edgar._submissions(person_cik).get("filings") or {}).get("recent") or {}
+        recent = (sec_client._submissions(person_cik).get("filings") or {}).get("recent") or {}
     except httpx.HTTPError:
         return None
-    issuer, person = sec_edgar._cik_int(issuer_cik), sec_edgar._cik_int(person_cik)
+    issuer, person = sec_client._cik_int(issuer_cik), sec_client._cik_int(person_cik)
     opened = 0
     for form, acc, doc, filed in zip(recent.get("form") or [], recent.get("accessionNumber") or [],
                                      recent.get("primaryDocument") or [], recent.get("filingDate") or []):
@@ -297,19 +297,19 @@ def filed_jointly(person_cik: str, issuer_cik: str, since: str | None) -> dict |
             continue
         opened += 1
         try:
-            root = ET.fromstring(sec_edgar._get_text(
-                f"{sec_edgar.ARCHIVES_URL}/{person}/{acc.replace('-', '')}/{doc}"))
+            root = ET.fromstring(sec_client._get_text(
+                f"{sec_client.ARCHIVES_URL}/{person}/{acc.replace('-', '')}/{doc}"))
         except (httpx.HTTPError, ET.ParseError):
             continue
         about = (root.findtext(".//issuer/issuerCik") or "").strip()
-        if not about or sec_edgar._cik_int(about) != issuer:
+        if not about or sec_client._cik_int(about) != issuer:
             continue
         for owner in root.findall(".//reportingOwner"):
             owner_cik = (owner.findtext(".//rptOwnerCik") or "").strip()
             rel = owner.find("reportingOwnerRelationship")
-            if owner_cik and sec_edgar._cik_int(owner_cik) == person and rel is not None \
-                    and sec_edgar._xml_flag(rel, "isDirector"):
-                return {"source_url": sec_edgar._filing_index_url(issuer_cik, acc) or None,
+            if owner_cik and sec_client._cik_int(owner_cik) == person and rel is not None \
+                    and sec_insiders._xml_flag(rel, "isDirector"):
+                return {"source_url": sec_client._filing_index_url(issuer_cik, acc) or None,
                         "source_date": filed}
     return None
 
@@ -325,21 +325,21 @@ def roster_insiders(cik: str, executives: list[dict], submissions: dict | None =
     issuer has no ownership table within `proxy_statement.TABLE_MAX_AGE_DAYS`,
     or when EDGAR cannot be read (the insiders section is marked failed, as
     for the window)."""
-    from app.scraper import sec_edgar
+    from app.scraper import sec_client, sec_insiders, sec_lookup
     from app.scraper.proxy_statement import latest_table_filing
     try:
-        subs = submissions if submissions is not None else sec_edgar._submissions(cik)
+        subs = submissions if submissions is not None else sec_client._submissions(cik)
         filing = latest_table_filing(subs)
         if not filing:
             return []
-        people = roster_people(sec_edgar._get_text(filing["url"]))
+        people = roster_people(sec_client._get_text(filing["url"]))
         missing = [p for p in people if not has_seat(p, executives)]
         if not missing:
             return []
         owners = issuer_owners(cik)
     except httpx.HTTPError as exc:
         log.error("SEC EDGAR: roster of CIK=%s not read: %s", cik, exc)
-        sec_edgar._section_failed(sec_edgar.SECTION_INSIDERS, exc)
+        sec_client._section_failed(sec_client.SECTION_INSIDERS, exc)
         return []
     listed = {e.get("person_cik") for e in executives if e.get("person_cik")}
     found: list[dict] = []
@@ -357,9 +357,9 @@ def roster_insiders(cik: str, executives: list[dict], submissions: dict | None =
             continue                      # an officer then, or gone: not a seat the proxy's row proves
         if not own and not is_outside_director(owner["type"]):
             continue                      # a 5 % holder or an officer
-        record = {"name": sec_edgar._normalize_sec_name(" ".join(_owner_bag(owner["name"])[0])),
+        record = {"name": sec_lookup._normalize_sec_name(" ".join(_owner_bag(owner["name"])[0])),
                   "role": "Director", "title": "", "person_cik": owner["cik"], "former": False,
-                  "issuer_cik": sec_edgar._cik10(cik), "document_type": None, "period_of_report": None,
+                  "issuer_cik": sec_client._cik10(cik), "document_type": None, "period_of_report": None,
                   "source_url": filing["url"], "source_date": filing["date"], "since": None}
         if own:
             record.update(form3)
@@ -378,7 +378,7 @@ def roster_insiders(cik: str, executives: list[dict], submissions: dict | None =
     if not quiet_board:
         # … or they did file, behind the fund they sit for (findings item 118)
         recent = (subs.get("filings") or {}).get("recent") or {}
-        window = sec_edgar._form34_window_start(recent.get("form") or [], recent.get("filingDate") or [])
+        window = sec_insiders._form34_window_start(recent.get("form") or [], recent.get("filingDate") or [])
         for r in found:
             r["joint"] = None if r["silent_since"] else filed_jointly(r["person_cik"], cik, window)
     out = [r for r in found if quiet_board or r["silent_since"] or r.get("joint")]

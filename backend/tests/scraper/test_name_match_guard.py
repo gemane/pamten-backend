@@ -80,7 +80,7 @@ def _session(**node):
 
 class TestNotThisFiler:
     def test_edgars_other_name(self):
-        with patch("app.scraper.sec_edgar.fetch_filer_name", return_value="BlackRock Finance, Inc."):
+        with patch("app.scraper.sec_filer.fetch_filer_name", return_value="BlackRock Finance, Inc."):
             why = _not_this_filer(_session(name="BlackRock, Inc."), "n", "0001364742", None, None)
         assert why == "EDGAR names CIK 0001364742 'BlackRock Finance, Inc.'"
 
@@ -89,7 +89,7 @@ class TestNotThisFiler:
         assert _not_this_filer(s, "n", "0000000001", None, "SAMSUNG ELECTRONICS CO LTD") is None
 
     def test_another_id_needs_no_request(self):
-        with patch("app.scraper.sec_edgar.fetch_filer_name") as fetch:
+        with patch("app.scraper.sec_filer.fetch_filer_name") as fetch:
             assert _not_this_filer(_session(cik="0000000002"), "n", "0000000001", None, None) \
                 == "it carries CIK 0000000002"
             assert _not_this_filer(_session(lei="B" * 20), "n", None, "A" * 20, None) \
@@ -103,12 +103,12 @@ class TestNotThisFiler:
         assert _not_this_filer(_session(lei="a" * 20), "n", None, "A" * 20, None) is None
 
     def test_an_lei_alone_asks_edgar_nothing(self):
-        with patch("app.scraper.sec_edgar.fetch_filer_name") as fetch:
+        with patch("app.scraper.sec_filer.fetch_filer_name") as fetch:
             assert _not_this_filer(_session(name="X"), "n", None, "A" * 20, None) is None
         fetch.assert_not_called()
 
     def test_edgar_silent_means_the_match_stands(self):
-        with patch("app.scraper.sec_edgar.fetch_filer_name", return_value=None):
+        with patch("app.scraper.sec_filer.fetch_filer_name", return_value=None):
             assert _not_this_filer(_session(name="X"), "n", "0000000001", None, None) is None
 
 
@@ -120,16 +120,16 @@ class TestFilerAsRegistered:
                            {"name": "BlackRock, Inc.", "to": "2006-10-05T00:00:00.000Z"}]}
 
     def test_an_old_spelling_gives_edgars_name_and_the_former_names(self):
-        with patch("app.scraper.sec_edgar._submissions", return_value=self.SUB):
+        with patch("app.scraper.sec_client._submissions", return_value=self.SUB):
             assert _filer_as_registered("0001364742", "BlackRock Inc.") == (
                 "BlackRock Finance, Inc.", ["BlackRock Inc.|2024-09-26", "BlackRock, Inc.|2006-10-05"])
 
     def test_the_current_name_in_another_spelling_changes_nothing(self):
-        with patch("app.scraper.sec_edgar._submissions", return_value=self.SUB):
+        with patch("app.scraper.sec_client._submissions", return_value=self.SUB):
             assert _filer_as_registered("0001364742", "BLACKROCK FINANCE INC") is None
 
     def test_edgar_unreachable_leaves_the_filings_name(self):
-        with patch("app.scraper.sec_edgar._submissions", side_effect=RuntimeError("down")):
+        with patch("app.scraper.sec_client._submissions", side_effect=RuntimeError("down")):
             assert _filer_as_registered("0001364742", "BlackRock Inc.") is None
 
 
@@ -204,12 +204,12 @@ class TestAGleifNodeMetByAFilersName:
     def test_edgar_silent_falls_back_to_the_name(self):
         with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None), \
              patch("app.scraper.legal_identity.filer_facts", return_value=None), \
-             patch("app.scraper.sec_edgar.fetch_filer_name", return_value="DOMINOS PIZZA INC"):
+             patch("app.scraper.sec_filer.fetch_filer_name", return_value="DOMINOS PIZZA INC"):
             assert _not_this_filer(self._lei_node(), "n", "0001286681", None, None) is None
 
     def test_a_node_without_an_lei_keeps_the_name_test(self):
         with patch("app.scraper.legal_identity.same_legal_entity") as rule, \
-             patch("app.scraper.sec_edgar.fetch_filer_name", return_value="DOMINOS PIZZA INC"):
+             patch("app.scraper.sec_filer.fetch_filer_name", return_value="DOMINOS PIZZA INC"):
             assert _not_this_filer(_session(name="Domino's Pizza Inc"), "n", "0001286681", None, None) is None
         rule.assert_not_called()
 

@@ -11,7 +11,7 @@ So: business address → `hq_*`, incorporation → `country`, and never the reve
 """
 
 
-from app.scraper.sec_edgar import sec_headquarters, sec_country
+from app.scraper.sec_filer import sec_headquarters, sec_country
 
 
 def subs(**business):

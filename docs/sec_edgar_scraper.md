@@ -16,6 +16,33 @@ No API key is required. All endpoints are public. The SEC requires a descriptive
 
 ---
 
+## Where the code lives
+
+`sec_edgar.py` is the entry point (`scrape_company`). Until November 2026 it
+was one file of 5,100 lines; it was split by what each part reads, with no
+change of behaviour. All of it is in `backend/app/scraper/`:
+
+| Module | What it holds |
+|---|---|
+| `sec_edgar.py` | `scrape_company`: one company's scrape, calling the readers below |
+| `sec_client.py` | The HTTP client, the retry, requests lost to the network, the filer record (`_submissions`) with its per-scrape and per-pass memo, CIK and URL helpers |
+| `sec_lookup.py` | A name → its filer: the tickers file, EDGAR's name index, the bulk name list, a person's CIKs |
+| `sec_filer.py` | What a filer's own record says: country, headquarters, website, SIC, former names, LEI, the annual report's cover |
+| `sec_13dg.py` | An issuer's 13D/G statements (`fetch_ownership_filings`) |
+| `sec_13dg_text.py` | Reading a statement's cover page and text; the stake arithmetic |
+| `sec_13dg_xml.py` | Reading a structured statement (the XML filed since December 2024) |
+| `sec_holdings.py` | A filer's own 13D/G statements (`fetch_filer_holdings`) |
+| `sec_insiders.py` | Form 3/4/5 insiders, 8-K departures, an insider's holding |
+| `sec_shares.py` | Shares outstanding, the denominator of a stake |
+| `sec_13f.py` | Quarterly 13F holders, a manager's affiliated filers |
+
+These modules call each other's functions through the module
+(`sec_client._get_text(...)`, not `from sec_client import _get_text`), so a
+test that patches a function in its home module reaches every caller. The
+other SEC readers (`sec_ex21.py`, `sec_roster.py`, `sec_formd.py`, `sec_f6.py`,
+`sec_class_end.py`, `sec_acquisitions.py`, `sec_names.py`, `proxy_statement.py`)
+and the writer (`sec_writer.py`) were separate files before.
+
 ## APIs Used
 
 | Endpoint | Purpose |
@@ -28,7 +55,7 @@ No API key is required. All endpoints are public. The SEC requires a descriptive
 
 **Rate limit:** 10 requests/second. The scraper sleeps 0.12 s between every request.
 
-**Stalls and the one retry.** Every request goes through `sec_edgar._response`
+**Stalls and the one retry.** Every request goes through `sec_client._response`
 on one pooled client: the ticker file, the browse searches and the archive
 documents alike. sec.gov leaves about one request in 30 hanging: no byte
 arrives, sometimes a 503 after 24–27 s. Measured 2026-11-02, 4 of 120 plain
@@ -153,7 +180,7 @@ Before any search, the runner resolves the query to its node with the same
 credible-match resolver the Exhibit 21, acquisitions and 13F passes use
 (`runner._stored_sec_cik` → `resolve_best_entity`). When that node carries a
 `sec_cik` (from an earlier scrape, a Wikidata identifier or a GLEIF/SEC merge),
-the filer is read by that number (`sec_edgar.company_by_cik`, the submissions
+the filer is read by that number (`sec_filer.company_by_cik`, the submissions
 document) and no name has to match. The name search below runs only for a
 company the database holds no CIK for, or one whose stored CIK EDGAR does not
 know (404). Why: the name search finds only what its indexes list. "SpaceX" is a
@@ -450,7 +477,7 @@ entities, SoftBank's funds, Glencore's companies, Alibaba's, Embraer's), about 8
 with its trusts and companies (Sands, Miller, Cohen, Slim). The "member of a group" box
 does not tell them apart: Glencore, Alibaba, the Slim family and News Corp's Murdoch trust
 tick (b), "not a group"; Berkshire and ValueAct tick (a) for one parent's own entities.
-So `sec_edgar._is_voting_pact` — a 13D with co-filers whose text (the XML's Items 4 and 6,
+So `sec_13dg_text._is_voting_pact` — a 13D with co-filers whose text (the XML's Items 4 and 6,
 or the whole text filing) names a voting agreement, a stockholders' or shareholders'
 agreement or a voting trust, and whose persons do not all tick (b) — decides the node's
 `kind`: `voting_pact`, named "Voting group · N parties", or `joint_filing`, named "Joint
@@ -1405,7 +1432,7 @@ Since 2026-11-12 (the user's choice: the vehicle is the owner) an indirect
 position that two or more insiders of one issuer report **alike — the same
 security, the same words, the same count to the share** — is written once, from
 a node named as the filers name the holder ("Control Trust", "GFI"), and taken
-off each insider's holding (`sec_edgar.split_shared_blocks`, in the issuer's
+off each insider's holding (`sec_insiders.split_shared_blocks`, in the issuer's
 insider scan) — when it is at least 0.1 % of its class (`VEHICLE_MIN_PCT`) and
 its words name a holder (a capitalised name, no "See footnote"). The guard read
 the insiders of the 83 issuers dev holds Form 4 stakes in: identical counts at
@@ -1423,7 +1450,7 @@ among the issuer's own vehicles only (`runner._write_shared_vehicles`,
 `_upsert_entity_by_name(by_name=False)`): "GFI" is how these filings name
 Grupo Financiero Inbursa, and a name search would hand it any GFI. The
 person-centric lookup, which reads one person's filing at a time, takes a known
-vehicle out by its name, class and count (`sec_edgar.without_vehicles`). People
+vehicle out by its name, class and count (`sec_insiders.without_vehicles`). People
 are not linked to the vehicle: the filings call them "trust participants" in a
 footnote, and footnotes are not read — each filer words them differently (the
 user, 2026-11-12). The same limit leaves a vehicle hidden in another position
@@ -2254,7 +2281,7 @@ rebuild).
   answers 24 names the live search finds nobody for, and never the reverse.
   Requests for the names themselves: about 450 before, none now.
 - **A company's exact name** (`sec_names.registrants_named`, read through
-  `sec_edgar._exact_name_registrant`): the type-free pass of the name lookup
+  `sec_lookup._exact_name_registrant`): the type-free pass of the name lookup
   and the lookup of a proxy table's holder (`_table_holder_node`) take the
   CIKs the list holds under the same name key — legal form, EDGAR's tag, case,
   accents and punctuation aside; the list is unaccented, so "Nestlé" is folded

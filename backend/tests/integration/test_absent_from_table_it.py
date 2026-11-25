@@ -147,9 +147,9 @@ def test_the_whole_graph_pass(it_db):
     from app.scraper.sec_writer import close_absent_from_tables
     subs = {"cik": "908937", "filings": {"recent": {"form": ["DEF 14A"], "filingDate": ["2026-04-10"],
             "accessionNumber": ["0001104659-26-041777"], "primaryDocument": ["tm261591-1_def14a.htm"]}}}
-    with patch("app.scraper.sec_edgar._submissions", return_value=subs), \
+    with patch("app.scraper.sec_client._submissions", return_value=subs), \
          patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
-         patch("app.scraper.sec_edgar._get_text", return_value="<html></html>"), \
+         patch("app.scraper.sec_client._get_text", return_value="<html></html>"), \
          patch("app.scraper.proxy_statement.read_holder_rows", return_value=ROWS), \
          patch("app.scraper.sec_writer.statement_persons", side_effect=_persons):
         res = close_absent_from_tables()

@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from app.scraper import sec_edgar
-from app.scraper.sec_edgar import fetch_13f_holders
+from app.scraper import sec_13dg_xml, sec_13f, sec_client, sec_shares
+from app.scraper.sec_13f import fetch_13f_holders
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
@@ -31,7 +31,7 @@ def _serve_13f(fts_hits, docs: dict, total=None):
     import httpx
 
     def _get(url, params=None):
-        if url == sec_edgar.SEARCH_URL:
+        if url == sec_client.SEARCH_URL:
             frm = int((params or {}).get("from", 0))
             return {"hits": {"total": {"value": total if total is not None else len(fts_hits)},
                              "hits": fts_hits[frm:frm + 10]}}
@@ -47,8 +47,8 @@ def _serve_13f(fts_hits, docs: dict, total=None):
             return docs[key]
         raise httpx.ConnectError(f"unexpected text fetch: {url}")
 
-    return patch.object(sec_edgar, "_get", side_effect=_get), \
-           patch.object(sec_edgar, "_get_text", side_effect=_get_text)
+    return patch.object(sec_client, "_get", side_effect=_get), \
+           patch.object(sec_client, "_get_text", side_effect=_get_text)
 
 
 GIGA_ACC = "0001140361-26-032507"
@@ -65,7 +65,7 @@ def _giga_docs():
 
 class TestCusipValidation:
     def test_nine_alphanumerics_or_nothing(self):
-        from app.scraper.sec_edgar import _valid_cusip
+        from app.scraper.sec_13f import _valid_cusip
         assert _valid_cusip("58733R102") == "58733R102"
         assert _valid_cusip(" g92087165 ") == "G92087165"
         assert _valid_cusip("587733R102") is None    # ten chars — MELI's phantom
@@ -100,7 +100,7 @@ def _serve_by_cik(relevance_hits, by_cik_hits, docs, fail_cik_search=False):
 
     def _get(url, params=None):
         params = params or {}
-        if url == sec_edgar.SEARCH_URL:
+        if url == sec_client.SEARCH_URL:
             searches.append(dict(params))
             frm = int(params.get("from", 0))
             if "ciks" in params:
@@ -124,8 +124,8 @@ def _serve_by_cik(relevance_hits, by_cik_hits, docs, fail_cik_search=False):
             return docs[key]
         raise httpx.ConnectError(f"unexpected text fetch: {url}")
 
-    return (patch.object(sec_edgar, "_get", side_effect=_get),
-            patch.object(sec_edgar, "_get_text", side_effect=_get_text), searches)
+    return (patch.object(sec_client, "_get", side_effect=_get),
+            patch.object(sec_client, "_get_text", side_effect=_get_text), searches)
 
 
 def _small_filers(n, start=9000):
@@ -185,7 +185,7 @@ class TestKnownFilersByCik:
         stranger = _fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")
         g, t = _serve_13f([stranger], _giga_docs())
         with g, t:
-            out = sec_edgar._13f_priority_filings(["X"], 135, ["0000000042"])
+            out = sec_13f._13f_priority_filings(["X"], 135, ["0000000042"])
         assert out == ({}, 0)
 
     def test_the_newest_filing_per_filer_wins_across_both_searches(self):
@@ -248,7 +248,7 @@ class Test13FIssuerMatching:
     NAMES = ["Space Exploration Technologies Corp.", "SpaceX"]
 
     def test_lookalikes_on_generic_words_are_rejected(self):
-        from app.scraper.sec_edgar import _13f_issuer_matches
+        from app.scraper.sec_13f import _13f_issuer_matches
         assert _13f_issuer_matches(self.NAMES, "AGILENT TECHNOLOGIES INC") is False
         assert _13f_issuer_matches(self.NAMES, "SEAGATE TECHNOLOGY") is False
         # The one that poisoned dev: Palantir's cusip got stamped onto SpaceX
@@ -260,17 +260,17 @@ class Test13FIssuerMatching:
         # Issuer names lead with the brand: coinciding LATER tokens are not
         # identity — MDA SPACE, SIDUS SPACE and STARFIGHTERS SPACE all joined
         # the union on the word "space" under the majority-only rule.
-        from app.scraper.sec_edgar import _13f_issuer_matches
+        from app.scraper.sec_13f import _13f_issuer_matches
         for cand in ("MDA SPACE LTD", "SIDUS SPACE INC", "STARFIGHTERS SPACE INC"):
             assert _13f_issuer_matches(self.NAMES, cand) is False, cand
 
     def test_abbreviations_of_the_real_name_pass(self):
-        from app.scraper.sec_edgar import _13f_issuer_matches
+        from app.scraper.sec_13f import _13f_issuer_matches
         assert _13f_issuer_matches(self.NAMES, "SPACE EXPLORATION TECHN CORP") is True
         assert _13f_issuer_matches(self.NAMES, "SPACE EXPLORATION TECHNOLOGIES CORP") is True
 
     def test_no_similarity_no_pass_regardless_of_anchor(self):
-        from app.scraper.sec_edgar import _13f_issuer_matches
+        from app.scraper.sec_13f import _13f_issuer_matches
         assert _13f_issuer_matches(self.NAMES, "SPACE CAMP HOLIDAYS LLC") is False
 
 
@@ -298,7 +298,7 @@ class TestFetch13FHolders:
         g, t = _serve_13f([_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")],
                           _giga_docs(), total=95)
         def failing_get(url, params=None):
-            if url == sec_edgar.SEARCH_URL and int((params or {}).get("from", 0)) > 0:
+            if url == sec_client.SEARCH_URL and int((params or {}).get("from", 0)) > 0:
                 req = httpx.Request("GET", url)
                 raise httpx.HTTPStatusError("500", request=req,
                                             response=httpx.Response(500, request=req))
@@ -317,7 +317,7 @@ class TestFetch13FHolders:
             req = httpx.Request("GET", url)
             raise httpx.HTTPStatusError("500", request=req,
                                         response=httpx.Response(500, request=req))
-        with patch.object(sec_edgar, "_get", side_effect=dead_get):
+        with patch.object(sec_client, "_get", side_effect=dead_get):
             try:
                 fetch_13f_holders("SpaceX", known_names=["X"])
                 assert False, "should have raised"
@@ -445,7 +445,7 @@ class TestFetch13FHolders:
         with g as get_mock, t:
             out = fetch_13f_holders("X", known_names=["X"], limit=10)
         fts_calls = [c for c in get_mock.call_args_list
-                     if c.args[0] == sec_edgar.SEARCH_URL]
+                     if c.args[0] == sec_client.SEARCH_URL]
         assert len(fts_calls) >= 2, "discovery pages PAST the fetch limit"
         assert out["filings_total"] == 3000
         assert out["filings_fetched"] == 10, "the limit binds on fetches"
@@ -460,12 +460,12 @@ class TestFetch13FHolders:
         for i in range(40):
             docs[f"{2000 + i}/000114036{i:02d}26032507/index"] = []
         def one_big_page(url, params=None):
-            if url == sec_edgar.SEARCH_URL:
+            if url == sec_client.SEARCH_URL:
                 return {"hits": {"total": {"value": 40}, "hits": hits}}   # all at once
             key = url.split("/data/")[1].rsplit("/", 1)[0]
             return {"directory": {"item": [{"name": n} for n in docs.get(f"{key}/index", [])]}}
-        with patch.object(sec_edgar, "_get", side_effect=one_big_page), \
-             patch.object(sec_edgar, "_get_text", side_effect=AssertionError):
+        with patch.object(sec_client, "_get", side_effect=one_big_page), \
+             patch.object(sec_client, "_get_text", side_effect=AssertionError):
             out = fetch_13f_holders("X", known_names=["X"], limit=15)
         assert out["filings_fetched"] == 15
 
@@ -478,14 +478,14 @@ def _serve_sweep(totals: dict, hits_for: dict, fail: set = frozenset()):
     asked: dict = {}
 
     def _get(url, params=None):
-        assert url == sec_edgar.SEARCH_URL
+        assert url == sec_client.SEARCH_URL
         q = (params or {}).get("q", "").strip('"')
         asked.setdefault(q, []).append(int((params or {}).get("from", 0)))
         if q in fail:
             raise httpx.HTTPStatusError("500", request=None, response=httpx.Response(500))
         frm = asked[q][-1]
         return {"hits": {"total": {"value": totals[q]}, "hits": hits_for.get(q, [])[frm:frm + 100]}}
-    return patch.object(sec_edgar, "_get", side_effect=_get), asked
+    return patch.object(sec_client, "_get", side_effect=_get), asked
 
 
 def _filers(prefix, n):
@@ -501,7 +501,7 @@ class TestDiscoveryCap:
         g, asked = _serve_sweep({"A": 2600, "B": 9000, "X": 5000},
                                 {"A": _filers("1", 2600), "B": _filers("2", 300)})
         with g:
-            filings, total = sec_edgar._13f_filings_for(["A", "B", "X"], 100)
+            filings, total = sec_13f._13f_filings_for(["A", "B", "X"], 100)
         assert total == 9000, "the largest total of every query, not of the queries swept"
         assert asked["B"] == [0] and asked["X"] == [0], "one request each, no sweep"
         assert len(filings) == 2500 and not any(f["filer_cik"].startswith("2") for f in filings), \
@@ -510,13 +510,13 @@ class TestDiscoveryCap:
     def test_a_failed_total_read_keeps_the_count_already_known(self):
         g, asked = _serve_sweep({"A": 2600, "B": 9000}, {"A": _filers("1", 2600)}, fail={"B"})
         with g:
-            _, total = sec_edgar._13f_filings_for(["A", "B"], 100)
+            _, total = sec_13f._13f_filings_for(["A", "B"], 100)
         assert total == 2600 and asked["B"] == [0]
 
     def test_under_the_cap_every_query_still_feeds_the_pool(self):
         g, asked = _serve_sweep({"A": 50, "B": 60}, {"A": _filers("1", 50), "B": _filers("2", 60)})
         with g:
-            filings, total = sec_edgar._13f_filings_for(["A", "B"], 100)
+            filings, total = sec_13f._13f_filings_for(["A", "B"], 100)
         assert total == 60 and len(filings) == 110
 
 
@@ -525,13 +525,13 @@ class TestQuarterlyDeadlines:
 
     def test_mid_quarter_the_last_deadline_is_the_previous_quarters(self):
         from datetime import date
-        from app.scraper.sec_edgar import latest_13f_deadline, next_13f_deadline
+        from app.scraper.sec_13f import latest_13f_deadline, next_13f_deadline
         assert latest_13f_deadline(date(2026, 8, 20)) == date(2026, 8, 14)
         assert next_13f_deadline(date(2026, 8, 20)) == date(2026, 11, 14)
 
     def test_deadline_day_itself_counts_as_passed(self):
         from datetime import date
-        from app.scraper.sec_edgar import latest_13f_deadline, next_13f_deadline
+        from app.scraper.sec_13f import latest_13f_deadline, next_13f_deadline
         assert latest_13f_deadline(date(2026, 8, 14)) == date(2026, 8, 14)
         assert next_13f_deadline(date(2026, 8, 14)) == date(2026, 11, 14)
 
@@ -539,13 +539,13 @@ class TestQuarterlyDeadlines:
         # Early January: Sep 30 + 45d = Nov 14 is the last one passed; the
         # December quarter is due Feb 14 (Dec 31 + 45d).
         from datetime import date
-        from app.scraper.sec_edgar import latest_13f_deadline, next_13f_deadline
+        from app.scraper.sec_13f import latest_13f_deadline, next_13f_deadline
         assert latest_13f_deadline(date(2026, 1, 5)) == date(2025, 11, 14)
         assert next_13f_deadline(date(2026, 1, 5)) == date(2026, 2, 14)
 
     def test_may_15_not_may_14_the_45_days_are_counted_not_assumed(self):
         from datetime import date
-        from app.scraper.sec_edgar import latest_13f_deadline
+        from app.scraper.sec_13f import latest_13f_deadline
         assert latest_13f_deadline(date(2026, 5, 20)) == date(2026, 5, 15)
 
 
@@ -562,9 +562,9 @@ class TestBackoff:
             return httpx.Response(200, json={"ok": True},
                                   request=httpx.Request("GET", url))
 
-        with patch.object(sec_edgar, "_get_client") as client:
+        with patch.object(sec_client, "_get_client") as client:
             client.return_value.get.side_effect = fake_get
-            out = sec_edgar._get("https://efts.sec.gov/x")
+            out = sec_client._get("https://efts.sec.gov/x")
         assert out == {"ok": True} and len(calls) == 2
 
     def test_a_second_429_raises(self):
@@ -574,17 +574,17 @@ class TestBackoff:
             return httpx.Response(429, headers={"Retry-After": "0"},
                                   request=httpx.Request("GET", url))
 
-        with patch.object(sec_edgar, "_get_client") as client:
+        with patch.object(sec_client, "_get_client") as client:
             client.return_value.get.side_effect = always_429
             with pytest.raises(httpx.HTTPStatusError):
-                sec_edgar._get("https://efts.sec.gov/x")
+                sec_client._get("https://efts.sec.gov/x")
 
 
 class TestCusipFromSchedules:
     def test_both_spellings_reach_the_parsed_filing(self):
         for fixture in ("13g_vanguard.xml", "13ga_vanguard_held.xml"):
             raw = (FIX / fixture).read_text()
-            parsed = sec_edgar._parse_13dg_xml(raw)
+            parsed = sec_13dg_xml._parse_13dg_xml(raw)
             assert parsed and parsed.get("issuer_cusip"), fixture
 
 
@@ -600,7 +600,7 @@ class TestTheDateWindow:
             fetch_13f_holders("SpaceX", known_names=["Space Exploration Technologies Corp."],
                               **kw)
         fts = next(c for c in get_mock.call_args_list
-                   if c.args[0] == sec_edgar.SEARCH_URL)
+                   if c.args[0] == sec_client.SEARCH_URL)
         return fts.args[1] if len(fts.args) > 1 else fts.kwargs.get("params", fts.args[1])
 
     def test_the_default_window_is_one_period_plus_the_deadline(self):
@@ -647,19 +647,19 @@ class TestSharesFromTheCoverPage:
                 return cover if cover is not None else self.COVER
             raise httpx.ConnectError(f"unexpected {url}")
 
-        return patch.object(sec_edgar, "_get", side_effect=_get), \
-               patch.object(sec_edgar, "_get_text", side_effect=_get_text)
+        return patch.object(sec_client, "_get", side_effect=_get), \
+               patch.object(sec_client, "_get_text", side_effect=_get_text)
 
     def test_the_classes_are_summed(self):
         g, t = self._serve(["SCHEDULE 13G", "10-Q"])
         with g, t:
-            out = sec_edgar.fetch_shares_outstanding("0001181412")
+            out = sec_shares.fetch_shares_outstanding("0001181412")
         assert out == 13_181_779_945          # 7,696,293,669 A + 5,485,486,276 B
 
     def test_the_concept_api_still_wins_when_it_answers(self):
         g, t = self._serve(["10-Q"], concept_404=False)
         with g, t as text_mock:
-            out = sec_edgar.fetch_shares_outstanding("0000320193")
+            out = sec_shares.fetch_shares_outstanding("0000320193")
         assert out == 999
         assert not text_mock.called, "no cover fetch when the cheap endpoint answers"
 
@@ -669,18 +669,18 @@ class TestSharesFromTheCoverPage:
         division is wrong by 585x. No denominator beats a wrong one."""
         g, t = self._serve(["SCHEDULE 13G", "20-F", "6-K"])
         with g, t:
-            assert sec_edgar.fetch_shares_outstanding("0000912892") is None
+            assert sec_shares.fetch_shares_outstanding("0000912892") is None
 
     def test_an_echoed_fact_is_not_double_counted(self):
         doubled = self.COVER + self.COVER      # same contextRefs repeated
         g, t = self._serve(["10-Q"], cover=doubled)
         with g, t:
-            assert sec_edgar.fetch_shares_outstanding("0001181412") == 13_181_779_945
+            assert sec_shares.fetch_shares_outstanding("0001181412") == 13_181_779_945
 
 
 class TestShortForm:
     def test_both_eras_spellings_collapse_to_the_number(self):
-        from app.scraper.sec_edgar import _short_form
+        from app.scraper.sec_client import _short_form
         assert _short_form("SCHEDULE 13G/A") == "13G/A"
         assert _short_form("SC 13D") == "13D"
         assert _short_form("SCHEDULE 13G") == "13G"
@@ -688,7 +688,7 @@ class TestShortForm:
         assert _short_form("13F-HR/A") == "13F/A"
 
     def test_unknown_shapes_pass_through_not_guessed(self):
-        from app.scraper.sec_edgar import _short_form
+        from app.scraper.sec_client import _short_form
         assert _short_form("4") == "4"
         assert _short_form(None) is None
         assert _short_form("") is None

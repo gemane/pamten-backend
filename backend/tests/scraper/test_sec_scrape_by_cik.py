@@ -7,12 +7,13 @@ Wikidata (2026-10-27). Exhibit 21, acquisitions and 13F already read by the
 stored number; the main scrape now does too, and searches by name only when
 the database holds none — or EDGAR does not know the one it holds.
 """
+import contextlib
 from unittest.mock import patch
 
 import httpx
 import pytest
 
-from app.scraper import runner, sec_edgar
+from app.scraper import runner, sec_client, sec_edgar, sec_filer, sec_insiders, sec_lookup
 from app.config import settings
 
 
@@ -23,32 +24,32 @@ def _http_error(status: int) -> httpx.HTTPStatusError:
 
 class TestCompanyByCik:
     def test_the_submissions_document_is_the_identity(self):
-        with patch.object(sec_edgar, "_submissions", return_value={"name": "NESTLE SA"}) as sub:
-            assert sec_edgar.company_by_cik("792990") == {"cik": "0000792990", "name": "NESTLE SA"}
+        with patch.object(sec_client, "_submissions", return_value={"name": "NESTLE SA"}) as sub:
+            assert sec_filer.company_by_cik("792990") == {"cik": "0000792990", "name": "NESTLE SA"}
         sub.assert_called_once_with("0000792990")          # always the padded form
 
     def test_a_cik_edgar_does_not_know_is_none(self):
-        with patch.object(sec_edgar, "_submissions", side_effect=_http_error(404)):
-            assert sec_edgar.company_by_cik("0000792990") is None
+        with patch.object(sec_client, "_submissions", side_effect=_http_error(404)):
+            assert sec_filer.company_by_cik("0000792990") is None
 
     def test_any_other_http_error_is_raised_not_read_as_unknown(self):
-        with patch.object(sec_edgar, "_submissions", side_effect=_http_error(503)):
+        with patch.object(sec_client, "_submissions", side_effect=_http_error(503)):
             with pytest.raises(httpx.HTTPStatusError):
-                sec_edgar.company_by_cik("0000792990")
+                sec_filer.company_by_cik("0000792990")
 
     def test_a_value_that_is_no_cik_fetches_nothing(self):
-        with patch.object(sec_edgar, "_submissions") as sub:
-            assert sec_edgar.company_by_cik("not-a-cik") is None
-            assert sec_edgar.company_by_cik(None) is None
+        with patch.object(sec_client, "_submissions") as sub:
+            assert sec_filer.company_by_cik("not-a-cik") is None
+            assert sec_filer.company_by_cik(None) is None
         sub.assert_not_called()
 
 
 @pytest.fixture
 def quiet_fetches():
     """Everything scrape_company reads after the filer is found, emptied."""
-    names = {"fetch_former_names": [], "fetch_company_lei": None, "fetch_ownership_filings": [],
-             "fetch_executives": [], "fetch_filer_holdings": [], "fetch_shares_outstanding_detail": None}
-    patches = [patch.object(sec_edgar, n, return_value=v) for n, v in names.items()]
+    names = {"app.scraper.sec_filer.fetch_former_names": [], "app.scraper.sec_filer.fetch_company_lei": None, "app.scraper.sec_13dg.fetch_ownership_filings": [],
+             "app.scraper.sec_insiders.fetch_executives": [], "app.scraper.sec_holdings.fetch_filer_holdings": [], "app.scraper.sec_shares.fetch_shares_outstanding_detail": None}
+    patches = [patch(n, return_value=v) for n, v in names.items()]
     for p in patches:
         p.start()
     yield
@@ -58,8 +59,8 @@ def quiet_fetches():
 
 class TestScrapeCompany:
     def test_a_stored_cik_skips_the_name_search(self, quiet_fetches):
-        with patch.object(sec_edgar, "_submissions", return_value={"name": "NESTLE SA"}), \
-             patch.object(sec_edgar, "search_company") as search:
+        with patch.object(sec_client, "_submissions", return_value={"name": "NESTLE SA"}), \
+             patch.object(sec_lookup, "search_company") as search:
             data = sec_edgar.scrape_company("Nestlé", cik="0000792990")
         search.assert_not_called()
         assert (data["cik"], data["name"]) == ("0000792990", "NESTLE SA")
@@ -69,13 +70,15 @@ class TestScrapeCompany:
         listed, and what it returns is written like any insider."""
         window = [{"name": "Warren E Buffett", "role": "Director", "person_cik": "0000315090"}]
         roster = [{"name": "Kenneth I Chenault", "role": "Director", "person_cik": "0001180524", "holdings": {}}]
-        stubs = {"fetch_former_names": [], "fetch_company_lei": None, "fetch_ownership_filings": [],
-                 "fetch_filer_holdings": [], "fetch_shares_outstanding_detail": None}
-        with patch.multiple(sec_edgar, **{k: (lambda *a, _v=v, **k2: _v) for k, v in stubs.items()}), \
-             patch.object(sec_edgar, "_submissions", return_value={"name": "BERKSHIRE HATHAWAY INC"}), \
-             patch.object(sec_edgar, "fetch_executives", return_value=list(window)), \
+        stubs = {"app.scraper.sec_filer.fetch_former_names": [], "app.scraper.sec_filer.fetch_company_lei": None, "app.scraper.sec_13dg.fetch_ownership_filings": [],
+                 "app.scraper.sec_holdings.fetch_filer_holdings": [], "app.scraper.sec_shares.fetch_shares_outstanding_detail": None}
+        with contextlib.ExitStack() as stack, \
+             patch.object(sec_client, "_submissions", return_value={"name": "BERKSHIRE HATHAWAY INC"}), \
+             patch.object(sec_insiders, "fetch_executives", return_value=list(window)), \
              patch("app.scraper.sec_f6.fetch_ads_cusips", return_value={}), \
              patch("app.scraper.sec_roster.roster_insiders", return_value=list(roster)) as asked:
+            for target, value in stubs.items():
+                stack.enter_context(patch(target, return_value=value))
             data = sec_edgar.scrape_company("Berkshire Hathaway", cik="0001067983")
         assert asked.call_args.args[0] == "0001067983"
         assert [e["name"] for e in asked.call_args.args[1]][0] == "Warren E Buffett"
@@ -83,15 +86,15 @@ class TestScrapeCompany:
 
     def test_a_stored_cik_edgar_does_not_know_falls_back_to_the_name(self, quiet_fetches):
         found = {"cik": "0001181412", "name": "SPACE EXPLORATION TECHNOLOGIES CORP"}
-        with patch.object(sec_edgar, "_submissions", side_effect=_http_error(404)), \
-             patch.object(sec_edgar, "search_company", return_value=found) as search:
+        with patch.object(sec_client, "_submissions", side_effect=_http_error(404)), \
+             patch.object(sec_lookup, "search_company", return_value=found) as search:
             data = sec_edgar.scrape_company("Space Exploration Technologies Corp", cik="0000000001")
         search.assert_called_once_with("Space Exploration Technologies Corp")
         assert data["cik"] == "0001181412"
 
     def test_without_a_stored_cik_the_name_search_runs(self, quiet_fetches):
-        with patch.object(sec_edgar, "_submissions") as sub, \
-             patch.object(sec_edgar, "search_company", return_value=None) as search:
+        with patch.object(sec_client, "_submissions") as sub, \
+             patch.object(sec_lookup, "search_company", return_value=None) as search:
             assert sec_edgar.scrape_company("Unilever") is None
         search.assert_called_once_with("Unilever")
         sub.assert_not_called()
@@ -192,7 +195,7 @@ class TestTheStoredNodesLeiForTheFiler:
              patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner._stored_entity", return_value=dict(self.STORED)), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=scraped), \
-             patch("app.scraper.sec_edgar.fetch_filer_country", return_value="GB"), \
+             patch("app.scraper.sec_filer.fetch_filer_country", return_value="GB"), \
              patch("app.scraper.runner._confirm_stored_lei") as confirm:
             out = runner.run_scrape_sec_edgar("Unilever", country="US")
         assert out["status"] == "country_mismatch"

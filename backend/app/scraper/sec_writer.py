@@ -34,7 +34,7 @@ VOTING_GROUP_TYPE = "voting_group"
 
 #: Item 8's answer for a group member, so the writer classifies it from what
 #: the filer stated rather than from its name (None: the name decides).
-from app.scraper.sec_edgar import _individual_by_code  # noqa: E402,F401
+from app.scraper.sec_13dg_text import _individual_by_code  # noqa: E402,F401
 
 
 def _is_control_filing(form_type: str | None) -> bool:
@@ -67,7 +67,7 @@ def _member_key(name: str, cik: str | None) -> str:
     ("InvalidPropertyType - Property values can not contain map values"). A list
     of scalars is fine — `interest_types` on PSC edges is the precedent.
     """
-    from app.scraper.sec_edgar import _cik_int
+    from app.scraper.sec_client import _cik_int
     # Fold diacritics before normalising. EDGAR writes these names in ASCII —
     # "Eugenie Patri Sebastien S.A.", "BRC S.a R.L." — while every other source
     # accents them, and `normalize_entity_name` preserves accents, so the same
@@ -333,7 +333,7 @@ def _write_owns_sec(owner_id: str, owned_id: str, source_id: str,
     grade is the edge's).
 
     ``since_date`` / ``since_basis``: the start the caller worked out from the
-    filing (`sec_edgar._stake_start`: an original 13D/G states it, an
+    filing (`sec_13dg_text._stake_start`: an original 13D/G states it, an
     amendment only bounds it — basis ``amendment``). It wins over the
     ``filing_dates_the_stake`` default and is COMBINED with the start an edge
     already has — the earliest wins — so a re-read never moves it later.
@@ -842,7 +842,7 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
                  "statements": 0, "exited": 0, "lines": []}
     # the same holders stand at company after company: their records stay at
     # hand for the run (`filer_records_for_a_pass`, findings item 135)
-    from app.scraper.sec_edgar import filer_records_for_a_pass
+    from app.scraper.sec_client import filer_records_for_a_pass
     with filer_records_for_a_pass():
         for eid, cik, name in issuers:
             try:
@@ -965,20 +965,20 @@ def statement_persons(source_url: str | None) -> list[str]:
     group a proxy table lists by its controlling person (Berkshire's 13G/A on
     Occidental names Warren E. Buffett; the table lists "Warren E. Buffett and
     affiliated entities"). From the filing's `primary_doc.xml` (since December
-    2024), else its full text (`sec_edgar._cover_page_names`, findings item 93).
+    2024), else its full text (`sec_13dg_text._cover_page_names`, findings item 93).
     [] when the filing cannot be read — the caller keeps the holding then."""
-    from app.scraper import sec_edgar
+    from app.scraper import sec_13dg_text, sec_13dg_xml, sec_client
     if not source_url or not source_url.endswith("-index.htm"):
         return []
     folder, index = source_url.rsplit("/", 1)
     try:
-        xml = sec_edgar._parse_13dg_xml(sec_edgar._get_text(f"{folder}/primary_doc.xml"))
+        xml = sec_13dg_xml._parse_13dg_xml(sec_client._get_text(f"{folder}/primary_doc.xml"))
     except Exception:  # noqa: BLE001 — no XML before December 2024
         xml = None
     if xml:
         return [p["name"] for p in xml.get("persons") or [] if p.get("name")]
     try:
-        return sec_edgar._cover_page_names(sec_edgar._get_text(f"{folder}/{index.replace('-index.htm', '.txt')}"))
+        return sec_13dg_text._cover_page_names(sec_client._get_text(f"{folder}/{index.replace('-index.htm', '.txt')}"))
     except Exception as exc:  # noqa: BLE001
         log.warning("SEC: reporting persons of %s not read: %s", source_url, exc)
         return []
@@ -1079,13 +1079,13 @@ def read_table_and_close(owned_id: str, cik: str, submissions: dict | None = Non
     companies nobody scraped, whose statements the graph does not hold. The
     issuer's own scrape has just read them all. Not for a registered fund,
     whose table is not written either."""
-    from app.scraper import sec_edgar
+    from app.scraper import sec_client
     from app.scraper.proxy_statement import latest_table_filing, read_holder_rows, read_holder_table
-    subs = submissions if submissions is not None else sec_edgar._submissions(cik)
+    subs = submissions if submissions is not None else sec_client._submissions(cik)
     filing = latest_table_filing(subs)
     if not filing:
         return {"filing": None, "rows": 0, "closed": 0, "written": None, "statements": None}
-    html = sec_edgar._get_text(filing["url"])
+    html = sec_client._get_text(filing["url"])
     rows = read_holder_rows(html)
     written = since = None
     if write and source_id:
@@ -1132,7 +1132,7 @@ def _table_holder_node(name: str, source_id: str, entity_only: bool) -> tuple[st
     name, else an EDGAR registrant of exactly that name, written by its CIK.
     None when none, or more than one, is found."""
     from app.db.arcadedb import run_query
-    from app.scraper import sec_edgar
+    from app.scraper import sec_lookup
     from app.scraper.graph_writer import _upsert_entity_by_name
     from app.scraper.mapper import has_entity_suffix
     found = run_query("MATCH (e:Entity) WHERE e.name = $n OR e.name_normalized = $k RETURN DISTINCT e.id AS id LIMIT 3",
@@ -1147,7 +1147,7 @@ def _table_holder_node(name: str, source_id: str, entity_only: bool) -> tuple[st
         people = run_query("MATCH (p:Person) WHERE p.full_name = $n RETURN DISTINCT p.id AS id LIMIT 3", {"n": name}) or []
         return (people[0]["id"], "Person") if len(people) == 1 else None
     # the bulk name list when there is one, else the live index (item 135)
-    match = sec_edgar._exact_name_registrant(name)
+    match = sec_lookup._exact_name_registrant(name)
     if not match:
         return None
     return _upsert_entity_by_name(name, cik=match["cik"], source_id=source_id), "Entity"
@@ -1195,18 +1195,18 @@ def _statements_since(cik: str, day: str, submissions: dict | None) -> list[dict
     recent list reaches back to `day`; else from the feed (a bank's thousand
     newest filings span a few days). The issuer's own filings about others
     (its CIK opens the accession) are left out."""
-    from app.scraper import sec_edgar
+    from app.scraper import sec_13dg, sec_client, sec_holdings
     recent = ((submissions or {}).get("filings") or {}).get("recent") or {}
     dates = [str(d)[:10] for d in recent.get("filingDate") or []]
     if dates and min(dates) <= day:
-        own = sec_edgar._cik10(cik)
-        rows = [{"index_url": sec_edgar._filing_index_url(cik, a), "form_type": form, "file_date": d, "accession": a}
+        own = sec_client._cik10(cik)
+        rows = [{"index_url": sec_client._filing_index_url(cik, a), "form_type": form, "file_date": d, "accession": a}
                 for form, d, a in zip(recent.get("form") or [], dates, recent.get("accessionNumber") or [])
-                if d > day and any(form.startswith(p) for p in sec_edgar._HOLDING_FORMS)
+                if d > day and any(form.startswith(p) for p in sec_holdings._HOLDING_FORMS)
                 and a.replace("-", "")[:10] != own]
         return sorted(rows, key=lambda r: r["file_date"], reverse=True)
     out = []
-    for entry in sec_edgar._ownership_feed_entries(cik):
+    for entry in sec_13dg._ownership_feed_entries(cik):
         if str(entry.get("file_date") or "")[:10] <= day:
             break
         out.append(entry)
@@ -1216,7 +1216,7 @@ def _statements_since(cik: str, day: str, submissions: dict | None) -> list[dict
 def write_statements_since(owned_id: str, name: str, cik: str, day: str, source_id: str,
                            submissions: dict | None = None) -> dict:
     """Read and write the Schedule 13D/G statements filed on the issuer after
-    `day`, as its own scrape would (`sec_edgar.fetch_ownership_filings`,
+    `day`, as its own scrape would (`sec_13dg.fetch_ownership_filings`,
     `runner._write_ownership_filings`) — for a company nobody scraped, whose
     statements the graph does not hold (findings item 116, the user's choice of
     2026-11-14: who left since the table is not written from it, and who
@@ -1227,10 +1227,10 @@ def write_statements_since(owned_id: str, name: str, cik: str, day: str, source_
     statement filed since. Returns {"written", "exited"} — the holders
     written, and the reporting persons of the statements that report no
     position."""
-    from app.scraper import sec_edgar
+    from app.scraper import sec_13dg
     from app.scraper.runner import _write_ownership_filings
     exits: list[str] = []
-    filings = sec_edgar.fetch_ownership_filings(name, cik, entries=_statements_since(cik, day, submissions),
+    filings = sec_13dg.fetch_ownership_filings(name, cik, entries=_statements_since(cik, day, submissions),
                                                 exits=exits)
     _write_ownership_filings(owned_id, name, filings, source_id, [])
     return {"written": len(filings), "exited": list(dict.fromkeys(exits))}

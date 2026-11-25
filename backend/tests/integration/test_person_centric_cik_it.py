@@ -34,7 +34,7 @@ def graph(it_db):
 
 
 def _scrape(holding):
-    from app.scraper import runner, sec_edgar
+    from app.scraper import runner, sec_edgar, sec_filer, sec_insiders
     asked = []
 
     def fake_holding(name, cik, shares_out, person_cik=None):
@@ -43,11 +43,11 @@ def _scrape(holding):
     payload = {"name": "Tesla, Inc.", "cik": "0001318605", "ownership_filings": [], "executives": [],
                "holdings": [], "former_names": [], "lei": None}
     with patch.object(sec_edgar, "scrape_company", return_value=payload), \
-         patch.object(sec_edgar, "fetch_filer_country", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_website", return_value=None), \
-         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
-         patch.object(sec_edgar, "fetch_insider_holding", side_effect=fake_holding), \
+         patch.object(sec_filer, "fetch_filer_country", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_website", return_value=None), \
+         patch.object(sec_insiders, "fetch_departures", return_value=[]), \
+         patch.object(sec_insiders, "fetch_insider_holding", side_effect=fake_holding), \
          patch.object(runner, "_record_sec_industry", return_value=None), \
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
@@ -61,7 +61,7 @@ def test_the_pass_alone_writes_the_holding_of_a_seat_added_after_the_scrape(grap
     arrive after the SEC part ran; run-all asks the seats once more at the end
     (`run_sec_seat_holders`) — Denholm's open seats are looked up, Eberhard's
     ended one is not, the holding and the CIK land as on the SEC's own run."""
-    from app.scraper import runner, sec_edgar
+    from app.scraper import runner, sec_insiders, sec_shares
     asked = []
 
     def fake_holding(name, cik, shares_out, person_cik=None):
@@ -70,9 +70,9 @@ def test_the_pass_alone_writes_the_holding_of_a_seat_added_after_the_scrape(grap
     assert runner.seat_holders_without_holdings("tsla") == frozenset({"wd:Q58345040"})
     sec = {"status": "ok", "cik": "0001318605", "entity_id": "tsla", "company": "Tesla, Inc.", "seats_asked": []}
     assert runner.rerun_for_new_seats(sec) is True                         # a seat the SEC run never looked up
-    with patch.object(sec_edgar, "fetch_shares_outstanding_detail", return_value=None), \
-         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
-         patch.object(sec_edgar, "fetch_insider_holding", side_effect=fake_holding), \
+    with patch.object(sec_shares, "fetch_shares_outstanding_detail", return_value=None), \
+         patch.object(sec_insiders, "fetch_departures", return_value=[]), \
+         patch.object(sec_insiders, "fetch_insider_holding", side_effect=fake_holding), \
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
@@ -175,15 +175,15 @@ def test_the_rerun_finds_a_filer_re_keyed_after_the_sec_run(it_db):
 
 def _ask_alone(found=None):
     """`run_sec_seat_holders` with EDGAR answering `found[name]` (nothing by default) → the names asked."""
-    from app.scraper import runner, sec_edgar
+    from app.scraper import runner, sec_insiders, sec_shares
     asked = []
 
     def fake_holding(name, cik, shares_out, person_cik=None):
         asked.append(name)
         return (found or {}).get(name)
-    with patch.object(sec_edgar, "fetch_shares_outstanding_detail", return_value=None), \
-         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
-         patch.object(sec_edgar, "fetch_insider_holding", side_effect=fake_holding), \
+    with patch.object(sec_shares, "fetch_shares_outstanding_detail", return_value=None), \
+         patch.object(sec_insiders, "fetch_departures", return_value=[]), \
+         patch.object(sec_insiders, "fetch_insider_holding", side_effect=fake_holding), \
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):

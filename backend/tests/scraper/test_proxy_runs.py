@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.config import settings
-from app.scraper import runner, sec_edgar
+from app.scraper import runner, sec_client
 
 ROWS: list[dict] = []
 FETCHED: list = []
@@ -39,7 +39,7 @@ def _read(result, lose=0):
     def fetch(company, cik=None):
         FETCHED.append(cik)
         for _ in range(lose):        # a request the reader lost (#528 counts it)
-            sec_edgar._request_lost("https://www.sec.gov/x", None, httpx.ReadTimeout("x"), True)
+            sec_client._request_lost("https://www.sec.gov/x", None, httpx.ReadTimeout("x"), True)
         return result
     with patch("app.scraper.proxy_statement.fetch_proxy_ownership", side_effect=fetch):
         return runner.run_proxy_statement("Alphabet Inc.")

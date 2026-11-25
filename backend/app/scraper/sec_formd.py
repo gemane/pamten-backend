@@ -30,7 +30,7 @@ import re
 import httpx
 import xml.etree.ElementTree as ET
 
-from app.scraper.sec_edgar import _filer_record, _get, _get_text, _iso_date
+from app.scraper.sec_client import _filer_record, _get, _get_text, _iso_date
 
 log = logging.getLogger(__name__)
 

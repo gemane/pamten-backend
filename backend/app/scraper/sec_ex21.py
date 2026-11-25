@@ -34,7 +34,7 @@ from html.parser import HTMLParser
 from app import former_names
 from app.scraper.edge_schema import READ_LAYOUT, READ_PROSE, READ_TABLE
 from app.scraper.mapper import normalize_entity_name, strip_edgar_tag
-from app.scraper.sec_edgar import SUBMISSIONS_URL, _filer_record, _get, _get_text, _iso_date
+from app.scraper.sec_client import SUBMISSIONS_URL, _filer_record, _get, _get_text, _iso_date
 
 log = logging.getLogger(__name__)
 

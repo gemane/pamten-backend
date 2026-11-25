@@ -259,8 +259,8 @@ def write_from_edgar(cik: str, candidates: list[str] | None = None, lei: str | N
     from app.scraper.graph_writer import _upsert_entity_by_name
     from app.scraper.runner import (SEC_EDGAR_CREDIBILITY, SEC_EDGAR_SOURCE_NAME,
                                     SEC_EDGAR_SOURCE_URL, _ensure_source)
-    from app.scraper.sec_edgar import (_submissions, former_name_entries, sec_country,
-                                       sec_headquarters, sec_website)
+    from app.scraper.sec_client import _submissions
+    from app.scraper.sec_filer import former_name_entries, sec_country, sec_headquarters, sec_website
     try:
         sub = _submissions(cik)
     except httpx.HTTPStatusError as exc:
@@ -501,7 +501,7 @@ def moved_on(node: dict, item_names: list[str], on: str | None = None) -> str | 
     the same CIK 0000810332) and Grupo Televisa's (S A → S.A.B.) once the
     registers ran before the knowledge bases (2026-11-06 rebuild, findings
     item 66). Asked of EDGAR by each ended name the item bears
-    (`sec_edgar.search_company`), the registrant found counts only when its
+    (`sec_lookup.search_company`), the registrant found counts only when its
     name IS that name (`mapper.name_key`; EDGAR's similarity pass would hand
     'Franklin Resources' a Canadian subsidiary) and its CIK is not the
     node's. A node without a CIK, or EDGAR switched off, keeps `stale`'s
@@ -513,7 +513,7 @@ def moved_on(node: dict, item_names: list[str], on: str | None = None) -> str | 
         return why
     from app import former_names
     from app.scraper.mapper import name_key, normalize_cik, normalize_entity_name
-    from app.scraper.sec_edgar import search_company
+    from app.scraper.sec_lookup import search_company
     gone = former_names.ended_keys(former_names.of_node(node), node.get("name"), on)
     ended = [n for n in item_names if n and normalize_entity_name(n) in gone]
     for item_name in dict.fromkeys(ended):

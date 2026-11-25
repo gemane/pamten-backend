@@ -874,7 +874,7 @@ keys of 8,678 claims, 119 assertions stored twice).
 
 Every company-name key drops straight, curly and modifier-letter apostrophes first
 (`mapper.fold_apostrophes`, called by `normalize_entity_name`, `graph_writer._name_key`,
-`sec_edgar._ticker_normalize` and `sec_edgar._significant_tokens`). EDGAR writes `DOMINOS
+`sec_lookup._ticker_normalize` and `sec_13dg_text._significant_tokens`). EDGAR writes `DOMINOS
 PIZZA INC`, GLEIF `Domino's Pizza, Inc.`, others `Domino’s`; until 2026-10-30 these were
 three keys — `_name_key` even split the straight apostrophe into a stray `s` word — and
 EDGAR's Domino's never met GLEIF's, so the Exhibit 21 run lost its 19 subsidiaries. Known
@@ -933,12 +933,12 @@ neither EDGAR's `BLACKSTONE LP` nor anything else, and no key knew GmbH, KG or K
 AG & Co. KGaA" keyed `henkel & kgaa` (findings items 12 and 13, 2026-10-30). Now:
 
 - **A run of dotted single letters is one word** before a key splits on punctuation
-  (`mapper.join_dotted_letters`, in `_name_key` and `sec_edgar._significant_tokens`): "l.p."
+  (`mapper.join_dotted_letters`, in `_name_key` and `sec_13dg_text._significant_tokens`): "l.p."
   and "l.p" become `lp`, a legal form, so it goes. `normalize_entity_name` and
   `_ticker_normalize` already dropped the dots. A lone letter stays (`Toys R Us`). Known gap:
   `J.P. Morgan` keys `(jp, morgan)`, EDGAR's `JPMORGAN` one word.
 - **GmbH is a legal form** in every list (`mapper.LEGAL_FORM_WORDS`, `graph_writer._NAME_FORMS`;
-  `sec_edgar._LEGAL_FORM_WORDS` had it). **KG and KGaA only as the last word**
+  `sec_lookup._LEGAL_FORM_WORDS` had it). **KG and KGaA only as the last word**
   (`mapper.strip_partnership_form`, and `_name_key`'s trailing pop): "KG Mobility Corp" keeps
   its KG. Stripped first, so the "GmbH & Co." before them goes as a legal form too, and the
   dangling "&" with it: "Siemens Beteiligungen GmbH & Co. KG" keys `siemens beteiligungen`,
@@ -958,7 +958,7 @@ Until 2026-10-30 the three name keys dropped a legal-form word wherever it stood
 the prefix match ENERGY FUELS INC at similarity 0.67, and Energy Fuels' filings were scraped
 for it (findings item 5). "Innovex Co-Invest Fund" keyed `innovex -invest fund`, "Bimbo SA de
 CV" `bimbo de cv`, "News Corp UK & Ireland" `news uk & ireland`. Now `normalize_entity_name`,
-`sec_edgar._ticker_normalize` and `graph_writer._name_key` drop forms **only at the end**, as
+`sec_lookup._ticker_normalize` and `graph_writer._name_key` drop forms **only at the end**, as
 many as there are (`mapper.strip_trailing_forms`: "Co., Ltd.", "SA/NV", "GmbH & Co. KG"), a
 leading "the" only at the start, and never strip a name down to nothing ("Company",
 "The Limited"). A comma parts words ("Co.,Llc" is `co llc`, not `collc`), and the tickers key
@@ -1130,7 +1130,7 @@ evidence or the reason:
    `scripts/build_gleif_elf_abbr_bundle.py` from GLEIF's CC0 ELF list; evidence
    "name(form R85P)+place").
 2. **The same place of registration**: GLEIF's jurisdiction against where the filer is
-   incorporated (`sec_edgar.incorporation_place`): its newest tagged cover first — 10-K, 20-F, 40-F, 10-Q or 8-K, so a change of state after the annual report counts (Liberty Media, Delaware → Nevada on 2026-05-12, findings item 23)
+   incorporated (`sec_filer.incorporation_place`): its newest tagged cover first — 10-K, 20-F, 40-F, 10-Q or 8-K, so a change of state after the annual report counts (Liberty Media, Delaware → Nevada on 2026-05-12, findings item 23)
    (`dei:EntityIncorporationStateCountryCode`, `stated_incorporation`), EDGAR's header field
    `stateOfIncorporation` only when that report states none. Point 3's "today's address" is
    the report's office too (`sec_headquarters`), the record's business address only without one. The header field is the filer's

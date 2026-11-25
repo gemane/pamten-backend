@@ -42,9 +42,9 @@ def _company(it_db, cusip=None):
 
 
 def _run(it_db, holders=None, outstanding=13_100_000_000, force=False):
-    with patch("app.scraper.sec_edgar.fetch_13f_holders",
+    with patch("app.scraper.sec_13f.fetch_13f_holders",
                return_value=holders if holders is not None else HOLDERS) as fetched, \
-         patch("app.scraper.sec_edgar.fetch_shares_outstanding",
+         patch("app.scraper.sec_shares.fetch_shares_outstanding",
                return_value=outstanding) as outs, \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
@@ -118,9 +118,9 @@ def test_first_run_does_a_cusip_second_pass_and_merges_new_filers(it_db):
          "period": "2026-06-30",
          "source_url": "https://www.sec.gov/Archives/edgar/data/1045810/z-index.htm"},
     ]}
-    with patch("app.scraper.sec_edgar.fetch_13f_holders",
+    with patch("app.scraper.sec_13f.fetch_13f_holders",
                side_effect=[HOLDERS, second]) as fetched, \
-         patch("app.scraper.sec_edgar.fetch_shares_outstanding",
+         patch("app.scraper.sec_shares.fetch_shares_outstanding",
                return_value=13_100_000_000), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
@@ -145,9 +145,9 @@ def test_a_second_cusip_joins_the_union_and_future_searches(it_db):
     # the same-run second pass must search with BOTH.
     _company(it_db, cusip="69608A108")   # first ingest had learned the other one
     both = dict(HOLDERS, cusips_seen=["69608A108", "84615Q103"])
-    with patch("app.scraper.sec_edgar.fetch_13f_holders",
+    with patch("app.scraper.sec_13f.fetch_13f_holders",
                side_effect=[both, HOLDERS]) as fetched, \
-         patch("app.scraper.sec_edgar.fetch_shares_outstanding",
+         patch("app.scraper.sec_shares.fetch_shares_outstanding",
                return_value=13_100_000_000), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
@@ -333,9 +333,9 @@ def test_an_explicit_window_wins_over_the_refresh_shrink(it_db):
     # missing NVIDIA's August filing on a next-day re-run.
     _company(it_db, cusip="84615Q103")
     _run(it_db)                                            # stamps last-run = now
-    with patch("app.scraper.sec_edgar.fetch_13f_holders",
+    with patch("app.scraper.sec_13f.fetch_13f_holders",
                return_value=HOLDERS) as fetched, \
-         patch("app.scraper.sec_edgar.fetch_shares_outstanding",
+         patch("app.scraper.sec_shares.fetch_shares_outstanding",
                return_value=13_100_000_000), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
@@ -369,7 +369,7 @@ def test_a_graph_known_filer_outside_the_relevance_sweep_lands(it_db):
     giga = _fts_hit(GIGA_ACC, "1713833", "Gigafund Management Company, LLC", "2026-08-12")
     g, t, searches = _serve_by_cik(small, [giga], {**docs, **_giga_docs()})
     with g, t, \
-         patch("app.scraper.sec_edgar.fetch_shares_outstanding", return_value=13_100_000_000), \
+         patch("app.scraper.sec_shares.fetch_shares_outstanding", return_value=13_100_000_000), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
         res = runner.run_sec_13f("SpaceX", limit=2)

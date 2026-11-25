@@ -23,10 +23,10 @@ def _offline():
     with patch.object(settings, "SCRAPER_ENABLED", True), \
          patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
          patch("app.scraper.runner.get_source_enabled", return_value=True), \
-         patch("app.scraper.sec_edgar.fetch_filer_headquarters", return_value=None), \
-         patch("app.scraper.sec_edgar.fetch_filer_website", return_value=None), \
-         patch("app.scraper.sec_edgar.fetch_filer_sic", return_value=None), \
-         patch("app.scraper.sec_edgar.fetch_filer_country", return_value="CH"):
+         patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
+         patch("app.scraper.sec_filer.fetch_filer_website", return_value=None), \
+         patch("app.scraper.sec_filer.fetch_filer_sic", return_value=None), \
+         patch("app.scraper.sec_filer.fetch_filer_country", return_value="CH"):
         yield
 
 

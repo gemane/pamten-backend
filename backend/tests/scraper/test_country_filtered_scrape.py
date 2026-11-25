@@ -137,7 +137,7 @@ class Reached(Exception):
 def _sec(filer_country):
     """The two SEC calls the country check sits between."""
     return (patch("app.scraper.sec_edgar.scrape_company", return_value=dict(FILER)),
-            patch("app.scraper.sec_edgar.fetch_filer_country", return_value=filer_country))
+            patch("app.scraper.sec_filer.fetch_filer_country", return_value=filer_country))
 
 
 def _proceeded_past_the_check(filer_country, requested):

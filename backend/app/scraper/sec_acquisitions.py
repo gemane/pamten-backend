@@ -36,8 +36,7 @@ import xml.etree.ElementTree as ET
 
 import httpx
 
-from app.scraper.sec_edgar import (ARCHIVES_URL, _cik10, _cik_int, _filer_record,
-                                   _get, _get_text, _iso_date)
+from app.scraper.sec_client import ARCHIVES_URL, _cik10, _cik_int, _filer_record, _get, _get_text, _iso_date
 
 log = logging.getLogger(__name__)
 

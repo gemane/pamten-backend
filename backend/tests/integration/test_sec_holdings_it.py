@@ -32,10 +32,10 @@ def _run(it_db, holdings=None, cik="0002100119", name="VANGUARD CAPITAL MANAGEME
     names = {cik: name}
     if succeeds:
         names[succeeds] = succeeds_name
-    with patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=lambda c: names.get(c)), \
-         patch("app.scraper.sec_edgar.fetch_filer_holdings",
+    with patch("app.scraper.sec_filer.fetch_filer_name", side_effect=lambda c: names.get(c)), \
+         patch("app.scraper.sec_holdings.fetch_filer_holdings",
                return_value=HOLDINGS if holdings is None else holdings), \
-         patch("app.scraper.sec_edgar.fetch_affiliated_managers", return_value=[]), \
+         patch("app.scraper.sec_13f.fetch_affiliated_managers", return_value=[]), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
         return runner.run_sec_holdings(cik, succeeds_cik=succeeds)
@@ -122,7 +122,7 @@ def test_no_succession_edge_without_the_flag(it_db):
 
 
 def test_an_unknown_filer_writes_nothing(it_db):
-    with patch("app.scraper.sec_edgar.fetch_filer_name", return_value=None), \
+    with patch("app.scraper.sec_filer.fetch_filer_name", return_value=None), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
         result = runner.run_sec_holdings("0009999999")
@@ -145,9 +145,9 @@ AFFILIATES = [
 
 
 def _run_with_affiliates(affiliates=None, holdings=None):
-    with patch("app.scraper.sec_edgar.fetch_filer_name", return_value="VANGUARD GROUP INC"), \
-         patch("app.scraper.sec_edgar.fetch_filer_holdings", return_value=holdings or []), \
-         patch("app.scraper.sec_edgar.fetch_affiliated_managers",
+    with patch("app.scraper.sec_filer.fetch_filer_name", return_value="VANGUARD GROUP INC"), \
+         patch("app.scraper.sec_holdings.fetch_filer_holdings", return_value=holdings or []), \
+         patch("app.scraper.sec_13f.fetch_affiliated_managers",
                return_value=AFFILIATES if affiliates is None else affiliates), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
@@ -214,8 +214,8 @@ def _write_issuer_side(it_db, filings, holdings=None):
     data = {"name": "Apple Inc", "cik": "0000320193",
             "ownership_filings": filings, "executives": [], "holdings": holdings or []}
     with patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
-         patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"), \
-         patch("app.scraper.sec_edgar.fetch_filer_headquarters", return_value=None), \
+         patch("app.scraper.sec_filer.fetch_filer_country", return_value="US"), \
+         patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
         return runner.run_scrape_sec_edgar("Apple Inc")
@@ -254,7 +254,7 @@ def test_the_website_reaches_the_filer_and_its_subjects(it_db):
     # The submissions document is already fetched (and cached) for the name,
     # country and headquarters — the website rides along for free, on the
     # filer AND on every subject with a CIK. First writer wins thereafter.
-    with patch("app.scraper.sec_edgar.fetch_filer_website",
+    with patch("app.scraper.sec_filer.fetch_filer_website",
                side_effect=lambda c: f"https://cik-{c.lstrip('0')}.example.com/"):
         _run(it_db)
     sites = _websites(it_db)
@@ -263,7 +263,7 @@ def test_the_website_reaches_the_filer_and_its_subjects(it_db):
     assert sites["EOG Resources Inc"] == "https://cik-821189.example.com/"
 
     # A later run with a different answer must not clobber what is stored.
-    with patch("app.scraper.sec_edgar.fetch_filer_website",
+    with patch("app.scraper.sec_filer.fetch_filer_website",
                return_value="https://usurper.example.com/"):
         _run(it_db)
     assert _websites(it_db)["Hologic Inc"] == "https://cik-859737.example.com/"
@@ -327,7 +327,7 @@ def test_a_scraped_company_s_own_holdings_and_a_voting_group_carry_the_date(it_d
                    voting_shares=1033081237, event_date="2026-05-13",
                    group_members=[{"name": "Stichting Anheuser-Busch InBev", "cik": None,
                                    "source": "xml", "type_code": "OO"}], voting_pact=True)
-    with patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"):
+    with patch("app.scraper.sec_filer.fetch_filer_country", return_value="US"):
         _write_issuer_side(it_db, [bloc], holdings=[holding])
     assert _edge_with_stake(it_db, 6.25).get("event_date") == "2026-03-31"
     assert _edge_with_stake(it_db, 6.25).get("filing_type") == "13G/A"
@@ -389,7 +389,7 @@ def test_a_parent_filing_with_its_own_subsidiaries_is_a_joint_filing(it_db):
                      group_members=[{"name": "Warren E. Buffett", "cik": None, "source": "xml", "type_code": "IN"},
                                     {"name": "National Indemnity Company", "cik": None, "source": "xml",
                                      "type_code": "IC"}], voting_pact=False)
-    with patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"):
+    with patch("app.scraper.sec_filer.fetch_filer_country", return_value="US"):
         _write_issuer_side(it_db, [family])
     [g] = it_db.run_command("MATCH (g:VotingGroup)-[r:OWNS]->() RETURN g.kind AS kind, g.name AS name, "
                             "g.description AS d, r.stake_percent AS stake, r.voting_power_pct AS votes")

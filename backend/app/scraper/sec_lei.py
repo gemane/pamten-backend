@@ -63,7 +63,7 @@ _LABEL_WORDS = frozenset({"lei", "legal", "entity", "identifier", "code", "is", 
 
 
 def _form_words() -> frozenset:
-    from app.scraper.sec_edgar import _LEGAL_FORM_WORDS
+    from app.scraper.sec_lookup import _LEGAL_FORM_WORDS
     return frozenset(_LEGAL_FORM_WORDS) - {"group", "holding", "holdings"} | {"the"}
 
 
@@ -123,7 +123,7 @@ def document_states_lei(text: str, lei: str, names: list[str], sole_filer: bool 
 def _document_url(cik: str, hit_id: str) -> str | None:
     """`0000217410-23-000039:a991-directorpdmrshareho.htm` → the Archives
     URL of that document (immutable, so `sec_cache` keeps it)."""
-    from app.scraper.sec_edgar import _cik_int
+    from app.scraper.sec_client import _cik_int
     accession, _, filename = (hit_id or "").partition(":")
     if not accession or not filename:
         return None
@@ -142,7 +142,8 @@ def confirm_filer_lei(cik: str, lei: str, names: list[str],
     document that names the LEI only beside someone else, or EDGAR
     unreachable — never evidence that the two are different companies."""
     from app.scraper.mapper import normalize_cik
-    from app.scraper.sec_edgar import SEARCH_URL, _get, _get_text, _plain_text
+    from app.scraper.sec_13dg_text import _plain_text
+    from app.scraper.sec_client import SEARCH_URL, _get, _get_text
     cik = normalize_cik(cik)
     lei = (lei or "").strip().upper()
     if not cik or not lei_checksum_ok(lei):

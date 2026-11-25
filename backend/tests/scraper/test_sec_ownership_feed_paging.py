@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import httpx
 
-from app.scraper import sec_edgar
+from app.scraper import sec_13dg, sec_13dg_text, sec_client, sec_filer
 
 ISSUER = "0002057463"           # GCI Liberty, the subject of the two real Vanguard filings
 ZERO_XML = ("https://www.sec.gov/Archives/edgar/data/2057463/"
@@ -53,9 +53,9 @@ class _Feed:
     def __call__(self, url, params=None):
         if params is not None:                       # the browse call
             start = int(params.get("start", 0))
-            assert params["count"] == str(sec_edgar.OWNERSHIP_FEED_PAGE)
+            assert params["count"] == str(sec_13dg.OWNERSHIP_FEED_PAGE)
             self.starts.append(start)
-            index = start // sec_edgar.OWNERSHIP_FEED_PAGE
+            index = start // sec_13dg.OWNERSHIP_FEED_PAGE
             if index == self.fail_at:
                 raise httpx.ReadTimeout("stalled")
             return self.pages[index] if index < len(self.pages) else _page([])
@@ -66,9 +66,9 @@ class _Feed:
 
 
 def _run(feed: _Feed, **kw):
-    with patch.object(sec_edgar, "_get_text", side_effect=feed), \
-         patch.object(sec_edgar, "fetch_former_names", return_value=[]):
-        return sec_edgar.fetch_ownership_filings("GCI Liberty Inc", ISSUER, **kw)
+    with patch.object(sec_client, "_get_text", side_effect=feed), \
+         patch.object(sec_filer, "fetch_former_names", return_value=[]):
+        return sec_13dg.fetch_ownership_filings("GCI Liberty Inc", ISSUER, **kw)
 
 
 VANGUARD_DOCS = {ZERO_XML: _fixture("13ga_vanguard_exit.xml"),
@@ -108,7 +108,7 @@ def test_no_further_page_once_enough_holders_are_found():
 def test_paging_stops_at_the_page_cap():
     feed = _Feed([_page(_outbound(100, start=i * 100)) for i in range(30)])
     assert _run(feed) == []
-    assert len(feed.starts) == sec_edgar.OWNERSHIP_FEED_MAX_PAGES
+    assert len(feed.starts) == sec_13dg.OWNERSHIP_FEED_MAX_PAGES
 
 
 def test_the_filings_opened_stay_within_the_old_budget():
@@ -118,9 +118,9 @@ def test_the_filings_opened_stay_within_the_old_budget():
     pages = [_page([_entry(f"0000950170-26-{i * 100 + j:06d}", "2026-05-01")
                     for j in range(100)]) for i in range(5)]
     feed = _Feed(pages)
-    with patch.object(sec_edgar, "_fetch_filing_index", return_value=(None, None, None)) as index:
+    with patch.object(sec_13dg_text, "_fetch_filing_index", return_value=(None, None, None)) as index:
         _run(feed)
-    assert index.call_count == sec_edgar.OWNERSHIP_MAX_OPENED
+    assert index.call_count == sec_13dg.OWNERSHIP_MAX_OPENED
     assert len(feed.starts) <= 2
 
 
@@ -129,21 +129,21 @@ def test_a_failed_later_page_keeps_what_was_read_and_marks_the_list_partial():
         _page([_entry("0000102909-26-000024", "2026-01-07")] + _outbound(99)),
         _page([]),
     ], VANGUARD_DOCS, fail_at=1)
-    token = sec_edgar._failed_sections.set([])
+    token = sec_client._failed_sections.set([])
     try:
         res = _run(feed)
-        failed = sec_edgar._failed_sections.get()
+        failed = sec_client._failed_sections.get()
     finally:
-        sec_edgar._failed_sections.reset(token)
+        sec_client._failed_sections.reset(token)
     assert [r["stake_percent"] for r in res] == [10.84]
-    assert failed == [sec_edgar.SECTION_OWNERS]
+    assert failed == [sec_client.SECTION_OWNERS]
 
 
 def test_a_failed_first_page_loses_the_section():
     feed = _Feed([_page([])], fail_at=0)
-    token = sec_edgar._failed_sections.set([])
+    token = sec_client._failed_sections.set([])
     try:
         assert _run(feed) == []
-        assert sec_edgar._failed_sections.get() == [sec_edgar.SECTION_OWNERS]
+        assert sec_client._failed_sections.get() == [sec_client.SECTION_OWNERS]
     finally:
-        sec_edgar._failed_sections.reset(token)
+        sec_client._failed_sections.reset(token)

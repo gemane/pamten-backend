@@ -43,7 +43,7 @@ def test_the_sec_filer_lands_on_the_gleif_node_named_in_another_script(it_db):
     with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None), \
          patch("app.scraper.legal_identity.filer_facts", return_value=filer), \
          patch("app.scraper.legal_identity.gleif_parents", return_value=[]), \
-         patch("app.scraper.sec_edgar.fetch_filer_name", return_value="Tencent Holdings Ltd"):
+         patch("app.scraper.sec_filer.fetch_filer_name", return_value="Tencent Holdings Ltd"):
         got = _upsert("Tencent Holdings Ltd", "KY", cik=TENCENT_CIK, register_name=True)
     assert got == f"lei:{TENCENT_LEI}"
     [row] = run_sql("SELECT sec_cik, lei_source FROM Entity WHERE id = :id", {"id": got})

@@ -1012,7 +1012,7 @@ def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,
             _JOINED[(entity_id, cik)] = (why, None)
             return None
     if not edgar_name:
-        from app.scraper.sec_edgar import fetch_filer_name
+        from app.scraper.sec_filer import fetch_filer_name
         edgar_name = fetch_filer_name(cik)
     if not edgar_name:
         return None
@@ -1059,7 +1059,8 @@ def _filer_as_registered(cik: str, filed_name: str) -> tuple[str, list[str]] | N
     company that bears the name now, and won the lookups for it; written
     under EDGAR's name with the dated former names, the old spelling is a
     name that ended (`app.former_names.ended_keys`)."""
-    from app.scraper.sec_edgar import _submissions, former_name_entries
+    from app.scraper.sec_client import _submissions
+    from app.scraper.sec_filer import former_name_entries
     try:
         sub = _submissions(cik)
     except Exception as exc:  # noqa: BLE001 — EDGAR unreachable: the filing's name stands

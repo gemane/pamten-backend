@@ -100,7 +100,7 @@ class TestFetching:
 
     def test_an_unknown_cik_writes_nothing(self):
         err = httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock(status_code=404))
-        with patch("app.scraper.sec_edgar._submissions", side_effect=err), \
+        with patch("app.scraper.sec_client._submissions", side_effect=err), \
              patch("app.scraper.graph_writer._upsert_entity_by_name") as up:
             assert rp.write_from_edgar("0000000001") is None
         up.assert_not_called()
@@ -109,7 +109,7 @@ class TestFetching:
         sub = {"name": "BlackRock Finance, Inc.", "stateOfIncorporation": "DE",
                "addresses": {"business": {"street1": "50 Hudson Yards", "city": "New York",
                                           "stateOrCountry": "NY", "zipCode": "10001"}}}
-        with patch("app.scraper.sec_edgar._submissions", return_value=sub), \
+        with patch("app.scraper.sec_client._submissions", return_value=sub), \
              patch("app.scraper.runner._ensure_source", return_value="sec-edgar"), \
              patch("app.scraper.graph_writer._upsert_entity_by_name", return_value="sec:0001364742") as up:
             assert rp.write_from_edgar("0001364742") == "sec:0001364742"
@@ -122,7 +122,7 @@ class TestFetching:
         sub = {"name": "BlackRock Finance, Inc.",
                "formerNames": [{"name": "BlackRock Inc.", "from": "2006-10-05T00:00:00.000Z",
                                 "to": "2024-09-26T00:00:00.000Z"}]}
-        with patch("app.scraper.sec_edgar._submissions", return_value=sub), \
+        with patch("app.scraper.sec_client._submissions", return_value=sub), \
              patch("app.scraper.runner._ensure_source", return_value="sec-edgar"), \
              patch("app.scraper.graph_writer._upsert_entity_by_name", return_value="sec:0001364742") as up:
             rp.write_from_edgar("0001364742")
@@ -253,7 +253,7 @@ class TestMovedOn:
 
     def test_a_rename_of_the_same_registrant_is_no_move(self):
         with patch.object(rp, "_sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company",
+             patch("app.scraper.sec_lookup.search_company",
                    return_value={"cik": "0000038777", "name": "FRANKLIN TEMPLETON INC"}) as search:
             assert rp.moved_on(self.FRANKLIN, self.NAMES) is None
         search.assert_called_once_with("Franklin Resources")        # only the ended name is asked
@@ -261,12 +261,12 @@ class TestMovedOn:
     def test_a_name_nobody_bears_is_no_move(self):
         # Wellington Management Company: EDGAR finds no registrant of that name
         with patch.object(rp, "_sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company", return_value=None):
+             patch("app.scraper.sec_lookup.search_company", return_value=None):
             assert rp.moved_on(self.FRANKLIN, self.NAMES) is None
 
     def test_a_name_another_registrant_bears_is_a_move(self):
         with patch.object(rp, "_sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company",
+             patch("app.scraper.sec_lookup.search_company",
                    return_value={"cik": "2012383", "name": "BlackRock, Inc."}):
             why = rp.moved_on(TestStale.OLD_FILER, ["BlackRock", "BLK"])
         assert why == ("the item's name (blackrock) is a former name of BlackRock Finance, Inc.; "
@@ -278,21 +278,21 @@ class TestMovedOn:
         mesa = {"name": "REPUBLIC AIRWAYS HOLDINGS INC.", "sec_cik": "0000810332",
                 "former_names": ["MESA AIR GROUP INC|2025-11-24", "MESA AIRLINES INC|1995-02-15"]}
         with patch.object(rp, "_sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company",
+             patch("app.scraper.sec_lookup.search_company",
                    return_value={"cik": "0000810332", "name": "MESA AIR GROUP INC"}):
             assert rp.moved_on(mesa, ["Mesa Air Group"]) is None
 
     def test_a_registrant_of_a_similar_name_is_not_that_name(self):
         # EDGAR's similarity pass hands 'Franklin Resources' a Canadian subsidiary
         with patch.object(rp, "_sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company",
+             patch("app.scraper.sec_lookup.search_company",
                    return_value={"cik": "0001132702", "name": "FRANKLIN TEMPLETON INVESTMENTS CORP"}):
             assert rp.moved_on(self.FRANKLIN, self.NAMES) is None
 
     def test_without_a_cik_or_edgar_the_stale_verdict_stands(self):
         lei_only = {"name": "GRUPO TELEVISA, S.A.B.", "lei_id": "549300O4AF0C816ILN62",
                     "former_names": ["GRUPO TELEVISA S A|2007-06-22"]}
-        with patch("app.scraper.sec_edgar.search_company") as search:
+        with patch("app.scraper.sec_lookup.search_company") as search:
             assert (rp.moved_on(lei_only, ["Grupo Televisa"]) or "").startswith("the item's name (grupo televisa)")
             with patch.object(rp, "_sec_enabled", return_value=False):
                 assert rp.moved_on(self.FRANKLIN, self.NAMES) == rp.stale(self.FRANKLIN, self.NAMES)
@@ -300,12 +300,12 @@ class TestMovedOn:
 
     def test_a_lost_request_keeps_the_refusal(self):
         with patch.object(rp, "_sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company", side_effect=RuntimeError("EFTS 500")):
+             patch("app.scraper.sec_lookup.search_company", side_effect=RuntimeError("EFTS 500")):
             assert rp.moved_on(self.FRANKLIN, self.NAMES) == rp.stale(self.FRANKLIN, self.NAMES)
 
     def test_an_item_that_is_not_stale_asks_nothing(self):
         with patch.object(rp, "_sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company") as search:
+             patch("app.scraper.sec_lookup.search_company") as search:
             assert rp.moved_on(self.FRANKLIN, ["Franklin Templeton"]) is None
         search.assert_not_called()
 

@@ -27,7 +27,7 @@ APPLE_DATA = {
 def _flags():
     with patch.object(settings, "SCRAPER_ENABLED", True), \
          patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
-         patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=(None, None)):   # no network
+         patch("app.scraper.sec_filer.fetch_filer_identity", return_value=(None, None)):   # no network
         yield
 
 
@@ -133,7 +133,7 @@ def test_the_filers_own_row_is_not_its_subsidiary(it_db):
         "form": "10-K", "filing_date": "2026-02-25",
         "url": "https://www.sec.gov/Archives/edgar/data/71691/000007169126000010/nyt-20251228xex21.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data) as fetch, \
-         patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=("NEW YORK TIMES CO", "US-NY")):
+         patch("app.scraper.sec_filer.fetch_filer_identity", return_value=("NEW YORK TIMES CO", "US-NY")):
         result = runner.run_sec_ex21("New York Times Co")
     assert result["status"] == "ok"
     # every name the filer goes by ITSELF reaches the parser — not its aliases
@@ -168,7 +168,7 @@ def test_a_wikidata_alias_naming_another_company_does_not_drop_its_row(it_db):
         "form": "10-K", "filing_date": "2026-02-13",
         "url": "https://www.sec.gov/Archives/edgar/data/1113169/000111316926000013/trow-20251231xex21.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data) as fetch, \
-         patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=("PRICE T ROWE GROUP INC", "US-MD")):
+         patch("app.scraper.sec_filer.fetch_filer_identity", return_value=("PRICE T ROWE GROUP INC", "US-MD")):
         result = runner.run_sec_ex21("T. Rowe Price Group")
     assert result["status"] == "ok"
     assert fetch.call_args.kwargs["registrant"] == ["T. Rowe Price Group, Inc.", "PRICE T ROWE GROUP INC"]
@@ -889,7 +889,7 @@ def test_a_row_in_a_state_takes_the_namesake_registered_there_not_the_filer(it_d
             "form": "10-K", "filing_date": "2026-02-23",
             "url": "https://www.sec.gov/Archives/edgar/data/81362/000162828026010694/kwr-20251231xex21.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data), \
-         patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=("QUAKER CHEMICAL CORP", "US-PA")):
+         patch("app.scraper.sec_filer.fetch_filer_identity", return_value=("QUAKER CHEMICAL CORP", "US-PA")):
         assert runner.run_sec_ex21("Quaker Chemical")["total"] == 2
     rows = it_db.run_command(
         "MATCH (:Entity {id: 'quaker'})-[:OWNS]->(b:Entity) RETURN b.id AS id, b.jurisdiction_code AS j")
