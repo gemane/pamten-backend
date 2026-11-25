@@ -205,3 +205,25 @@ class TestTheRunLogNotesThem:
             "sec_edgar": {"status": "partial", "failed_sections": ["holdings"], "lost_requests": 2}}})
         assert run == {"status": "partial", "note": "lost to the network: sec_edgar: holdings; "
                                                    "sec_edgar: 2 request(s) lost to the network"}
+
+
+class TestANestedCollector:
+    """Findings item 155: a step asks whether ONE lookup lost a request — a
+    table holder's name search — inside a scrape that counts them all."""
+
+    def test_it_sees_its_own_losses_and_hands_them_on(self):
+        with sec_client.collect_lost_requests() as scrape:
+            sec_client._request_lost("https://www.sec.gov/a", None, httpx.ReadTimeout("stalled"), True)
+            with sec_client.collect_lost_requests() as lookup:
+                sec_client._request_lost("https://www.sec.gov/b", None, httpx.ReadTimeout("stalled"), True)
+            assert lookup == ["https://www.sec.gov/b"]
+            with sec_client.collect_lost_requests() as quiet:
+                pass
+            assert quiet == []
+        assert scrape == ["https://www.sec.gov/a", "https://www.sec.gov/b"]
+
+    def test_alone_it_hands_nothing_on_and_closes(self):
+        with sec_client.collect_lost_requests() as lookup:
+            sec_client._request_lost("https://www.sec.gov/b", None, httpx.ReadTimeout("stalled"), True)
+        assert lookup == ["https://www.sec.gov/b"] and sec_client._lost_requests.get() is None
+

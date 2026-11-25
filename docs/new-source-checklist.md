@@ -1782,6 +1782,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       Before writing such a rule, list the sections it depends on and skip it when
       one of them is in `failed_sections`; the retry or the whole-graph pass applies
       it then.
+- [ ] **"Not found" and "not asked" are two answers — a lookup must not fold them into
+      one.** A helper that returns `None` both when the source knows no such record
+      and when the request was lost makes the caller write "unknown" for something
+      nobody looked up. The ownership-table step counted a holder whose name search
+      timed out with the names EDGAR has no registrant for: two real holders gone
+      from a rebuild, no line anywhere (findings item 155, 2026-11-24). Wrap the
+      lookup in `sec_client.collect_lost_requests()` — nested, it reports the losses
+      of that one lookup and still hands them to the scrape's count — and give the
+      loss its own counter, a second try at the end of the pass, and a line for what
+      is still lost.
 - [ ] **A step after a load goes into the one list, `app/finishing.py`.** What the
       finished graph needs (merge across sources, close what a dissolution ended, mark
       shortcuts, search index, geocode, the passes after a batch of scrapes) is a

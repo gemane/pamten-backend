@@ -30,6 +30,9 @@ REQUEST_DELAY    = 0.12   # stay comfortably under 10 req/s
 SECTION_OWNERS   = "13D/G owners"
 SECTION_INSIDERS = "insiders"
 SECTION_HOLDINGS = "holdings"
+#: the issuer's ownership table: a holder's name search lost, so the holder was
+#: not written — not "EDGAR knows no such registrant" (findings item 155)
+SECTION_TABLE    = "ownership table"
 READ_TIMEOUT     = 10.0   # seconds without a byte before the one retry (item 38)
 
 
@@ -123,13 +126,20 @@ def collect_lost_requests():
 
     The runner wraps a whole company scrape in it — the scrape itself and the
     lookups its writer makes afterwards (an insider's own Form 4) — and reports
-    the count as the run's `lost_requests`."""
+    the count as the run's `lost_requests`.
+
+    Nested, it hands what it collected on to the block around it: a step that
+    asks "did THIS lookup lose a request?" (a table holder's name search,
+    findings item 155) must not hide the loss from the scrape that counts."""
+    outer = _lost_requests.get()
     bucket: list[str] = []
     token = _lost_requests.set(bucket)
     try:
         yield bucket
     finally:
         _lost_requests.reset(token)
+        if outer is not None:
+            outer.extend(bucket)
 
 
 def _refusal(exc: BaseException) -> str | None:

@@ -2171,6 +2171,24 @@ owners (`runner_sec._owners_were_lost`); the class ends, which do not depend on
 them, are applied either way. The retry of a partial company applies the table,
 and so does the whole-graph pass, which reads the statements itself.
 
+**A holder nobody looked up is not a holder EDGAR does not know (findings item
+155).** A table holder with no node is looked up among EDGAR's registrants by
+its exact name; a name the bulk list does not answer goes to the live index.
+When that request is lost — Wu-Wallace Family Trust on Figma and SailingStone
+on Compass Minerals, two read timeouts in the rebuild of 2026-11-24 — the
+holder used to be counted `unresolved`, like a name EDGAR has no registrant
+for, and nothing said the table had a holder nobody had looked up.
+`write_table_holders` now counts it apart (`lost`: the lookup ran inside its own
+`collect_lost_requests`, which hands the loss on to the scrape's count), and the
+callers act on it:
+
+- the whole-graph pass (`close-absent-from-table`) reads such a table once more
+  when it is through — minutes later — and prints one line per company: how many
+  holders were not looked up, what the second reading wrote, and what is STILL
+  NOT LOOKED UP; the command's last line counts those;
+- the issuer's own scrape ends `partial` with the section `ownership table`, so
+  the retry of partial companies takes it up, as for any lost section.
+
 **Measured 2026-11-12** on the 64 scrape targets with a table (read-only
 guard): 204 rows of 5 % or more; 187 covered by a statement, 5 shared, 11
 unresolved (MUFG, GAMCO's two spellings, the Johnsons of Franklin under their

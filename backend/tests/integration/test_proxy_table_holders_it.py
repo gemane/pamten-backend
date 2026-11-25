@@ -62,7 +62,7 @@ def test_the_controlling_holder_is_written_once_from_the_table(it_db):
     assert (e["pct"], e["cls"], e["ft"], e["rf"]) == (100.0, "Class A", "10-K/A", "table")
     assert (str(e["since"])[:10], e["basis"], str(e["ev"])[:10]) == ("2026-02-20", "first_reported", "2026-02-20")
     assert e["url"] == FILING["url"]
-    assert out == {"written": 1, "covered": 0, "unresolved": 1, "shared": 1, "exited": 0, "fund": False}
+    assert out == {"written": 1, "covered": 0, "unresolved": 1, "lost": 0, "shared": 1, "exited": 0, "fund": False}
     assert it_db.run_command("MATCH (p:Person) RETURN count(p) AS n")[0]["n"] == 1
     claim = it_db.run_command(f"MATCH (c:Claim) WHERE c.to_id = '{ISSUER}' RETURN c.filing_type AS filing_type, "
                               "c.stake_percent AS stake_percent, c.read_from AS read_from")
@@ -358,7 +358,7 @@ def test_a_registered_funds_statements_are_not_read(it_db):
 
 # ── A scrape that lost its 13D/G owners (findings item 156) ──────────────────
 
-def _scrape(table, failed_sections):
+def _scrape(table, failed_sections, browse=None):
     """The issuer's own SEC scrape written to the graph, its table given and
     its 13D/G owners read (`[]`: none filed) or lost to the network."""
     from app.scraper import runner_sec
@@ -373,7 +373,7 @@ def _scrape(table, failed_sections):
          patch("app.scraper.sec_client._submissions", return_value=subs), \
          patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
          patch("app.scraper.sec_client._get_text", return_value="<html></html>"), \
-         patch("app.scraper.sec_lookup._browse_index", return_value=[]), \
+         patch("app.scraper.sec_lookup._browse_index", side_effect=browse or (lambda query, form_type: [])), \
          patch("app.scraper.proxy_statement.read_holder_rows",
                return_value=[{"name": r["name"], "percents": [r["stake_pct"]]} for r in table["rows"]]), \
          patch("app.scraper.proxy_statement.read_holder_table", return_value=table), \
@@ -405,4 +405,115 @@ def test_a_scrape_that_lost_another_section_applies_its_table(it_db):
     table = {"as_of": "2026-04-17", "rows": [_row("Harbor Lights Entertainment, Inc.", 100.0, "Class A")]}
     assert _scrape(table, ["insiders"])["status"] == "partial"
     assert set(_edges(it_db)) == {HARBOR}
+
+
+# ── A holder's name search lost to the network (findings item 155) ───────────
+
+CANADA = ("0001317151", "4280661 Canada Inc.")
+
+
+def _answers(table, lost_readings):
+    """EDGAR's name index for the readings of ``table``: lost to a read
+    timeout during the readings numbered in ``lost_readings``, the registrant
+    otherwise. Returns (the table reader, the name index)."""
+    import httpx
+    from app.scraper import sec_client
+    reading = {"n": 0}
+
+    def read_table(html):
+        reading["n"] += 1
+        return table
+
+    def browse(query, form_type):
+        if reading["n"] in lost_readings:
+            sec_client._request_lost("https://www.sec.gov/cgi-bin/browse-edgar", {"company": query},
+                                     httpx.ReadTimeout("stalled"), True)
+            return None
+        return [CANADA]
+    return read_table, browse
+
+
+def _pass_with_a_stall(table, lost_readings):
+    from app.scraper.sec_writer import close_absent_from_tables
+    read_table, browse = _answers(table, lost_readings)
+    subs = {"cik": "2041610", "filings": {"recent": {"form": ["10-K", "10-K/A"]}}}
+    with patch("app.scraper.sec_client._submissions", return_value=subs), \
+         patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
+         patch("app.scraper.sec_client._get_text", return_value="<html></html>"), \
+         patch("app.scraper.sec_lookup._browse_index", side_effect=browse), \
+         patch("app.scraper.proxy_statement.read_holder_rows",
+               return_value=[{"name": r["name"], "percents": [r["stake_pct"]]} for r in table["rows"]]), \
+         patch("app.scraper.proxy_statement.read_holder_table", side_effect=read_table), \
+         patch("app.scraper.sec_writer.statement_persons", return_value=[]):
+        return close_absent_from_tables()
+
+
+def _stalled_table(it_db):
+    """Skydance with one holding the pass reads its table for (Harbor Lights,
+    written from it) and a second holder EDGAR must be asked about."""
+    _seed(it_db)
+    table = {"as_of": "2026-02-20", "rows": [_row("Harbor Lights Entertainment, Inc.", 60.0, "Class A"),
+                                             _row("4280661 Canada Inc.", 9.6, "Class A")]}
+    with patch("app.scraper.sec_lookup._browse_index", return_value=[]), \
+         patch("app.scraper.sec_writer.statement_persons", return_value=[]):
+        from app.scraper.sec_writer import write_table_holders
+        write_table_holders(ISSUER, FILING, {"as_of": "2026-02-20", "rows": table["rows"][:1]}, SID,
+                            {"filings": {"recent": {"form": ["10-K", "10-K/A"]}}})
+    assert set(_edges(it_db)) == {HARBOR}
+    return table
+
+
+def test_a_lost_name_search_is_not_an_unknown_name(it_db):
+    # Wu-Wallace Family Trust on Figma, SailingStone on Compass Minerals (rebuild
+    # 2026-11-24): the search timed out, the holder was counted with the names
+    # EDGAR does not know, and nothing said a holder had not been looked up
+    from app.scraper import sec_client
+    from app.scraper.sec_writer import write_table_holders
+    _seed(it_db)
+    table = {"as_of": None, "rows": [_row("4280661 Canada Inc.", 9.6, "Class A"),
+                                     _row("Nobody Knows Holdings LLC", 8.0, "Class A")]}
+    _, lost_once = _answers(table, {0})
+
+    def browse(query, form_type):
+        return lost_once(query, form_type) if "4280661" in query else []
+    with patch("app.scraper.sec_lookup._browse_index", side_effect=browse), \
+         patch("app.scraper.sec_writer.statement_persons", return_value=[]), \
+         sec_client.collect_lost_requests() as scrape_lost:
+        out = write_table_holders(ISSUER, FILING, table, SID, {"filings": {"recent": {"form": ["10-K"]}}})
+    assert (out["lost"], out["unresolved"], out["written"]) == (1, 1, 0)
+    assert scrape_lost and all("browse-edgar" in url for url in scrape_lost)   # the scrape's own count keeps them
+
+
+def test_the_pass_reads_a_table_again_whose_holder_was_not_looked_up(it_db):
+    table = _stalled_table(it_db)
+    res = _pass_with_a_stall(table, lost_readings={1})
+    node = it_db.run_command("MATCH (e:Entity {sec_cik: '0001317151'}) RETURN e.id AS id")
+    assert len(node) == 1 and set(_edges(it_db)) == {HARBOR, node[0]["id"]}
+    assert (res["written"], res["lost"]) == (2, 0)                # Harbor Lights once, the Canadian holder once
+    assert res["lines"][-1] == ("Skydance Corp: 1 holder(s) of its 10-K/A of 2026-04-24 not looked up — the name "
+                                "search was lost to the network; read again: 1 written, none lost")
+
+
+def test_a_holder_still_not_looked_up_is_counted_and_said(it_db):
+    table = _stalled_table(it_db)
+    res = _pass_with_a_stall(table, lost_readings={1, 2})
+    assert set(_edges(it_db)) == {HARBOR}
+    assert (res["written"], res["lost"]) == (1, 1)
+    assert res["lines"][-1].endswith("read again: 0 written, 1 STILL NOT LOOKED UP")
+
+
+def test_a_table_read_without_a_loss_is_read_once(it_db):
+    table = _stalled_table(it_db)
+    read_table, _ = _answers(table, set())
+    res = _pass_with_a_stall(table, lost_readings=set())
+    assert (res["written"], res["lost"]) == (2, 0) and not any("not looked up" in line for line in res["lines"])
+
+
+def test_the_issuers_own_scrape_is_partial_when_its_table_lost_a_holder(it_db):
+    _seed(it_db)
+    table = {"as_of": "2026-04-17", "rows": [_row("4280661 Canada Inc.", 9.6, "Class A")]}
+    _, browse = _answers(table, {0})
+    out = _scrape(table, [], browse=browse)
+    assert out["status"] == "partial" and out["failed_sections"] == ["ownership table"]
+    assert _edges(it_db) == {}
 
