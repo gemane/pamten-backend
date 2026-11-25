@@ -896,6 +896,9 @@ def cmd_close_absent_from_table(args):
           f"13D/G statements filed since the tables; {res['exited']} table holders reported no position "
           f"since and were not written "
           f"({res['tables']} tables of {res['read']} companies read, {res['failed']} failed)")
+    if res.get("lost"):
+        print(f"  ! {res['lost']} table holder(s) not looked up — EDGAR did not answer the name search, twice; "
+              "they are not written (run the command again)")
 
 
 def _args_close_absent_from_table(subparsers):

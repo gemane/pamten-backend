@@ -826,7 +826,12 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
     For each, the 13D/G statements filed since its table are read and
     written first, and a holder that reported no position since is not written
     from the table (findings item 116, `write_statements_since`).
-    Returns {companies, tables, read, failed, closed, written, statements, exited, lines}."""
+    A table with a holder whose name search was lost to the network is read
+    once more when the pass is through (findings item 155): minutes later, when
+    a stall of EDGAR's is usually over. What is still lost then is counted
+    (`lost`) and said in a line — a holder nobody looked up is not a holder
+    EDGAR does not know.
+    Returns {companies, tables, read, failed, closed, written, statements, exited, lost, lines}."""
     from app.db.arcadedb import run_sql
     from app.scraper.graph_writer import _ensure_source
     from app.scraper.maintenance import restatement_family
@@ -839,7 +844,8 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
     if limit:
         issuers = issuers[:limit]
     out: dict = {"companies": len(issuers), "tables": 0, "read": 0, "failed": 0, "closed": 0, "written": 0,
-                 "statements": 0, "exited": 0, "lines": []}
+                 "statements": 0, "exited": 0, "lost": 0, "lines": []}
+    again: list[tuple] = []          # (issuer, its first result): a holder's name search was lost
     # the same holders stand at company after company: their records stay at
     # hand for the run (`filer_records_for_a_pass`, findings item 135)
     from app.scraper.sec_client import filer_records_for_a_pass
@@ -873,6 +879,25 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
                 out["closed"] += res["closed"]
                 out["lines"].append(f"{name}: {res['closed']} closed — not in its {res['filing']['form']} "
                                     f"of {res['filing']['date']} ({res['rows']} holders listed)")
+            if (res.get("written") or {}).get("lost"):
+                again.append(((eid, cik, name), res))
+        for (eid, cik, name), first in again:
+            lost = first["written"]["lost"]
+            try:
+                res = read_table_and_close(eid, cik, write=True, source_id=source_id, statements_for=name)
+            except Exception as exc:  # noqa: BLE001 — still not readable: the loss stands and is said
+                log.warning("SEC: ownership table of %s (CIK %s) not read again: %s", name, cik, exc)
+                res = first
+            still = (res.get("written") or {}).get("lost") or 0
+            # the holders the first reading wrote are written again by the second (one edge,
+            # re-read): only what it adds is new
+            added = max(0, ((res.get("written") or {}).get("written") or 0) - (first["written"].get("written") or 0))
+            out["written"] += added
+            out["lost"] += still
+            form, day = first["filing"]["form"], first["filing"]["date"]
+            out["lines"].append(
+                f"{name}: {lost} holder(s) of its {form} of {day} not looked up — the name search was lost to "
+                f"the network; read again: {added} written, " + (f"{still} STILL NOT LOOKED UP" if still else "none lost"))
     return out
 
 
@@ -1266,11 +1291,16 @@ def write_table_holders(owned_id: str, filing: dict, table: dict, source_id: str
     Ventures' 7.8 %, 111 % together. Matched by the whole name
     (`_same_holder`).
 
-    Returns {"written", "covered", "unresolved", "shared", "exited", "fund"}."""
+    A holder whose name search EDGAR did not answer is counted apart
+    (``lost``, findings item 155): "no registrant of that name" is an answer,
+    a read timeout is not, and the caller reads the table again.
+
+    Returns {"written", "covered", "unresolved", "lost", "shared", "exited", "fund"}."""
     from app.db.arcadedb import run_sql
+    from app.scraper import sec_client
     from app.scraper.edge_schema import READ_TABLE
     from app.scraper.mapper import derive_ownership_type
-    out = {"written": 0, "covered": 0, "unresolved": 0, "shared": 0, "exited": 0, "fund": False}
+    out = {"written": 0, "covered": 0, "unresolved": 0, "lost": 0, "shared": 0, "exited": 0, "fund": False}
     if is_registered_fund(submissions):
         out["fund"] = True
         return out
@@ -1300,7 +1330,17 @@ def write_table_holders(owned_id: str, filing: dict, table: dict, source_id: str
         if named_in_table(aliases, r["names"]):
             out["covered"] += 1
             continue
-        node = next((n for n in (_table_holder_node(x, source_id, r.get("group")) for x in r["names"]) if n), None)
+        with sec_client.collect_lost_requests() as lost:
+            node = next((n for n in (_table_holder_node(x, source_id, r.get("group")) for x in r["names"]) if n), None)
+        if node is None and lost:
+            # Wu-Wallace Family Trust on Figma, SailingStone on Compass Minerals
+            # (rebuild 2026-11-24): the name search timed out, the holder was
+            # counted "unresolved" like a name EDGAR does not know, and nothing
+            # said that one of the table's holders had not been looked up
+            out["lost"] += 1
+            log.warning("SEC: %r (%s %% of %s) in %s's table — not looked up, the name search was lost to the "
+                        "network; not written", r["name"], r["stake_pct"], owned_id, filing["form"])
+            continue
         if node is None:
             out["unresolved"] += 1
             log.info("SEC: %r (%s %% of %s) in %s's table — no node of exactly that name, not written",

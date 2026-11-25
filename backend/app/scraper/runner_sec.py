@@ -566,6 +566,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
     # longer names (findings item 99). Its own list only: the companies it
     # reports are the whole-graph passes' (`close-ended-classes`,
     # `close-absent-from-table`).
+    table_lost = 0
     if data.get("cik"):
         try:
             from app.scraper.sec_class_end import class_ends
@@ -590,6 +591,9 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                 table = read_table_and_close(target_id, data["cik"], subs, write=True, source_id=source_id)
                 if table.get("written"):
                     runner.log.info("SEC EDGAR: %r's ownership table: %s", data["name"], table["written"])
+                # a holder's name search lost to the network: the holder is not
+                # written, and the run says so instead of ending `ok` (item 155)
+                table_lost = (table.get("written") or {}).get("lost") or 0
         except Exception as exc:  # noqa: BLE001 — the scrape stands without it
             runner.log.warning("SEC EDGAR: class ends / ownership table of %r not read: %s", data["name"], exc)
 
@@ -735,6 +739,9 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
     # A section lost to the network (findings item 41) makes the run `partial`: what
     # did arrive is written, and the company is scraped again after the cooldown.
     failed = list(data.get("failed_sections") or [])
+    if table_lost:
+        from app.scraper.sec_client import SECTION_TABLE
+        failed.append(SECTION_TABLE)
     if failed:
         runner.log.error("SEC EDGAR runner: %r is partial, lost to the network: %s",
                   company_name, ", ".join(failed))

@@ -115,6 +115,10 @@ start time (Vienna) and the commit in the findings list's state line. Progress, 
 - Single requests lost to the network (findings item 45): `grep -c "request lost" <kit>/rebuild.log`,
   and the per-target `lost N` in the replay lines; a target whose count dropped next to a
   `lost N` is the network, not the code — say so in the verify.
+- Table holders nobody looked up (findings item 155): `grep "not looked up" <kit>/rebuild.log` — step 7's
+  table pass reads a table again whose holder's name search was lost, and says what the second reading
+  wrote; `STILL NOT LOOKED UP` (and the `!` line under the command's summary) means a real holder is
+  missing from this rebuild — name it in the verify.
 - Requests a source REFUSED are not the network (findings item 132): `grep -c "REFUSED by EDGAR" <kit>/rebuild.log`
   and the `refused` kind in step 8's source calls should both be 0. Any is the source no longer
   accepting something we send — EDGAR's `count=5` cost one rebuild 540 name searches — and makes
