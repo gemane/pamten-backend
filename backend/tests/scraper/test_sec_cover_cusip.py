@@ -19,7 +19,7 @@ from app.scraper import sec_13dg, sec_client, sec_filer
 from app.scraper.sec_13dg_text import _cover_cusip, _parse_cusip_from_text
 from app.scraper.sec_13dg_xml import _parse_13dg_xml
 from app.scraper.sec_holdings import _parse_holding_filing, _parse_holding_filing_text, fetch_filer_holdings
-from tests.scraper.test_sec_edgar import _serve
+from tests.scraper.sec_statement_fakes import _serve
 from tests.scraper.test_sec_holdings import XML, _doc_for, _subs
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -159,7 +159,7 @@ class TestTheIssuerSide:
 
     def test_an_xml_schedule_gives_the_issuer_its_cusip(self):
         # Vanguard's real 13G on Apple (0002100119-26-000139) lists 037833100
-        from tests.scraper.test_sec_edgar import TestStructuredScrapeEndToEnd as E
+        from tests.scraper.test_sec_13dg import TestStructuredScrapeEndToEnd as E
         pages = {E.XML_URL: (FIXTURES / "13g_vanguard.xml").read_text()}
         with patch.object(sec_client, "_get_text", side_effect=_serve(E.ATOM, pages)), \
              patch.object(sec_filer, "fetch_former_names", return_value=[]):
