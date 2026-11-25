@@ -34,7 +34,7 @@ def graph(it_db):
 
 
 def _scrape(filings, executives):
-    from app.scraper import runner, sec_edgar, sec_filer, sec_insiders
+    from app.scraper import runner, runner_sec, sec_edgar, sec_filer, sec_insiders
     payload = {"name": "NexPoint Real Estate Finance, Inc.", "cik": "0001620393",
                "ownership_filings": filings, "executives": executives, "holdings": [],
                "former_names": [], "lei": None}
@@ -44,11 +44,11 @@ def _scrape(filings, executives):
          patch.object(sec_filer, "fetch_filer_website", return_value=None), \
          patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch.object(sec_insiders, "fetch_insider_holding", return_value=None), \
-         patch.object(runner, "_record_sec_industry", return_value=None), \
+         patch.object(runner_sec, "_record_sec_industry", return_value=None), \
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        return runner.run_scrape_sec_edgar("NexPoint Real Estate Finance, Inc.")
+        return runner_sec.run_scrape_sec_edgar("NexPoint Real Estate Finance, Inc.")
 
 
 def _holders(graph, cik):

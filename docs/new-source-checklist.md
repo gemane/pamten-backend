@@ -834,14 +834,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       case, not a register that is off). A source that finds its match by a stored id declares
       `reads_stored_ids=True`. Both dispatchers (`run_scrape_all` and the on-demand
       `_run_instant_sources`) then repeat a run that found nothing, once, when the node
-      gained an id during the scrape (`runner.rerun_for_new_ids`; the run log says
+      gained an id during the scrape (`runner_sec.rerun_for_new_ids`; the run log says
       `new_ids`). Unchanged ids mean no second ask. The same for a reader of the graph's
       PEOPLE: the SEC's seat-holders pass looks up the Form 4s and departures of everyone
       with an open seat, and the knowledge base that writes the officers now runs after it
       — 22 persons kept their CIK and lost their item id, five lost their Form 4 holding,
       and Alphabet's run-all total fell 41 → 38 in the 2026-11-06 rebuild. Both dispatchers
       run that pass once more when the filer gained seat holders without a holding
-      (`runner.rerun_for_new_seats`; the run log says `new_seats`; findings item 67). An
+      (`runner_sec.rerun_for_new_seats`; the run log says `new_seats`; findings item 67). An
       "open seat" is not "a person to ask": a founder's role never ends, so a lookup keyed on
       open seats met the dead — harmless while their names found nobody, a stale stake the day
       a better name lookup resolved one (Steve Jobs' Form 4 of 2007, findings item 149). When
@@ -854,7 +854,7 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       forwards). The rerun read BofA's, NYT's, Wells Fargo's and Morgan Stanley's seats
       under the old `sec:` id, found no node and asked nothing — five persons kept no
       Form 4 holding in two rebuilds (2026-11-07b; findings item 67 b,
-      `runner.seat_rerun_target`).
+      `runner_sec.seat_rerun_target`).
 - [ ] **A name-only row meets a node by every name its register gives it — never by a
       label someone else gave it.** A register's other current names (GLEIF's transliterations,
       alternative-language legal names) are the entity's own, with the legal form kept; a
@@ -1761,6 +1761,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       is (its data may be dropped). After the production start a heal ships with its
       change, runs once, and the next PR removes it. 33 one-off `manage.py` heals were
       removed on 2026-10-27.
+- [ ] **Before a module is split, count what its tests replace on it.** `runner.py`
+      (4,000 lines, split 2026-11-25) was referenced 685 times from other files, and
+      430 of those were not its functions but names it merely imports: `runner.db`
+      (104), `runner.get_source_enabled` (74), `runner.settings` (47), the write
+      layer. Code moved to a new module with imports of its own would have kept
+      passing its tests' *assertions* while running against whatever database the
+      environment names. So the moved pipelines reach those names through the runner
+      (`runner.db`), one patch still covers them all, and the test edits were
+      limited to the functions that moved. `sec_edgar.py`, split the same day, had
+      no such names — there a caller reaches a function through its home module.
 - [ ] **A step after a load goes into the one list, `app/finishing.py`.** What the
       finished graph needs (merge across sources, close what a dissolution ended, mark
       shortcuts, search index, geocode, the passes after a batch of scrapes) is a

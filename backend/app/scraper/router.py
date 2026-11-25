@@ -3,9 +3,9 @@ import threading
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from app.config import settings
-from app.scraper.runner import (
-    run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates,
-)  # noqa: F401 - importing runner also registers the built-in scrapers in the registry
+from app.scraper.runner import run_scrape, run_scrape_all  # importing runner also registers the built-in scrapers in the registry
+from app.scraper.runner_oc import run_scrape_open_corporates
+from app.scraper.runner_sec import run_scrape_sec_edgar
 from app.auth.dependencies import (
     require_admin, require_contributor, require_verified, get_current_user_optional,
 )
@@ -206,7 +206,7 @@ def sec_13f_run(
     if not settings.SCRAPER_SEC_EDGAR_ENABLED:
         raise HTTPException(status_code=403,
             detail="SEC EDGAR scraper is disabled. Set SCRAPER_SEC_EDGAR_ENABLED=true.")
-    from app.scraper.runner import run_sec_13f
+    from app.scraper.runner_sec_filings import run_sec_13f
     try:
         result = run_sec_13f(company, force=force)
     except PermissionError as e:
@@ -239,7 +239,7 @@ def sec_ex21_run(
     if not settings.SCRAPER_SEC_EDGAR_ENABLED:
         raise HTTPException(status_code=403,
             detail="SEC EDGAR scraper is disabled. Set SCRAPER_SEC_EDGAR_ENABLED=true.")
-    from app.scraper.runner import run_sec_ex21
+    from app.scraper.runner_sec_filings import run_sec_ex21
     try:
         result = run_sec_ex21(company, force=force)
     except PermissionError as e:
@@ -273,7 +273,7 @@ def sec_acquisitions_run(
     if not settings.SCRAPER_SEC_EDGAR_ENABLED:
         raise HTTPException(status_code=403,
             detail="SEC EDGAR scraper is disabled. Set SCRAPER_SEC_EDGAR_ENABLED=true.")
-    from app.scraper.runner import run_sec_acquisitions
+    from app.scraper.runner_sec_filings import run_sec_acquisitions
     try:
         result = run_sec_acquisitions(company, force=force, max_filings=max_filings)
     except PermissionError as e:
@@ -620,7 +620,7 @@ def proxy_statement_run(
     Read-only on the graph; writes its ScrapeRun row. 403 when the scraper or
     SEC EDGAR is switched off (findings item 42).
     """
-    from app.scraper.runner import run_proxy_statement
+    from app.scraper.runner_sec_filings import run_proxy_statement
     return _proxy_call("Proxy statement read", company, lambda: run_proxy_statement(company))
 
 
@@ -648,7 +648,7 @@ def proxy_statement_write(
 ):
     """Fetch the latest DEF 14A and write voting_power_pct onto OWNS edges.
     403 when the scraper or SEC EDGAR is switched off (findings item 42)."""
-    from app.scraper.runner import run_proxy_write
+    from app.scraper.runner_sec_filings import run_proxy_write
     return _proxy_call("Proxy statement write", company, lambda: run_proxy_write(company, entity_id))
 
 

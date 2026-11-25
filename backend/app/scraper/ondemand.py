@@ -156,8 +156,8 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
     from app.scraper.scraper_registry import registered
     from app.scraper.run_log import mark_partial, record_run
 
-    from app.scraper.runner import (rerun_for_new_ids, run_sec_seat_holders, seat_rerun_target,
-                                    stored_hard_ids)
+    from app.scraper.runner_sec import (rerun_for_new_ids, run_sec_seat_holders, seat_rerun_target,
+                                        stored_hard_ids)
 
     names_run: list[str] = []
     # What each source wrote, by name — the number the refresh summary reports.

@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch
 
 from app.config import settings
-from app.scraper import runner
+from app.scraper import runner_sec_filings
 
 pytestmark = pytest.mark.integration
 
@@ -40,7 +40,7 @@ def _apple(it_db):
 def test_writes_subsidiaries_with_provenance_and_reads_them_back(it_db):
     _apple(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=APPLE_DATA):
-        result = runner.run_sec_ex21("Apple")
+        result = runner_sec_filings.run_sec_ex21("Apple")
     assert result["status"] == "ok"
     assert result["total"] == 4
     assert result["unmapped_jurisdictions"] == 1
@@ -87,7 +87,7 @@ def test_resolves_an_existing_node_instead_of_duplicating(it_db):
         "search_text: 'Apple Operations International Limited', type: 'company', "
         "lei_id: 'APPLEOPS00000000001X'})")
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=APPLE_DATA):
-        runner.run_sec_ex21("Apple")
+        runner_sec_filings.run_sec_ex21("Apple")
     # count on `name`, not search_text: the FULL_TEXT index makes equality on
     # search_text behave as a token match ('Apple' matched three rows here)
     n = it_db.run_sql("SELECT count(*) AS n FROM Entity "
@@ -102,9 +102,9 @@ def test_resolves_an_existing_node_instead_of_duplicating(it_db):
 def test_rerun_is_gated_and_idempotent(it_db):
     _apple(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=APPLE_DATA):
-        first = runner.run_sec_ex21("Apple")
-        second = runner.run_sec_ex21("Apple")
-        forced = runner.run_sec_ex21("Apple", force=True)
+        first = runner_sec_filings.run_sec_ex21("Apple")
+        second = runner_sec_filings.run_sec_ex21("Apple")
+        forced = runner_sec_filings.run_sec_ex21("Apple", force=True)
     assert first["status"] == "ok"
     assert second["status"] == "fresh", "same filing → gated"
     assert forced["status"] == "ok"
@@ -134,7 +134,7 @@ def test_the_filers_own_row_is_not_its_subsidiary(it_db):
         "url": "https://www.sec.gov/Archives/edgar/data/71691/000007169126000010/nyt-20251228xex21.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data) as fetch, \
          patch("app.scraper.sec_filer.fetch_filer_identity", return_value=("NEW YORK TIMES CO", "US-NY")):
-        result = runner.run_sec_ex21("New York Times Co")
+        result = runner_sec_filings.run_sec_ex21("New York Times Co")
     assert result["status"] == "ok"
     # every name the filer goes by ITSELF reaches the parser — not its aliases
     assert fetch.call_args.kwargs["registrant"] == [
@@ -169,7 +169,7 @@ def test_a_wikidata_alias_naming_another_company_does_not_drop_its_row(it_db):
         "url": "https://www.sec.gov/Archives/edgar/data/1113169/000111316926000013/trow-20251231xex21.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data) as fetch, \
          patch("app.scraper.sec_filer.fetch_filer_identity", return_value=("PRICE T ROWE GROUP INC", "US-MD")):
-        result = runner.run_sec_ex21("T. Rowe Price Group")
+        result = runner_sec_filings.run_sec_ex21("T. Rowe Price Group")
     assert result["status"] == "ok"
     assert fetch.call_args.kwargs["registrant"] == ["T. Rowe Price Group, Inc.", "PRICE T ROWE GROUP INC"]
     rows = it_db.run_command("MATCH (:Entity {id:'sec:0001113169'})-[:OWNS]->(b:Entity) RETURN b.name AS name")
@@ -183,7 +183,7 @@ def test_no_cik_asks_for_the_sec_scrape_first(it_db):
     it_db.run_command(
         "CREATE (:Entity {id: 'nocik', name: 'Private GmbH', name_normalized: 'private', "
         "search_text: 'Private GmbH', type: 'company'})")
-    result = runner.run_sec_ex21("Private GmbH")
+    result = runner_sec_filings.run_sec_ex21("Private GmbH")
     assert result["status"] == "needs_sec_scrape"
     n = it_db.run_command("MATCH ()-[r:OWNS]->() RETURN count(r) AS n")
     assert dict(n[0])["n"] == 0, "nothing written before the record is judged"
@@ -219,7 +219,7 @@ def test_co_holders_get_their_own_edges_and_the_filer_its_own_share(it_db):
         "CREATE (:Entity {id: 'chubb', name: 'CHUBB LIMITED', name_normalized: 'chubb', "
         "search_text: 'CHUBB LIMITED', type: 'company', sec_cik: '0000896159'})")
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=CHUBB_DATA):
-        result = runner.run_sec_ex21("Chubb")
+        result = runner_sec_filings.run_sec_ex21("Chubb")
     assert result["status"] == "ok"
     assert result["total"] == 7 and result["co_owner_edges"] == 2
 
@@ -248,7 +248,7 @@ def test_co_holders_get_their_own_edges_and_the_filer_its_own_share(it_db):
     it_db.run_command("MATCH ()-[r:OWNS]->(:Entity {name: 'Chubb Seguros México S.A.'}) "
                       "SET r.ownership_type = 'controlling'")
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=CHUBB_DATA):
-        runner.run_sec_ex21("Chubb", force=True)
+        runner_sec_filings.run_sec_ex21("Chubb", force=True)
     assert read()[1][("AFIA Finance Corporation", "Chubb Seguros México S.A.")] == "minority"
 
 
@@ -283,7 +283,7 @@ def test_a_nested_parent_named_among_the_co_holders_gets_its_named_share(it_db):
         "CREATE (:Entity {id: 'chubb', name: 'CHUBB LIMITED', name_normalized: 'chubb', "
         "search_text: 'CHUBB LIMITED', type: 'company', sec_cik: '0000896159'})")
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=NESTED):
-        assert runner.run_sec_ex21("Chubb")["status"] == "ok"
+        assert runner_sec_filings.run_sec_ex21("Chubb")["status"] == "ok"
     rows = it_db.run_command("MATCH (a:Entity)-[r:OWNS]->(b:Entity) RETURN a.name AS owner, "
                              "b.name AS owned, r.stake_percent AS stake")
     edges = {(r["owner"], r["owned"]): r.get("stake") for r in rows}
@@ -337,7 +337,7 @@ def _owns(it_db):
 def test_a_drawn_tree_puts_each_subsidiary_under_its_parent_not_the_filer(it_db):
     _eversource(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=_tree_data()):
-        result = runner.run_sec_ex21("Eversource")
+        result = runner_sec_filings.run_sec_ex21("Eversource")
     assert result["status"] == "ok"
     assert (result["total"], result["nested"], result["unresolved_parents"], result["detached"]) == (5, 2, 1, 0)
     edges = _owns(it_db)
@@ -368,7 +368,7 @@ def test_a_re_read_that_finds_the_tree_withdraws_the_flat_filer_edges(it_db):
     flat = _tree_data(subsidiaries=[{k: v for k, v in s.items() if k not in ("parent", "parent_basis")}
                                     for s in _tree_data()["subsidiaries"]])
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=flat):
-        runner.run_sec_ex21("Eversource")
+        runner_sec_filings.run_sec_ex21("Eversource")
     assert ("es", "Abenaki Water Co., Inc.") in _owns(it_db)
     # GLEIF also states the filer's ultimate-parent link to one of them — on
     # the pair's one shared edge, as the delta writes it
@@ -376,7 +376,7 @@ def test_a_re_read_that_finds_the_tree_withdraws_the_flat_filer_edges(it_db):
     aw = it_db.run_command("MATCH (e:Entity {name: 'Aquarion Water Company'}) RETURN e.id AS id")[0]["id"]
     assert _owns_edge_upsert("es", aw, "LEI0000000000000AW00", "indirect", "gleif", 92, None) == "adopted"
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=_tree_data()):
-        result = runner.run_sec_ex21("Eversource", force=True)
+        result = runner_sec_filings.run_sec_ex21("Eversource", force=True)
     assert result["detached"] == 2
     edges = _owns(it_db)
     assert ("es", "Abenaki Water Co., Inc.") not in edges           # SEC's alone: deleted
@@ -392,7 +392,7 @@ def test_the_history_walks_the_tree(it_db):
     from app.scraper.mapper import normalize_entity_name as n
     _eversource(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=_tree_data()):
-        runner.run_sec_ex21("Eversource")
+        runner_sec_filings.run_sec_ex21("Eversource")
     history = [{"as_of": "2025-12-31", "filing_date": "2026-02-17", "form": "10-K",
                 "url": "https://www.sec.gov/2026.htm",
                 "names": {n("Aquarion Company"), n("Aquarion Water Company"), n("Abenaki Water Co., Inc.")}},
@@ -401,7 +401,7 @@ def test_the_history_walks_the_tree(it_db):
                 "names": {n("Aquarion Company"), n("Aquarion Water Company"), n("Abenaki Water Co., Inc.")}}]
     with patch("app.routers.search.resolve_best_entity", return_value={"id": "es", "sec_cik": "0000072741"}), \
          patch("app.scraper.sec_ex21.fetch_subsidiary_history", return_value=history):
-        res = runner.run_sec_ex21_history("Eversource")
+        res = runner_sec_filings.run_sec_ex21_history("Eversource")
     assert res["status"] == "ok" and res["total"] == 3
     since = {r["s"]: r["since"] for r in it_db.run_command(
         "MATCH (a:Entity)-[r:OWNS]->(b:Entity) WHERE r.until IS NULL RETURN b.name AS s, r.since AS since")}
@@ -427,7 +427,7 @@ def test_abinbevs_list_from_its_20f_note_lands_with_stakes(it_db):
             "url": "https://www.sec.gov/Archives/edgar/data/1668717/000119312526088105/d65314d20f.htm#note-34"}
     _abinbev(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        result = runner.run_sec_ex21("Anheuser-Busch InBev")
+        result = runner_sec_filings.run_sec_ex21("Anheuser-Busch InBev")
     assert result["status"] == "ok" and result["total"] == 65
     row = it_db.run_command(
         "MATCH (:Entity {id:'abi'})-[r:OWNS]->(b:Entity {name: 'Cerveceria y Malteria Quilmes Saica Y G'}) "
@@ -443,7 +443,7 @@ def test_no_list_says_why(it_db, filings, status):
     _apple(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=None), \
          patch("app.scraper.sec_ex21.annual_filings", return_value=filings):
-        assert runner.run_sec_ex21("Apple")["status"] == status
+        assert runner_sec_filings.run_sec_ex21("Apple")["status"] == status
 
 
 def test_a_list_from_an_earlier_f1_is_dated_by_it_and_confirmed_by_the_20f(it_db):
@@ -456,7 +456,7 @@ def test_a_list_from_an_earlier_f1_is_dated_by_it_and_confirmed_by_the_20f(it_db
             "confirmed_on": "2026-04-30"}
     _apple(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        result = runner.run_sec_ex21("Apple")
+        result = runner_sec_filings.run_sec_ex21("Apple")
     assert result["status"] == "ok" and result["confirmed_on"] == "2026-04-30"
     assert result["confirmed_by"].endswith("x20f.htm") and result["source_url"].endswith("ex21-1.htm")
     row = it_db.run_command(
@@ -480,7 +480,7 @@ def test_the_places_land_as_countries_and_mauritius_is_not_us(it_db):
             "url": "https://www.sec.gov/Archives/edgar/data/1/000000000126000009/ex8-1.htm"}
     _apple(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        result = runner.run_sec_ex21("Apple")
+        result = runner_sec_filings.run_sec_ex21("Apple")
     assert result["status"] == "ok" and result["total"] == 4
     assert result["unmapped_jurisdictions"] == 0
     got = {r["name"]: r["country"] for r in it_db.run_command(
@@ -508,7 +508,7 @@ def test_a_parent_column_puts_the_stake_on_the_parents_edge(it_db):
             "url": "https://www.sec.gov/Archives/edgar/data/1957146/000121390025037091/ex8-1.htm"}
     _exito(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        result = runner.run_sec_ex21("Almacenes Exito")
+        result = runner_sec_filings.run_sec_ex21("Almacenes Exito")
     assert result["status"] == "ok" and result["unresolved_parents"] == 1
     edges = _owns(it_db)
     malls = it_db.run_command("MATCH (e:Entity {name: 'Patrimonio Autónomo Viva Malls'}) RETURN e.id AS id")[0]["id"]
@@ -541,8 +541,8 @@ def test_one_name_in_two_countries_is_two_nodes(it_db):
             "form": "20-F", "filing_date": "2025-10-15",
             "url": "https://www.sec.gov/Archives/edgar/data/1945711/000155485525002351/ex81_2.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        assert runner.run_sec_ex21("Lavoro")["total"] == 3
-        runner.run_sec_ex21("Lavoro", force=True)
+        assert runner_sec_filings.run_sec_ex21("Lavoro")["total"] == 3
+        runner_sec_filings.run_sec_ex21("Lavoro", force=True)
     rows = it_db.run_command(
         "MATCH (:Entity {id: 'lavoro'})-[:OWNS]->(b:Entity {name: 'Agrointegral Andina S.A.S.'}) "
         "RETURN b.id AS id, b.country AS country")
@@ -563,7 +563,7 @@ def test_namesakes_of_the_filer_abroad_are_its_subsidiaries(it_db):
             "form": "20-F", "filing_date": "2026-03-27",
             "url": "https://www.sec.gov/Archives/edgar/data/1847584/000000000026000001/ex8-1.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        assert runner.run_sec_ex21("Perfect Corp")["total"] == 3
+        assert runner_sec_filings.run_sec_ex21("Perfect Corp")["total"] == 3
     rows = it_db.run_command(
         "MATCH (:Entity {id: 'perfect'})-[:OWNS]->(b:Entity {name: 'Perfect Corp.'}) "
         "RETURN b.id AS id, b.country AS country")
@@ -588,8 +588,8 @@ def test_one_name_key_in_three_countries_is_three_nodes(it_db):
             "form": "10-K", "filing_date": "2026-02-27",
             "url": "https://www.sec.gov/Archives/edgar/data/896159/000089615926000005/cb-12312025xex211.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        assert runner.run_sec_ex21("Chubb")["total"] == 3
-        runner.run_sec_ex21("Chubb", force=True)
+        assert runner_sec_filings.run_sec_ex21("Chubb")["total"] == 3
+        runner_sec_filings.run_sec_ex21("Chubb", force=True)
     rows = it_db.run_command(
         "MATCH (:Entity {id: 'chubb'})-[:OWNS]->(b:Entity) RETURN b.name AS name, b.country AS country")
     assert sorted((r["name"], r["country"]) for r in rows) == [
@@ -609,8 +609,8 @@ def test_the_filers_statement_of_no_subsidiaries_is_a_status_and_closes_the_gate
     data = {"subsidiaries": [], "none_stated": True, "form": "10-K", "filing_date": "2026-03-02",
             "url": "https://www.sec.gov/Archives/edgar/data/1819438/000181943826000012/exhibit211-listofsubsidiar.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        first = runner.run_sec_ex21("ESS Tech")
-        again = runner.run_sec_ex21("ESS Tech")
+        first = runner_sec_filings.run_sec_ex21("ESS Tech")
+        again = runner_sec_filings.run_sec_ex21("ESS Tech")
     assert first["status"] == "no_subsidiaries" and first["total"] == 0 and first["url"] == data["url"]
     assert again["status"] == "fresh"
     assert it_db.run_sql("SELECT sec_ex21_ingested AS u FROM Entity WHERE id = 'ess'")[0]["u"] == data["url"]
@@ -646,7 +646,7 @@ def test_a_row_stating_another_legal_form_is_not_the_listed_namesake(it_db):
             "form": "10-K", "filing_date": "2026-08-13",
             "url": "https://www.sec.gov/Archives/edgar/data/912093/000162828026056765/viavq4fy26ex2x211xsubsidia.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        result = runner.run_sec_ex21("VIAVI Solutions")
+        result = runner_sec_filings.run_sec_ex21("VIAVI Solutions")
     assert result["status"] == "ok"
     rows = {r["id"]: r for r in it_db.run_command(
         "MATCH (:Entity {id: 'viavi'})-[:OWNS]->(b:Entity) RETURN b.id AS id, b.name AS name, b.country AS country")}
@@ -669,7 +669,7 @@ def test_a_row_without_a_jurisdiction_still_folds_onto_the_namesake(it_db):
             "form": "10-K", "filing_date": "2026-02-27",
             "url": "https://www.sec.gov/Archives/edgar/data/896159/000089615926000005/cb-12312025xex211.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        runner.run_sec_ex21("Chubb")
+        runner_sec_filings.run_sec_ex21("Chubb")
     rows = it_db.run_command("MATCH (:Entity {id: 'chubb'})-[:OWNS]->(b:Entity) RETURN b.id AS id")
     assert [r["id"] for r in rows] == ["svc"]
 
@@ -685,7 +685,7 @@ def test_a_namesake_without_a_country_learns_it_rather_than_being_doubled(it_db)
             "form": "10-K", "filing_date": "2026-02-27",
             "url": "https://www.sec.gov/Archives/edgar/data/896159/000089615926000005/cb-12312025xex211.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        runner.run_sec_ex21("Chubb")
+        runner_sec_filings.run_sec_ex21("Chubb")
     rows = it_db.run_command("MATCH (:Entity {id: 'chubb'})-[:OWNS]->(b:Entity) RETURN b.id AS id, b.country AS c")
     assert [(r["id"], r["c"]) for r in rows] == [("svc", "US")]
 
@@ -710,7 +710,7 @@ def test_lead_in_headings_draw_the_tree_and_an_unlisted_one_keeps_the_stake(it_d
             "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000010/ex21.htm"}
     _apple(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        result = runner.run_sec_ex21("Apple")
+        result = runner_sec_filings.run_sec_ex21("Apple")
     assert result["status"] == "ok" and result["unresolved_parents"] == 0
     edges = _owns(it_db)
     ids = {r["name"]: r["id"] for r in it_db.run_command("MATCH (e:Entity) RETURN e.name AS name, e.id AS id")}
@@ -745,7 +745,7 @@ def test_a_company_without_a_10k_yet_is_read_from_its_s1_until_the_first_10k(it_
          patch("app.scraper.sec_ex21.exhibit_candidates", return_value=s1), \
          patch("app.scraper.sec_ex21.co_registrants", return_value=[]), \
          patch("app.scraper.sec_ex21._get_text", side_effect=doc):
-        result = runner.run_sec_ex21("SpaceX")
+        result = runner_sec_filings.run_sec_ex21("SpaceX")
     assert result["status"] == "ok" and result["total"] == 4 and result["registration"] is True
     rows = it_db.run_command(
         "MATCH (:Entity {id:'spacex'})-[r:OWNS]->(b:Entity) "
@@ -767,7 +767,7 @@ def test_a_company_without_a_10k_yet_is_read_from_its_s1_until_the_first_10k(it_
             "form": "10-K", "filing_date": "2027-02-25",
             "url": "https://www.sec.gov/Archives/edgar/data/1181412/000162828027000001/ex21.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=tenk):
-        assert runner.run_sec_ex21("SpaceX")["status"] == "ok"
+        assert runner_sec_filings.run_sec_ex21("SpaceX")["status"] == "ok"
     rows = it_db.run_command(
         "MATCH (:Entity {id:'spacex'})-[r:OWNS]->(b:Entity) "
         "RETURN b.name AS name, r.stale AS stale, r.source_date AS asof")
@@ -799,7 +799,7 @@ def test_a_list_no_filename_pattern_finds_is_read_by_its_declared_type(it_db):
     with patch("app.scraper.sec_ex21._get", return_value=subs), \
          patch("app.scraper.sec_ex21.co_registrants", return_value=[]), \
          patch("app.scraper.sec_ex21._get_text", side_effect=text):
-        result = runner.run_sec_ex21("AMD")
+        result = runner_sec_filings.run_sec_ex21("AMD")
     rows = it_db.run_command(
         "MATCH (:Entity {id:'amd'})-[r:OWNS]->(b:Entity) "
         "RETURN b.name AS name, r.filing_type AS ft, r.source_url AS url, r.source_date AS asof")
@@ -828,7 +828,7 @@ def test_a_rows_other_names_reach_the_node(it_db):
          "former_names": ["RCC Real Estate, Inc."]},
         {"name": "Ameren Illinois Company", "jurisdiction": "Illinois", "aliases": ["Ameren Illinois"]}]}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        assert runner.run_sec_ex21("Apple")["status"] == "ok"
+        assert runner_sec_filings.run_sec_ex21("Apple")["status"] == "ok"
     got = {dict(r)["name"]: dict(r) for r in it_db.run_command(
         "MATCH (:Entity {id:'apple'})-[:OWNS]->(b:Entity) "
         "RETURN b.name AS name, b.aliases AS aliases, b.former_names AS former, b.search_text AS st")}
@@ -843,7 +843,7 @@ def test_a_rows_other_names_reach_the_node(it_db):
     assert "Ameren Illinois" in ameren["st"]
     # a second read of the same list merges, never duplicates
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        runner.run_sec_ex21("Apple", force=True)
+        runner_sec_filings.run_sec_ex21("Apple", force=True)
     again = it_db.run_command("MATCH (b:Entity {name:'Ameren Illinois Company'}) RETURN b.aliases AS a")
     assert [dict(r)["a"] for r in again] == [["Ameren Illinois"]]
 
@@ -862,7 +862,7 @@ def test_a_filer_s_spac_name_does_not_keep_its_namesake_row_on_it(it_db):
             "url": "https://www.sec.gov/Archives/edgar/data/1837240/000183724025000278/"
                    "exhibit211-listofsubsidiar.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
-        result = runner.run_sec_ex21("Symbotic Inc.")
+        result = runner_sec_filings.run_sec_ex21("Symbotic Inc.")
     names = {dict(r)["name"] for r in it_db.run_command(
         "MATCH (:Entity {id:'sec:0001837240'})-[:OWNS]->(b:Entity) RETURN b.name AS name")}
     assert result["total"] == 2 and names == {"Symbotic Holdings LLC", "Symbotic LLC"}
@@ -890,7 +890,7 @@ def test_a_row_in_a_state_takes_the_namesake_registered_there_not_the_filer(it_d
             "url": "https://www.sec.gov/Archives/edgar/data/81362/000162828026010694/kwr-20251231xex21.htm"}
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data), \
          patch("app.scraper.sec_filer.fetch_filer_identity", return_value=("QUAKER CHEMICAL CORP", "US-PA")):
-        assert runner.run_sec_ex21("Quaker Chemical")["total"] == 2
+        assert runner_sec_filings.run_sec_ex21("Quaker Chemical")["total"] == 2
     rows = it_db.run_command(
         "MATCH (:Entity {id: 'quaker'})-[:OWNS]->(b:Entity) RETURN b.id AS id, b.jurisdiction_code AS j")
     ids = {r["id"]: r["j"] for r in rows}

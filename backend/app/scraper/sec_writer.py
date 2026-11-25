@@ -1217,7 +1217,7 @@ def write_statements_since(owned_id: str, name: str, cik: str, day: str, source_
                            submissions: dict | None = None) -> dict:
     """Read and write the Schedule 13D/G statements filed on the issuer after
     `day`, as its own scrape would (`sec_13dg.fetch_ownership_filings`,
-    `runner._write_ownership_filings`) — for a company nobody scraped, whose
+    `runner_sec._write_ownership_filings`) — for a company nobody scraped, whose
     statements the graph does not hold (findings item 116, the user's choice of
     2026-11-14: who left since the table is not written from it, and who
     reported since is). Charter's proxy of 2026-03-12 lists Liberty Broadband
@@ -1228,7 +1228,7 @@ def write_statements_since(owned_id: str, name: str, cik: str, day: str, source_
     written, and the reporting persons of the statements that report no
     position."""
     from app.scraper import sec_13dg
-    from app.scraper.runner import _write_ownership_filings
+    from app.scraper.runner_sec import _write_ownership_filings
     exits: list[str] = []
     filings = sec_13dg.fetch_ownership_filings(name, cik, entries=_statements_since(cik, day, submissions),
                                                 exits=exits)

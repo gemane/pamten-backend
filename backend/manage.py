@@ -46,7 +46,7 @@ def _run_guarded_import(holder, fn, *, skip_ok=False):
 def cmd_gleif_succession(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    from app.scraper.runner import run_import_gleif_succession
+    from app.scraper.runner_imports import run_import_gleif_succession
     result = _run_guarded_import("gleif-succession",
         lambda: run_import_gleif_succession(local_file=args.file, limit=args.limit,
                                             only_leis=_only_ids(args),
@@ -57,7 +57,7 @@ def cmd_gleif_succession(args):
 def cmd_gleif_rr(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    from app.scraper.runner import run_import_gleif_rr
+    from app.scraper.runner_imports import run_import_gleif_rr
     result = _run_guarded_import("gleif-rr",
         lambda: run_import_gleif_rr(local_file=args.file, limit=args.limit,
                                     only_leis=_only_ids(args),
@@ -131,7 +131,7 @@ def cmd_ch_psc(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     _apply_direct_db_url(args)
-    from app.scraper.runner import run_import_ch_psc
+    from app.scraper.runner_imports import run_import_ch_psc
     result = _run_guarded_import("ch-psc",
         lambda: run_import_ch_psc(local_file=args.file, limit=args.limit,
                                   bulk_load=getattr(args, "bulk_load", False),
@@ -145,7 +145,7 @@ def cmd_ch_psc_update(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     _apply_direct_db_url(args)
-    from app.scraper.runner import run_ch_psc_update
+    from app.scraper.runner_imports import run_ch_psc_update
     result = _run_guarded_import("ch-psc-update",
         lambda: run_ch_psc_update(
             local_file=args.file, digest=args.digest, limit=args.limit,
@@ -213,7 +213,7 @@ def cmd_ch_company_data(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     _apply_direct_db_url(args)
-    from app.scraper.runner import run_import_basic_company_data
+    from app.scraper.runner_imports import run_import_basic_company_data
     result = _run_guarded_import("ch-company-data",
         lambda: run_import_basic_company_data(local_file=args.file, limit=args.limit,
                                               bulk_load=getattr(args, "bulk_load", False),
@@ -225,7 +225,7 @@ def cmd_ch_company_data(args):
 def cmd_gleif_lei_cdf(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    from app.scraper.runner import run_import_gleif_lei_cdf
+    from app.scraper.runner_imports import run_import_gleif_lei_cdf
     result = _run_guarded_import("gleif-lei-cdf",
         lambda: run_import_gleif_lei_cdf(
             local_file=args.file, limit=args.limit,
@@ -238,7 +238,7 @@ def cmd_gleif_repex(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     _apply_direct_db_url(args)
-    from app.scraper.runner import run_import_gleif_repex
+    from app.scraper.runner_imports import run_import_gleif_repex
     result = _run_guarded_import("gleif-repex",
         lambda: run_import_gleif_repex(local_file=args.file, limit=args.limit))
     if result is not None:
@@ -445,7 +445,7 @@ def cmd_gleif_update(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     _apply_direct_db_url(args)
-    from app.scraper.runner import run_gleif_update
+    from app.scraper.runner_imports import run_gleif_update
     result = _run_guarded_import("gleif-update",
         lambda: run_gleif_update(interval=args.interval, lei_file=args.lei_file,
                                  rr_file=args.rr_file, limit=args.limit,
@@ -799,7 +799,7 @@ def cmd_sec_formd(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_SEC_EDGAR_ENABLED = True
-    from app.scraper.runner import run_sec_formd
+    from app.scraper.runner_sec_filings import run_sec_formd
     result = run_sec_formd(args.company, force=args.force)
     if result["status"] == "fresh":
         print(f"Form D for {result['company']!r} already ingested "
@@ -824,7 +824,7 @@ def cmd_sec_ex21_history(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_SEC_EDGAR_ENABLED = True
-    from app.scraper.runner import run_sec_ex21_history
+    from app.scraper.runner_sec_filings import run_sec_ex21_history
     r = run_sec_ex21_history(args.company, max_filings=args.max_filings)
     if r["status"] != "ok":
         print(r.get("detail") or f"{r['status']} for {args.company!r}")
@@ -845,7 +845,7 @@ def cmd_sec_ex21(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_SEC_EDGAR_ENABLED = True
-    from app.scraper.runner import run_sec_ex21
+    from app.scraper.runner_sec_filings import run_sec_ex21
     result = run_sec_ex21(args.company, force=args.force)
     if result["status"] == "fresh":
         print(f"Exhibit 21 for {result['company']!r} already ingested "
@@ -876,7 +876,7 @@ def cmd_sec_acquisitions(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_SEC_EDGAR_ENABLED = True
-    from app.scraper.runner import run_sec_acquisitions
+    from app.scraper.runner_sec_filings import run_sec_acquisitions
     result = run_sec_acquisitions(args.company, force=args.force, max_filings=args.max_filings)
     if result["status"] == "fresh":
         print(f"Acquisitions of {result['company']!r} already ingested from its newest "
@@ -915,7 +915,7 @@ def cmd_sec_13f(args):
     # sec-holdings requiring pre-set env flags is a known wart, not a pattern.
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_SEC_EDGAR_ENABLED = True
-    from app.scraper.runner import run_sec_13f
+    from app.scraper.runner_sec_filings import run_sec_13f
     result = run_sec_13f(args.company, limit=args.limit,
                          window_days=args.window_days, force=args.force)
     if result["status"] == "fresh":
@@ -949,7 +949,7 @@ def cmd_sec_holdings(args):
     LLC (0002100119), not the VANGUARD GROUP INC (0000102909) you would search
     for. Pass --succeeds to record that handover as a SUCCEEDED_BY edge.
     """
-    from app.scraper.runner import run_sec_holdings
+    from app.scraper.runner_sec_filings import run_sec_holdings
     result = run_sec_holdings(args.cik, limit=args.limit, succeeds_cik=args.succeeds)
     if result["status"] != "ok":
         print(f"No EDGAR filer found for CIK {args.cik}.")

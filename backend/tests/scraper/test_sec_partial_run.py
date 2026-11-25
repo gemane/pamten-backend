@@ -169,7 +169,7 @@ class TestAFailedSourceMarksTheScrapeIncomplete:
         monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
         monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", False)
         monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
-        monkeypatch.setattr("app.scraper.runner._stored_entity", lambda q, c=None: None)
+        monkeypatch.setattr("app.scraper.runner_sec._stored_entity", lambda q, c=None: None)
         state = {"wd": "raise", "stamped": []}
 
         def wd(q, d, c=None):
@@ -290,6 +290,6 @@ class TestTheRunLogSaysPartial:
         decision = ondemand.ScrapeDecision(True, "incomplete", 1)
         with patch("app.scraper.scraper_registry.registered", return_value=[spec]), \
              patch("app.scraper.run_log.record_run", fake_record_run), \
-             patch("app.scraper.runner.rerun_for_new_ids", return_value=False):
+             patch("app.scraper.runner_sec.rerun_for_new_ids", return_value=False):
             ondemand._run_instant_sources.__wrapped__("Gitlab", decision, None)
         assert rows == [{"total": 4, "status": "partial", "note": "lost to the network: holdings"}]

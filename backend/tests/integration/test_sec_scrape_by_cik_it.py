@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch
 
 from app.config import settings
-from app.scraper import runner
+from app.scraper import runner_sec
 
 pytestmark = pytest.mark.integration
 
@@ -29,9 +29,9 @@ def _spacex(it_db, cik="0001181412"):
 
 def test_the_nodes_cik_reaches_the_scrape(it_db):
     _spacex(it_db)
-    assert runner._stored_sec_cik("Space Exploration Technologies Corp") == "0001181412"
+    assert runner_sec._stored_sec_cik("Space Exploration Technologies Corp") == "0001181412"
     with patch("app.scraper.sec_edgar.scrape_company", return_value=None) as scrape:
-        out = runner.run_scrape_sec_edgar("Space Exploration Technologies Corp")
+        out = runner_sec.run_scrape_sec_edgar("Space Exploration Technologies Corp")
     scrape.assert_called_once_with("Space Exploration Technologies Corp", cik="0001181412")
     assert out["status"] == "no_results"
 
@@ -39,7 +39,7 @@ def test_the_nodes_cik_reaches_the_scrape(it_db):
 def test_a_node_without_a_cik_leaves_the_name_search(it_db):
     _spacex(it_db, cik=None)
     with patch("app.scraper.sec_edgar.scrape_company", return_value=None) as scrape:
-        runner.run_scrape_sec_edgar("Space Exploration Technologies Corp")
+        runner_sec.run_scrape_sec_edgar("Space Exploration Technologies Corp")
     scrape.assert_called_once_with("Space Exploration Technologies Corp", cik=None)
 
 
@@ -47,4 +47,4 @@ def test_a_name_that_is_not_the_node_takes_no_cik(it_db):
     """A credible match only: a query sharing one word with the node is no
     reason to read that node's filer."""
     _spacex(it_db)
-    assert runner._stored_sec_cik("Exploration Partners Fund") is None
+    assert runner_sec._stored_sec_cik("Exploration Partners Fund") is None

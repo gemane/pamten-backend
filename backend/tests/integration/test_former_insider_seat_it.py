@@ -17,7 +17,7 @@ CONTI = {"name": "Craig C Conti", "role": "CFO", "former": True, "person_cik": "
 
 
 def _scrape(executives):
-    from app.scraper import runner, sec_edgar, sec_filer, sec_insiders
+    from app.scraper import runner, runner_sec, sec_edgar, sec_filer, sec_insiders
     payload = {"name": "VERRA MOBILITY Corp", "cik": "0001682745", "ownership_filings": [],
                "executives": executives, "holdings": [], "former_names": [], "lei": None}
     with patch.object(sec_edgar, "scrape_company", return_value=payload), \
@@ -26,11 +26,11 @@ def _scrape(executives):
          patch.object(sec_filer, "fetch_filer_website", return_value=None), \
          patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch.object(sec_insiders, "fetch_insider_holding", return_value=None), \
-         patch.object(runner, "_record_sec_industry", return_value=None), \
+         patch.object(runner_sec, "_record_sec_industry", return_value=None), \
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        return runner.run_scrape_sec_edgar("VERRA MOBILITY Corp")
+        return runner_sec.run_scrape_sec_edgar("VERRA MOBILITY Corp")
 
 
 def _seats(db):

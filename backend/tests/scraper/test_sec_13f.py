@@ -223,7 +223,7 @@ class TestKnownFilersByCik:
 
 class TestSelectionNote:
     def test_the_run_log_note_names_the_selection(self):
-        from app.scraper.runner import _13f_selection_note
+        from app.scraper.runner_sec_filings import _13f_selection_note
         data = {"filings_fetched": 146, "filings_total": 8127, "priority_found": 46,
                 "priority_known": 1196, "priority_failed": 0}
         assert _13f_selection_note(data) == "146/8127 filings read; known filers: 46 of 1196 found by CIK"
@@ -232,7 +232,7 @@ class TestSelectionNote:
 
     def test_two_passes_are_said(self):
         # findings item 57: the figures are both passes' once the CUSIP pass ran
-        from app.scraper.runner import _13f_selection_note
+        from app.scraper.runner_sec_filings import _13f_selection_note
         data = {"filings_fetched": 296, "filings_total": 8459, "priority_found": 84, "priority_known": 1530,
                 "passes": 2}
         assert _13f_selection_note(data, 3).startswith("296/8459 filings read in two passes; ")

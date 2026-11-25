@@ -26,7 +26,7 @@ def world(monkeypatch, fake_sources):
     monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", False)
     monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
     state = {"stored": None, "after_sec": TOAST, "calls": [], "wd": ["no_results", "ok"]}
-    monkeypatch.setattr("app.scraper.runner._stored_entity", lambda q, c=None: state["stored"])
+    monkeypatch.setattr("app.scraper.runner_sec._stored_entity", lambda q, c=None: state["stored"])
 
     def wd(q, d, c=None):
         state["calls"].append("wd")

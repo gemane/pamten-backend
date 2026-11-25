@@ -334,7 +334,7 @@ def _gleif_enabled(monkeypatch):
 def test_update_refused_without_any_load(it_db, _gleif_enabled):
     """The incremental refuses to run until a load has baselined the graph."""
     from app.scraper.gleif_incremental import full_load_present, mark_full_load_done
-    from app.scraper.runner import run_gleif_update
+    from app.scraper.runner_imports import run_gleif_update
 
     assert full_load_present() is False
     # refuses before fetching anything — no baseline
@@ -390,12 +390,12 @@ def test_only_a_complete_pass_stamps_a_full_baseline(it_db, _gleif_enabled, monk
     """The bug itself, at its source. Narrowing the import by ANY of these leaves a
     partial entity baseline, but the importer stamped 'full' regardless — which is
     what re-enabled the nightly delta against a 488-entity curated database."""
-    from app.scraper import gleif_lei_cdf, runner
+    from app.scraper import gleif_lei_cdf, runner_imports
     from app.scraper.gleif_incremental import load_scope
 
     monkeypatch.setattr(gleif_lei_cdf, "import_lei_cdf_entities",
                         lambda **k: {"entities": 0, "edges": 0})
-    runner.run_import_gleif_lei_cdf("/nonexistent.zip", **kwargs)
+    runner_imports.run_import_gleif_lei_cdf("/nonexistent.zip", **kwargs)
 
     assert load_scope() == expected
 
@@ -518,7 +518,7 @@ def test_a_subset_baseline_selects_only_existing_by_itself(it_db, _gleif_enabled
                                                            tmp_path, monkeypatch):
     """The whole point: the nightly cron keeps running against a curated database
     and exercising the delta path, without burying it."""
-    from app.scraper import runner
+    from app.scraper import runner_imports
     from app.scraper.gleif_incremental import mark_full_load_done
 
     it_db.run_command(f"CREATE (:Entity {{id:'lei:{IN_DB}', lei_id:'{IN_DB}', name:'Old'}})")
@@ -526,7 +526,7 @@ def test_a_subset_baseline_selects_only_existing_by_itself(it_db, _gleif_enabled
     lei_zip, rr_zip = _delta_zips(tmp_path, [_entity(IN_DB, "Fresh"),
                                              _entity(OUTSIDE, "Not Ours")], [])
 
-    result = runner.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip)
+    result = runner_imports.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip)
 
     assert result["status"] == "ok"                     # it RAN, it did not skip
     assert result["lei_cdf"]["updated"] == 1            # ours refreshed
@@ -537,25 +537,25 @@ def test_a_subset_baseline_selects_only_existing_by_itself(it_db, _gleif_enabled
 
 
 def test_a_full_baseline_applies_the_whole_delta(it_db, _gleif_enabled, tmp_path):
-    from app.scraper import runner
+    from app.scraper import runner_imports
     from app.scraper.gleif_incremental import mark_full_load_done
 
     mark_full_load_done("full")
     lei_zip, rr_zip = _delta_zips(tmp_path, [_entity(IN_DB, "A"), _entity(OUTSIDE, "B")], [])
 
-    runner.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip)
+    runner_imports.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip)
 
     assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS c")[0]["c"] == 2
 
 
 def test_the_flag_overrides_the_baseline_either_way(it_db, _gleif_enabled, tmp_path):
-    from app.scraper import runner
+    from app.scraper import runner_imports
     from app.scraper.gleif_incremental import mark_full_load_done
 
     mark_full_load_done("full")                      # baseline says "apply everything"
     lei_zip, rr_zip = _delta_zips(tmp_path, [_entity(OUTSIDE, "B")], [])
 
-    runner.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip,
+    runner_imports.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip,
                             only_existing=True)      # ...but the caller says otherwise
 
     assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS c")[0]["c"] == 0
@@ -572,7 +572,7 @@ def test_the_fetched_deltas_survive_the_apply_and_then_go(it_db, _gleif_enabled,
     an `if` and the apply is below it. Hence an ExitStack held open across the whole
     run, and hence this test, which fails on either mistake.
     """
-    from app.scraper import runner
+    from app.scraper import runner_imports
     from app.scraper.gleif_incremental import mark_full_load_done
 
     it_db.run_command(f"CREATE (:Entity {{id:'lei:{IN_DB}', lei_id:'{IN_DB}', name:'Old'}})")
@@ -592,7 +592,7 @@ def test_the_fetched_deltas_survive_the_apply_and_then_go(it_db, _gleif_enabled,
                         lambda: {"publish_date": "2026-08-20 16:00:00"})
     monkeypatch.setattr("app.scraper.gleif_incremental.download_deltas", fake_download)
 
-    result = runner.run_gleif_update(interval="LastDay")
+    result = runner_imports.run_gleif_update(interval="LastDay")
 
     # It read them — so they were still there when the apply ran.
     assert result["status"] == "ok" and result["lei_cdf"]["updated"] == 1
@@ -605,14 +605,14 @@ def test_the_fetched_deltas_survive_the_apply_and_then_go(it_db, _gleif_enabled,
 def test_local_delta_files_are_never_deleted(it_db, _gleif_enabled, tmp_path):
     """Passing --lei-file/--rr-file means the files are the operator's, sitting in
     their own directory. Cleaning those up would delete a human's data."""
-    from app.scraper import runner
+    from app.scraper import runner_imports
     from app.scraper.gleif_incremental import mark_full_load_done
 
     it_db.run_command(f"CREATE (:Entity {{id:'lei:{IN_DB}', lei_id:'{IN_DB}', name:'Old'}})")
     mark_full_load_done("full")
     lei_zip, rr_zip = _delta_zips(tmp_path, [_entity(IN_DB, "Fresh")], [])
 
-    runner.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip)
+    runner_imports.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip)
 
     assert os.path.exists(lei_zip) and os.path.exists(rr_zip)
 

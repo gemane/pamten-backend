@@ -86,7 +86,7 @@ def test_re_reading_the_subsidiarys_filing_updates_the_closed_spell(it_db):
 
 def test_the_list_read_after_both_statements_still_ends_it(it_db):
     # a rebuild reads DaVita's owners before BlackRock's Exhibit 21
-    from app.scraper import runner
+    from app.scraper import runner_sec_filings
     _companies(it_db)
     it_db.run_command(f"MATCH (e:Entity {{id: '{NEW}'}}) SET e.sec_cik = '0002012383'")
     _statement(OLD, DAVITA, "2024-01-31", 5.2)
@@ -98,7 +98,7 @@ def test_the_list_read_after_both_statements_still_ends_it(it_db):
          patch("app.scraper.runner._upsert_entity_by_name", return_value=OLD), \
          patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data), \
          patch("app.scraper.sec_filer.fetch_filer_identity", return_value=(None, None)):
-        assert runner.run_sec_ex21("BlackRock", force=True)["status"] == "ok"
+        assert runner_sec_filings.run_sec_ex21("BlackRock", force=True)["status"] == "ok"
     assert _owners(it_db)[(OLD, "2025-03-31")]["why"] == "reported_by_parent"
 
 
@@ -111,7 +111,7 @@ def test_the_whole_graph_pass(it_db):
 
 def test_a_holdings_run_ends_it(it_db):
     # the parent's filer-side holdings run writes the newer statement
-    from app.scraper import runner
+    from app.scraper import runner_sec_filings
     _companies(it_db)
     _listed(NEW, OLD)
     _statement(OLD, DAVITA, "2024-01-31", 5.2)
@@ -124,10 +124,10 @@ def test_a_holdings_run_ends_it(it_db):
          patch("app.scraper.sec_filer.fetch_filer_country", return_value="US"), \
          patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
          patch("app.scraper.sec_filer.fetch_filer_website", return_value=None), \
-         patch("app.scraper.runner._record_sec_industry"), \
+         patch("app.scraper.runner_sec._record_sec_industry"), \
          patch("app.scraper.runner._upsert_entity_by_name",
                side_effect=lambda **kw: NEW if kw.get("cik") == "0002012383" else DAVITA):
-        runner.run_sec_holdings("0002012383")
+        runner_sec_filings.run_sec_holdings("0002012383")
     assert _owners(it_db)[(OLD, "2025-03-31")]["why"] == "reported_by_parent"
 
 

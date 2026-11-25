@@ -178,7 +178,7 @@ It is required to locate filings.
 **Step 0 — the CIK the database already holds (2026-10-27):**
 Before any search, the runner resolves the query to its node with the same
 credible-match resolver the Exhibit 21, acquisitions and 13F passes use
-(`runner._stored_sec_cik` → `resolve_best_entity`). When that node carries a
+(`runner_sec._stored_sec_cik` → `resolve_best_entity`). When that node carries a
 `sec_cik` (from an earlier scrape, a Wikidata identifier or a GLEIF/SEC merge),
 the filer is read by that number (`sec_filer.company_by_cik`, the submissions
 document) and no name has to match. The name search below runs only for a
@@ -210,7 +210,7 @@ decided for Exhibit 21 rows.
 When the node the query resolved to holds an **LEI and no CIK**, the name search
 below found a filer, EDGAR states **no LEI** for that filer, and the two names key
 alike (`normalize_entity_name`), the runner asks the filer's own filings whether
-the LEI is its own (`runner._confirm_stored_lei` → `sec_lei.confirm_filer_lei`). On
+the LEI is its own (`runner_sec._confirm_stored_lei` → `sec_lei.confirm_filer_lei`). On
 a confirmation the scrape writes with that LEI, the upsert resolves the node by it
 (`_upsert_entity_by_name` tries CIK, then LEI, then the name), the node gains the
 CIK, and `lei_source_url` keeps the filing. Without it the write minted a twin keyed
@@ -1272,7 +1272,7 @@ The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
   identify issuers only by CUSIP plus a free-text name typed by each filing
   agent ("APPLE INC" / "Apple Inc"). The CUSIP comes from the 13D/G covers
   we already read and from the first name-verified 13F rows, and is stamped on
-  the entity fill-if-missing (`runner._keep_cover_cusip`). Every cover read
+  the entity fill-if-missing (`runner_sec._keep_cover_cusip`). Every cover read
   keeps it (findings item 71, 2026-11-07): the issuer's own scrape and a
   filer's scrape for each company it holds (`run_sec_holdings` and the company
   scrape's holdings loop), XML schedules in all three spellings
@@ -1446,7 +1446,7 @@ Healthcare's General Atlantic funds write "See footnote", NYT's Sulzberger
 family a bare "trust" — those stay as filed. An insider — a person, or a company such as a fund's general partner —
 whose filing held nothing else keeps no Form 4 edge of their own; the
 vehicle's edge carries what it said. The vehicle node is found
-among the issuer's own vehicles only (`runner._write_shared_vehicles`,
+among the issuer's own vehicles only (`runner_sec._write_shared_vehicles`,
 `_upsert_entity_by_name(by_name=False)`): "GFI" is how these filings name
 Grupo Financiero Inbursa, and a name search would hand it any GFI. The
 person-centric lookup, which reads one person's filing at a time, takes a known
@@ -1718,9 +1718,9 @@ instead of Form 4 (WesBanco) are in neither list.
 
 After the issuer-side scan, every person who holds an **open seat** at the company
 (from Wikidata or an earlier scrape) and has no ownership edge to it is looked up
-by their own filings (`runner._seat_holders_pass`, `fetch_insider_holding`): each
+by their own filings (`runner_sec._seat_holders_pass`, `fetch_insider_holding`): each
 person once, up to `MAX_INSIDER_LOOKUPS = 15` per pass, **in turn**: those never asked first,
-then those asked longest ago, by id within a tie (`runner._seats_to_ask`; the time of the ask
+then those asked longest ago, by id within a tie (`runner_sec._seats_to_ask`; the time of the ask
 is `form4_asked_at` on the person's open seats at the company, `_mark_seat_asked`). In id
 order alone, a person asked with nothing found — no Form 4 of their own, as most directors a
 knowledge base names — kept the slot on every run, and at a company with more than fifteen
@@ -1734,14 +1734,14 @@ Apple stake once the bulk name list resolved his name, and 31 dead founders (Hen
 Henry Wells …) were searched on EDGAR at every scrape (findings item 149). The pass — these lookups
 and the 8-K departures below — runs at the end of the SEC scrape and **once more at
 the end of a run-all** when a later source added seat holders without a holding
-(`runner.rerun_for_new_seats` → `run_sec_seat_holders`, the issuer's share count from
+(`runner_sec.rerun_for_new_seats` → `run_sec_seat_holders`, the issuer's share count from
 the cached XBRL fetch; the result carries `seats_rerun`, the on-demand run log a row
 with reason `new_seats`). The registers run before the knowledge bases (findings item
 60), so on the SEC's own run Wikidata's officers are not there yet: in the 2026-11-06
 rebuild 22 of them kept their CIK but lost their item id, five lost their Form 4
 holding and their CIK, and the big filers' run-all totals fell by exactly those persons
 (findings item 67). The rerun reads the filer's seats under the id the node has
-when it asks (`runner.seat_rerun_target`, `_node_id_now`): the SEC run writes a filer
+when it asks (`runner_sec.seat_rerun_target`, `_node_id_now`): the SEC run writes a filer
 that GLEIF never loaded as `sec:{CIK}`, Wikidata then states its LEI and the node is
 renamed `lei:{LEI}` with a forwarding row — the old id answered "no seats", and BofA,
 NYT, Wells Fargo and Morgan Stanley never got the second pass (rebuild 2026-11-07b,
@@ -1767,7 +1767,7 @@ and holdings in the rebuild of 2026-10-31b).
 
 When another **person** already holds that CIK, the holding is theirs — the
 Form 4's own reporting owner — and the 13D/G check and the write go to that node,
-not to the seat holder that asked (`runner._holder_of_found_cik`); the two are
+not to the seat holder that asked (`runner_sec._holder_of_found_cik`); the two are
 left to the person dedup. A CIK a **company** holds is not this person's filing:
 nothing is written. Before 2026-11-07 the seat holder took the holding: the
 check asked the Wikidata twin, which held no 13G while the person's EDGAR node
@@ -2128,7 +2128,7 @@ statements of the companies it scraped; the whole-graph pass
 node only as some holder's 13G issuer. For each of them the pass first reads
 the statements filed after the table's record date and writes them exactly as
 the issuer's own scrape would (`fetch_ownership_filings` given those filings,
-`runner._write_ownership_filings`): Charter's proxy of 2026-03-12 lists Liberty
+`runner_sec._write_ownership_filings`): Charter's proxy of 2026-03-12 lists Liberty
 Broadband (29.07 %) and The Vanguard Group (7.26 %); since then both state
 0 %, Vanguard Capital Management reports 7.31 % and Cox Enterprises 28.7 %.
 The filings come from the submissions document the pass already holds — it
@@ -3135,7 +3135,7 @@ What the issuer's own SEC scrape does (findings item 72, 2026-11-07):
   request lost to the network stops the reading and marks the run `partial`
   (section "F-6 ADS CUSIP"), so an older filing never stands in for a newer;
 - the runner adds the code(s) to the node's `cusips` and fills `cusip` when
-  empty (`runner._keep_ads_cusips`) — beside a 13F table's or a 13D/G cover's
+  empty (`runner_sec._keep_ads_cusips`) — beside a 13F table's or a 13D/G cover's
   code, never instead.
 
 Measured on dev's 142 scraped filers with a CIK: three state one — NESTLE SA

@@ -13,7 +13,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from app.scraper import runner, sec_client, sec_edgar, sec_filer, sec_insiders, sec_lookup
+from app.scraper import runner_sec, sec_client, sec_edgar, sec_filer, sec_insiders, sec_lookup
 from app.config import settings
 
 
@@ -105,10 +105,10 @@ class TestTheRunnerPassesTheStoredCik:
         with patch.object(settings, "SCRAPER_ENABLED", True), \
              patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
              patch("app.scraper.runner.get_source_enabled", return_value=True), \
-             patch("app.scraper.runner._stored_entity",
+             patch("app.scraper.runner_sec._stored_entity",
                    return_value={"id": "x", "sec_cik": stored} if stored else None) as lookup, \
              patch("app.scraper.sec_edgar.scrape_company", return_value=None) as scrape:
-            out = runner.run_scrape_sec_edgar("Nestlé", country="CH")
+            out = runner_sec.run_scrape_sec_edgar("Nestlé", country="CH")
         return out, lookup, scrape
 
     def test_the_stored_cik_reaches_the_scrape(self):
@@ -126,18 +126,18 @@ class TestStoredSecCik:
     def test_the_resolved_nodes_cik(self):
         with patch("app.routers.search.resolve_best_entity",
                    return_value={"id": "x", "sec_cik": "0000792990"}) as resolve:
-            assert runner._stored_sec_cik("Nestlé", "CH") == "0000792990"
+            assert runner_sec._stored_sec_cik("Nestlé", "CH") == "0000792990"
         resolve.assert_called_once_with("Nestlé", "CH")
 
     def test_no_node_or_no_cik_is_none(self):
         with patch("app.routers.search.resolve_best_entity", return_value=None):
-            assert runner._stored_sec_cik("Nobody") is None
+            assert runner_sec._stored_sec_cik("Nobody") is None
         with patch("app.routers.search.resolve_best_entity", return_value={"id": "x", "sec_cik": ""}):
-            assert runner._stored_sec_cik("Unilever") is None
+            assert runner_sec._stored_sec_cik("Unilever") is None
 
     def test_a_failing_lookup_is_the_name_search_not_a_failed_scrape(self):
         with patch("app.routers.search.resolve_best_entity", side_effect=RuntimeError("db down")):
-            assert runner._stored_sec_cik("Nestlé") is None
+            assert runner_sec._stored_sec_cik("Nestlé") is None
 
 
 class TestTheStoredNodesLeiForTheFiler:
@@ -156,7 +156,7 @@ class TestTheStoredNodesLeiForTheFiler:
         data = self._data()
         with patch("app.scraper.sec_lei.confirm_filer_lei",
                    return_value={"source_url": self.URL}) as confirm:
-            runner._confirm_stored_lei(dict(self.STORED), data)
+            runner_sec._confirm_stored_lei(dict(self.STORED), data)
         confirm.assert_called_once_with("0000217410", "549300MKFYEKVRWML317",
                                         ["UNILEVER PLC", "Unilever Plc"])
         assert data["lei"] == "549300MKFYEKVRWML317"
@@ -165,7 +165,7 @@ class TestTheStoredNodesLeiForTheFiler:
     def test_not_confirmed_changes_nothing(self):
         data = self._data()
         with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):
-            runner._confirm_stored_lei(dict(self.STORED), data)
+            runner_sec._confirm_stored_lei(dict(self.STORED), data)
         assert data == self._data()
 
     @pytest.mark.parametrize("stored, data", [
@@ -179,12 +179,12 @@ class TestTheStoredNodesLeiForTheFiler:
     def test_only_the_one_shape_asks(self, stored, data):
         node = None if stored is None else {**self.STORED, **stored}
         with patch("app.scraper.sec_lei.confirm_filer_lei") as confirm:
-            runner._confirm_stored_lei(node, self._data(**data))
+            runner_sec._confirm_stored_lei(node, self._data(**data))
         confirm.assert_not_called()
 
     def test_a_node_without_a_stored_key_is_keyed_from_its_name(self):
         with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None) as confirm:
-            runner._confirm_stored_lei({**self.STORED, "name_normalized": None}, self._data())
+            runner_sec._confirm_stored_lei({**self.STORED, "name_normalized": None}, self._data())
         confirm.assert_called_once()
 
     def test_the_runner_asks_after_the_country_check(self):
@@ -193,10 +193,10 @@ class TestTheStoredNodesLeiForTheFiler:
         with patch.object(settings, "SCRAPER_ENABLED", True), \
              patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
              patch("app.scraper.runner.get_source_enabled", return_value=True), \
-             patch("app.scraper.runner._stored_entity", return_value=dict(self.STORED)), \
+             patch("app.scraper.runner_sec._stored_entity", return_value=dict(self.STORED)), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=scraped), \
              patch("app.scraper.sec_filer.fetch_filer_country", return_value="GB"), \
-             patch("app.scraper.runner._confirm_stored_lei") as confirm:
-            out = runner.run_scrape_sec_edgar("Unilever", country="US")
+             patch("app.scraper.runner_sec._confirm_stored_lei") as confirm:
+            out = runner_sec.run_scrape_sec_edgar("Unilever", country="US")
         assert out["status"] == "country_mismatch"
         confirm.assert_not_called()

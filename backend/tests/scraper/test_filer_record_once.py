@@ -10,7 +10,8 @@ import httpx
 import pytest
 
 from app.config import settings
-from app.scraper import runner, sec_client, sec_edgar, sec_insiders, sec_lookup
+from app.scraper import (runner, runner_sec, runner_sec_filings, sec_client, sec_edgar, sec_insiders,
+                         sec_lookup)
 
 APPLE, BNY = "0000320193", "0001390777"
 
@@ -132,8 +133,8 @@ def test_the_runner_shares_it_between_the_scrape_and_its_writer(edgar):
     with patch.object(settings, "SCRAPER_ENABLED", True), \
          patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
          patch.object(runner, "get_source_enabled", return_value=True), \
-         patch.object(runner, "_scrape_sec_edgar", side_effect=scrape_and_write):
-        fn = getattr(runner.run_scrape_sec_edgar, "__wrapped__", runner.run_scrape_sec_edgar)
+         patch.object(runner_sec, "_scrape_sec_edgar", side_effect=scrape_and_write):
+        fn = getattr(runner_sec.run_scrape_sec_edgar, "__wrapped__", runner_sec.run_scrape_sec_edgar)
         out = fn("Bank Of New York Mellon Corp")
     assert out["status"] == "ok" and len(edgar) == 1
 
@@ -241,10 +242,10 @@ def test_the_table_pass_opens_the_block_around_all_its_companies():
 @pytest.mark.parametrize("fn", ["run_sec_ex21", "run_sec_ex21_history"])
 def test_reading_a_subsidiary_list_asks_for_the_filer_record_once(fn, edgar):
     """The readers asked for the filer's own record three times a company."""
-    inner = getattr(runner, fn).__wrapped__                     # under the auto-dedup wrapper
+    inner = getattr(runner_sec_filings, fn).__wrapped__                     # under the auto-dedup wrapper
     assert inner.__wrapped__ is not None                        # … `_one_filer_record`'s
 
-    @runner._one_filer_record
+    @runner_sec_filings._one_filer_record
     def reads_three_times(company):
         return [sec_client._submissions(APPLE) for _ in range(3)], sec_client._filer_records.get()
     docs, memo = reads_three_times("Apple Inc.")

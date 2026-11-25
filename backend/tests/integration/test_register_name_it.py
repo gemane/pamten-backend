@@ -30,7 +30,7 @@ def _node():
 
 
 def _sec_scrape():
-    from app.scraper import runner, sec_edgar, sec_filer, sec_insiders
+    from app.scraper import runner_sec, sec_edgar, sec_filer, sec_insiders
     payload = {"name": "MOLSON COORS BEVERAGE CO", "cik": CIK, "lei": None, "former_names": [],
                "ownership_filings": [], "holdings": [], "executives": []}
     with patch.object(sec_edgar, "scrape_company", return_value=payload), \
@@ -40,7 +40,7 @@ def _sec_scrape():
          patch.object(sec_filer, "fetch_filer_sic", return_value=None), \
          patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):
-        runner.run_scrape_sec_edgar("Molson Coors")
+        runner_sec.run_scrape_sec_edgar("Molson Coors")
 
 
 def _wikidata():

@@ -34,7 +34,7 @@ def graph(it_db):
 
 
 def _scrape(holding):
-    from app.scraper import runner, sec_edgar, sec_filer, sec_insiders
+    from app.scraper import runner, runner_sec, sec_edgar, sec_filer, sec_insiders
     asked = []
 
     def fake_holding(name, cik, shares_out, person_cik=None):
@@ -48,11 +48,11 @@ def _scrape(holding):
          patch.object(sec_filer, "fetch_filer_website", return_value=None), \
          patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch.object(sec_insiders, "fetch_insider_holding", side_effect=fake_holding), \
-         patch.object(runner, "_record_sec_industry", return_value=None), \
+         patch.object(runner_sec, "_record_sec_industry", return_value=None), \
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        runner.run_scrape_sec_edgar("Tesla, Inc.")
+        runner_sec.run_scrape_sec_edgar("Tesla, Inc.")
     return asked
 
 
@@ -61,27 +61,27 @@ def test_the_pass_alone_writes_the_holding_of_a_seat_added_after_the_scrape(grap
     arrive after the SEC part ran; run-all asks the seats once more at the end
     (`run_sec_seat_holders`) — Denholm's open seats are looked up, Eberhard's
     ended one is not, the holding and the CIK land as on the SEC's own run."""
-    from app.scraper import runner, sec_insiders, sec_shares
+    from app.scraper import runner, runner_sec, sec_insiders, sec_shares
     asked = []
 
     def fake_holding(name, cik, shares_out, person_cik=None):
         asked.append(name)
         return HOLDING
-    assert runner.seat_holders_without_holdings("tsla") == frozenset({"wd:Q58345040"})
+    assert runner_sec.seat_holders_without_holdings("tsla") == frozenset({"wd:Q58345040"})
     sec = {"status": "ok", "cik": "0001318605", "entity_id": "tsla", "company": "Tesla, Inc.", "seats_asked": []}
-    assert runner.rerun_for_new_seats(sec) is True                         # a seat the SEC run never looked up
+    assert runner_sec.rerun_for_new_seats(sec) is True                         # a seat the SEC run never looked up
     with patch.object(sec_shares, "fetch_shares_outstanding_detail", return_value=None), \
          patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch.object(sec_insiders, "fetch_insider_holding", side_effect=fake_holding), \
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        out = runner.run_sec_seat_holders("tsla", "0001318605", "Tesla, Inc.")
+        out = runner_sec.run_sec_seat_holders("tsla", "0001318605", "Tesla, Inc.")
     assert asked == ["Robyn Denholm"] and out["total"] == 1 and out["status"] == "ok"
     assert graph.run_sql("SELECT count(*) AS n FROM OWNS")[0]["n"] == 1
     [row] = graph.run_sql("SELECT id, sec_cik, wikidata_id FROM Person WHERE wikidata_id = 'Q58345040'")
     assert row["sec_cik"] == "0001242782" and row["id"] == "sec:0001242782"      # keyed by the CIK found
-    assert runner.rerun_for_new_seats(sec) is False                          # nothing left to look up
+    assert runner_sec.rerun_for_new_seats(sec) is False                          # nothing left to look up
 
 
 def test_a_director_without_a_window_form_4_gains_holding_and_cik(graph):
@@ -134,15 +134,15 @@ def test_a_dead_seat_holder_is_not_looked_up(graph):
     pass met Steve Jobs († 2011) at Apple and wrote his Form 4 of 2007 as an
     open stake once his name resolved to a CIK. The dead are not asked, and
     they do not call for run-all's second pass either."""
-    from app.scraper import runner
+    from app.scraper import runner_sec
     graph.run_command("CREATE (p:Person {id:'sec:0001007844', full_name:'Steve Jobs', wikidata_id:'Q19837', "
                       "sec_cik:'0001007844', death_date:'2011-10-05'})")
     graph.run_command("MATCH (p:Person {id:'sec:0001007844'}), (e:Entity {id:'tsla'}) "
                       "CREATE (p)-[:HAS_ROLE {role:'Founder', source_id:'wd'}]->(e)")
-    assert runner.seat_holders_without_holdings("tsla") == frozenset({"wd:Q58345040"})
+    assert runner_sec.seat_holders_without_holdings("tsla") == frozenset({"wd:Q58345040"})
     assert _scrape(HOLDING) == [("Robyn Denholm", None)]
     assert graph.run_command("MATCH (p:Person {id:'sec:0001007844'})-[r:OWNS]->() RETURN count(r) AS n") == [{"n": 0}]
-    assert runner.seat_holders_without_holdings("tsla") == frozenset()
+    assert runner_sec.seat_holders_without_holdings("tsla") == frozenset()
 
 
 def test_a_second_run_asks_by_the_cik(graph):
@@ -157,7 +157,7 @@ def test_the_rerun_finds_a_filer_re_keyed_after_the_sec_run(it_db):
     node lei:9DJT…, leaving a forwarding row; Wikidata's seat sits on the new
     id. The rerun reads the seats under the id the filer has now."""
     from app.merged_ids import rename_node_id
-    from app.scraper import runner
+    from app.scraper import runner, runner_sec
     it_db.run_command("CREATE (e:Entity {id:'sec:0000070858', name:'BANK OF AMERICA CORP /DE/', type:'company', "
                       "sec_cik:'0000070858', lei_id:'9DJT3UXIJIZJI4WXO774'})")
     with runner.db.get_session() as session:
@@ -167,15 +167,15 @@ def test_the_rerun_finds_a_filer_re_keyed_after_the_sec_run(it_db):
                       "CREATE (p)-[:HAS_ROLE {role:'Board Member', source_id:'wikidata'}]->(e)")
     sec = {"status": "ok", "cik": "0000070858", "entity_id": "sec:0000070858",
            "company": "BANK OF AMERICA CORP /DE/", "seats_asked": []}
-    assert runner.seat_holders_without_holdings("sec:0000070858") == frozenset()   # the old id: no node, no seat
-    assert runner.seat_rerun_target(sec) == "lei:9DJT3UXIJIZJI4WXO774"
-    assert runner.seat_rerun_target({**sec, "seats_asked": ["wd:Q109659430"]}) is None
-    assert runner._node_id_now("lei:9DJT3UXIJIZJI4WXO774") == "lei:9DJT3UXIJIZJI4WXO774"  # a live id stays
+    assert runner_sec.seat_holders_without_holdings("sec:0000070858") == frozenset()   # the old id: no node, no seat
+    assert runner_sec.seat_rerun_target(sec) == "lei:9DJT3UXIJIZJI4WXO774"
+    assert runner_sec.seat_rerun_target({**sec, "seats_asked": ["wd:Q109659430"]}) is None
+    assert runner_sec._node_id_now("lei:9DJT3UXIJIZJI4WXO774") == "lei:9DJT3UXIJIZJI4WXO774"  # a live id stays
 
 
 def _ask_alone(found=None):
     """`run_sec_seat_holders` with EDGAR answering `found[name]` (nothing by default) → the names asked."""
-    from app.scraper import runner, sec_insiders, sec_shares
+    from app.scraper import runner, runner_sec, sec_insiders, sec_shares
     asked = []
 
     def fake_holding(name, cik, shares_out, person_cik=None):
@@ -187,7 +187,7 @@ def _ask_alone(found=None):
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        runner.run_sec_seat_holders("tsla", "0001318605", "Tesla, Inc.")
+        runner_sec.run_sec_seat_holders("tsla", "0001318605", "Tesla, Inc.")
     return asked
 
 

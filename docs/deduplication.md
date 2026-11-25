@@ -1108,7 +1108,7 @@ so the group shares a hard id, turns `definitive` and merges as usual: the highe
   Apple states its LEI in no filing.
 
 The SEC scrape asks the same question before it writes, so a fresh database never
-mints the twin (`runner._confirm_stored_lei`).
+mints the twin (`runner_sec._confirm_stored_lei`).
 
 ## When no filing states the LEI — the registers decide (`legal_identity`)
 

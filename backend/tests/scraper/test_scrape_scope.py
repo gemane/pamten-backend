@@ -8,7 +8,7 @@ scrape-companies.sh) ran without the scoped dedup and the freshness stamp. The
 wiring IT decorates its own fake runners, so it could never notice."""
 import inspect
 
-from app.scraper import runner
+from app.scraper import runner, runner_imports, runner_oc, runner_sec, runner_sec_filings
 from app.scraper.graph_writer import _with_autodedup
 
 _SCOPE_CODE = _with_autodedup(lambda: None).__code__
@@ -24,9 +24,13 @@ def _scoped(fn) -> bool:
     return getattr(fn, "__code__", None) is _SCOPE_CODE
 
 
+#: the runner and the pipelines that were part of it until 2026-11-25
+_RUNNERS = (runner, runner_sec, runner_sec_filings, runner_oc, runner_imports)
+
+
 def _own_functions():
-    return {n: f for n, f in vars(runner).items()
-            if inspect.isfunction(f) and (f.__module__ == runner.__name__ or _scoped(f))}
+    return {n: f for module in _RUNNERS for n, f in vars(module).items()
+            if inspect.isfunction(f) and (f.__module__ == module.__name__ or _scoped(f))}
 
 
 def test_every_scrape_entry_point_opens_a_scope():

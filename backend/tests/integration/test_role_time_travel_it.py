@@ -9,7 +9,7 @@ undated seat had no evidence date (dimmed in every year).
 import pytest
 
 from app.scraper.graph_writer import _upsert_role
-from app.scraper.runner import _upsert_role_oc
+from app.scraper.runner_oc import _upsert_role_oc
 
 pytestmark = pytest.mark.integration
 

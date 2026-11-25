@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from app.config import settings
-from app.scraper import runner, sec_client, sec_edgar
+from app.scraper import runner_sec, sec_client, sec_edgar
 from app.scraper.run_log import mark_partial
 
 URL = "https://www.sec.gov/Archives/edgar/data/1367016/000106299322013957/form4.xml"
@@ -155,9 +155,9 @@ class TestTheRunnerCountsThem:
              patch.object(settings, "SEC_CACHE_DIR", None), \
              patch("app.objectstore.enabled", return_value=False), \
              patch("app.scraper.runner.get_source_enabled", return_value=True), \
-             patch.object(runner, "_scrape_sec_edgar", side_effect=scrape), \
+             patch.object(runner_sec, "_scrape_sec_edgar", side_effect=scrape), \
              patch.object(sec_client, "_get_client", return_value=client), patch("time.sleep"):
-            return runner.run_scrape_sec_edgar("Morgan Stanley")
+            return runner_sec.run_scrape_sec_edgar("Morgan Stanley")
 
     def test_a_swallowed_loss_is_counted_and_the_run_stays_ok(self):
         out = self._run([httpx.ReadTimeout("a"), httpx.ReadTimeout("b")], {"status": "ok", "total": 70})

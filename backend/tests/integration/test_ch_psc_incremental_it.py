@@ -293,7 +293,7 @@ class TestTheBaselineRecordsItsSnapshot:
         newer baseline.
         """
         from app.scraper.ch_psc_incremental import read_last_snapshot
-        from app.scraper.runner import run_import_ch_psc
+        from app.scraper.runner_imports import run_import_ch_psc
         from app.config import settings
 
         settings.SCRAPER_ENABLED = True
@@ -307,7 +307,7 @@ class TestTheBaselineRecordsItsSnapshot:
         # No digest means no baseline to diff against, so claiming a snapshot was
         # "applied" would let a refresh run with nothing to compare to.
         from app.scraper.ch_psc_incremental import read_last_snapshot
-        from app.scraper.runner import run_import_ch_psc
+        from app.scraper.runner_imports import run_import_ch_psc
         from app.config import settings
 
         settings.SCRAPER_ENABLED = True

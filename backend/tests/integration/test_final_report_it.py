@@ -79,7 +79,7 @@ def test_the_restatement_pass_leaves_it_to_its_reason(it_db):
 
 
 def test_a_holdings_run_dims_it(it_db):
-    from app.scraper import runner
+    from app.scraper import runner_sec_filings
     _companies(it_db)
     holding = {"subject_name": "Tesla, Inc.", "subject_cik": None, "stake_percent": 4.96,
                "file_date": "2026-10-27", "filing_type": "13G/A", "event_date": "2026-09-30",
@@ -90,8 +90,8 @@ def test_a_holdings_run_dims_it(it_db):
          patch("app.scraper.sec_filer.fetch_filer_country", return_value="US"), \
          patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
          patch("app.scraper.sec_filer.fetch_filer_website", return_value=None), \
-         patch("app.scraper.runner._record_sec_industry"), \
+         patch("app.scraper.runner_sec._record_sec_industry"), \
          patch("app.scraper.runner._upsert_entity_by_name",
                side_effect=lambda **kw: BLK if kw.get("cik") == "0002012383" else TSLA):
-        runner.run_sec_holdings("0002012383")
+        runner_sec_filings.run_sec_holdings("0002012383")
     assert _edge(it_db)["why"] == "final_report"

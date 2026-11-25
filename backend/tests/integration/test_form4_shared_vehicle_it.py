@@ -54,7 +54,7 @@ def graph(it_db):
 
 
 def _scrape(payload: dict, holding: dict | None = None):
-    from app.scraper import runner, sec_client, sec_edgar, sec_filer, sec_insiders
+    from app.scraper import runner, runner_sec, sec_client, sec_edgar, sec_filer, sec_insiders
     with patch.object(sec_edgar, "scrape_company", return_value=payload), \
          patch.object(sec_filer, "fetch_filer_country", return_value=None), \
          patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
@@ -65,7 +65,7 @@ def _scrape(payload: dict, holding: dict | None = None):
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        return runner.run_scrape_sec_edgar("America Movil")
+        return runner_sec.run_scrape_sec_edgar("America Movil")
 
 
 def _owners(graph) -> dict[str, tuple]:

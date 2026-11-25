@@ -102,7 +102,7 @@ class TestScraperSendsIdentifyingUserAgent:
 # ── Shared helpers for node/edge-writer conformance ──────────────────────────
 from contextlib import contextmanager           # noqa: E402
 from app.config import Settings, settings        # noqa: E402
-from app.scraper import runner, bulk_import             # noqa: E402
+from app.scraper import bulk_import, runner, runner_oc, runner_sec  # noqa: E402
 from app.scraper.sources import KNOWN_SOURCES    # noqa: E402
 
 
@@ -166,8 +166,8 @@ class TestScraperGating:
 
     ENTRY_POINTS = [
         ("run_scrape",                 lambda: runner.run_scrape("Acme")),
-        ("run_scrape_sec_edgar",       lambda: runner.run_scrape_sec_edgar("Acme")),
-        ("run_scrape_open_corporates", lambda: runner.run_scrape_open_corporates("Acme")),
+        ("run_scrape_sec_edgar",       lambda: runner_sec.run_scrape_sec_edgar("Acme")),
+        ("run_scrape_open_corporates", lambda: runner_oc.run_scrape_open_corporates("Acme")),
         ("run_scrape_all",             lambda: runner.run_scrape_all("Acme")),
     ]
 
@@ -186,7 +186,7 @@ EDGE_WRITERS = [
     ("wikidata HAS_ROLE",    "runner", lambda: runner._upsert_role("p", "e", "CEO", "s", source_url="u")),
     ("sec_edgar HAS_ROLE",   "runner", lambda: runner._upsert_role_sec("p", "e", "CEO", "s", source_url="u", source_date="d")),
     ("sec_edgar OWNS",       "runner", lambda: runner._upsert_owns_sec("o", "n", "s", "minority", "2024-01-01", 5.0, source_url="u")),
-    ("open_corp HAS_ROLE",   "runner", lambda: runner._upsert_role_oc("p", "e", "Director", None, None, "s", source_url="u")),
+    ("open_corp HAS_ROLE",   "runner", lambda: runner_oc._upsert_role_oc("p", "e", "Director", None, None, "s", source_url="u")),
 ]
 
 

@@ -44,8 +44,9 @@ os.environ["SCRAPER_SEC_EDGAR_ENABLED"] = "true"
 logging.basicConfig(level=logging.WARNING)
 
 from app.industry import backfill as industry_backfill  # noqa: E402
-from app.scraper.runner import (run_scrape_all, run_sec_ex21, run_sec_ex21_history,  # noqa: E402
-                               run_sec_acquisitions, run_sec_13f)
+from app.scraper.runner import run_scrape_all  # noqa: E402
+from app.scraper.runner_sec_filings import (run_sec_ex21, run_sec_ex21_history,  # noqa: E402
+                                            run_sec_acquisitions, run_sec_13f)
 from app.scraper.run_log import record_run  # noqa: E402
 from app import source_calls  # noqa: E402
 # count every call to an outside source and the bucket the replay makes, as

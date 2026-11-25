@@ -352,7 +352,7 @@ class TestTheWholeScrapeWritesTheGroup:
 
     def _scrape(self, graph, filing):
         from unittest.mock import patch
-        from app.scraper import runner, sec_edgar, sec_filer
+        from app.scraper import runner, runner_sec, sec_edgar, sec_filer
         payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
                    "ownership_filings": [filing], "executives": [], "holdings": [],
                    "former_names": [], "lei": None}
@@ -362,7 +362,7 @@ class TestTheWholeScrapeWritesTheGroup:
              patch.object(runner, "get_source_enabled", return_value=True), \
              patch.object(runner.settings, "SCRAPER_ENABLED", True), \
              patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-            return runner.run_scrape_sec_edgar("Anheuser-Busch InBev")
+            return runner_sec.run_scrape_sec_edgar("Anheuser-Busch InBev")
 
     def test_the_bloc_becomes_a_group_and_the_filer_becomes_a_member(self, graph):
         self._scrape(graph, self.FILING)
@@ -458,7 +458,7 @@ class TestTheWholeScrapeWritesTheGroup:
                         "source_date": "2026-02-01",
                         "source_url": "https://sec.gov/f4-index.htm"}
         from unittest.mock import patch
-        from app.scraper import runner, sec_edgar, sec_filer
+        from app.scraper import runner, runner_sec, sec_edgar, sec_filer
         payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
                    "ownership_filings": [], "executives": [payload_exec],
                    "holdings": [], "former_names": [], "lei": None}
@@ -468,7 +468,7 @@ class TestTheWholeScrapeWritesTheGroup:
              patch.object(runner, "get_source_enabled", return_value=True), \
              patch.object(runner.settings, "SCRAPER_ENABLED", True), \
              patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-            runner.run_scrape_sec_edgar("Anheuser-Busch InBev")
+            runner_sec.run_scrape_sec_edgar("Anheuser-Busch InBev")
 
         rows = graph.run_command(
             "MATCH (p:Person)-[r:OWNS]->(e:Entity) RETURN r.shares AS sh, "
@@ -486,7 +486,7 @@ class TestTheWholeScrapeWritesTheGroup:
                         "source_date": "2026-02-01",
                         "source_url": "https://sec.gov/f4-index.htm"}
         from unittest.mock import patch
-        from app.scraper import runner, sec_edgar, sec_filer
+        from app.scraper import runner, runner_sec, sec_edgar, sec_filer
         payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
                    "ownership_filings": [], "executives": [payload_exec],
                    "holdings": [], "former_names": [], "lei": None,
@@ -497,7 +497,7 @@ class TestTheWholeScrapeWritesTheGroup:
              patch.object(runner, "get_source_enabled", return_value=True), \
              patch.object(runner.settings, "SCRAPER_ENABLED", True), \
              patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-            runner.run_scrape_sec_edgar("Anheuser-Busch InBev")
+            runner_sec.run_scrape_sec_edgar("Anheuser-Busch InBev")
         assert graph.run_command(
             "MATCH (p:Person) WHERE p.full_name = 'Berkshire Hathaway Inc' RETURN p") == [], \
             "a company was minted as a person"
@@ -531,7 +531,7 @@ class TestTheWholeScrapeWritesTheGroup:
                         "source_date": "2026-02-01",
                         "source_url": "https://sec.gov/f4-index.htm"}
         from unittest.mock import patch
-        from app.scraper import runner, sec_edgar, sec_filer
+        from app.scraper import runner, runner_sec, sec_edgar, sec_filer
         payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
                    "ownership_filings": [], "executives": [payload_exec],
                    "holdings": [], "former_names": [], "lei": None,
@@ -542,7 +542,7 @@ class TestTheWholeScrapeWritesTheGroup:
              patch.object(runner, "get_source_enabled", return_value=True), \
              patch.object(runner.settings, "SCRAPER_ENABLED", True), \
              patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-            runner.run_scrape_sec_edgar("Anheuser-Busch InBev")
+            runner_sec.run_scrape_sec_edgar("Anheuser-Busch InBev")
         rows = graph.run_command(
             "MATCH (p:Person)-[r:OWNS]->(e:Entity) RETURN r.shares AS sh, "
             "r.stake_percent AS pct, r.shares_outstanding AS out")
