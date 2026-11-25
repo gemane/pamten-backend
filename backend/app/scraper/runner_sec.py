@@ -455,6 +455,15 @@ def _write_ownership_filings(target_id: str, target_name: str, filings: list[dic
         )
 
 
+def _owners_were_lost(data: dict) -> bool:
+    """Did this scrape lose the issuer's 13D/G owners to the network
+    (`sec_client.SECTION_OWNERS` among its `failed_sections`, findings item
+    41)? What it wrote of them is then incomplete, and a rule that reads "no
+    statement names this holder" off the graph must wait (findings item 156)."""
+    from app.scraper.sec_client import SECTION_OWNERS
+    return SECTION_OWNERS in (data.get("failed_sections") or [])
+
+
 def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -> dict:
     """The write phase of `run_scrape_sec_edgar`: the filer, its holders, its
     insiders and officers, from the scraped `data`."""
@@ -565,10 +574,22 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             subs = _submissions(data["cik"])
             close_at_class_end(target_id, class_ends(data["cik"], subs))
             # ...and writes the 5 % holders its table states that no
-            # statement covers (findings item 86)
-            table = read_table_and_close(target_id, data["cik"], subs, write=True, source_id=source_id)
-            if table.get("written"):
-                runner.log.info("SEC EDGAR: %r's ownership table: %s", data["name"], table["written"])
+            # statement covers (findings item 86). Not when this scrape lost
+            # its 13D/G owners to the network (findings item 156): the table
+            # step takes "no statement covers this holder" from the statements
+            # just written, and with none read every holder of the table looks
+            # uncovered — Morgan Stanley's partial scrape wrote "BlackRock,
+            # Inc." from the proxy beside the 13G/A the retry then read from
+            # BlackRock Finance, SmartStop's three table holders left their
+            # DEF 14A claims behind. The retry of the partial company, or the
+            # whole-graph pass, which reads the statements itself, does it.
+            if _owners_were_lost(data):
+                runner.log.warning("SEC EDGAR: %r's ownership table not applied — its 13D/G owners were lost "
+                                   "to the network, so no holder could be told covered", data["name"])
+            else:
+                table = read_table_and_close(target_id, data["cik"], subs, write=True, source_id=source_id)
+                if table.get("written"):
+                    runner.log.info("SEC EDGAR: %r's ownership table: %s", data["name"], table["written"])
         except Exception as exc:  # noqa: BLE001 — the scrape stands without it
             runner.log.warning("SEC EDGAR: class ends / ownership table of %r not read: %s", data["name"], exc)
 

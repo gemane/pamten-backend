@@ -2048,6 +2048,27 @@ class TestClassEndInTheScrape:
         close.assert_not_called()
         self.table.assert_not_called()
 
+    def test_a_scrape_that_lost_its_owners_leaves_the_table_alone(self):
+        """Findings item 156: the table step reads "no statement covers this
+        holder" off what the scrape just wrote. Morgan Stanley's owners were
+        lost to a read timeout (rebuild 2026-11-24) and the proxy's "BlackRock,
+        Inc." was written beside the 13G/A the retry then read."""
+        read, close, ends = self._scrape({"name": "SPRINT Corp", "cik": "0000101830", "ownership_filings": [],
+                                          "executives": [], "failed_sections": ["13D/G owners"]})
+        self.table.assert_not_called()
+        close.assert_called_once_with("sprint-id", ends)        # the class ends do not depend on the owners
+
+    @pytest.mark.parametrize("lost", [["insiders"], ["holdings", "F-6 ADS CUSIP"], []])
+    def test_another_lost_section_does_not_hold_the_table_back(self, lost):
+        self._scrape({"name": "SPRINT Corp", "cik": "0000101830", "ownership_filings": [],
+                      "executives": [], "failed_sections": lost})
+        self.table.assert_called_once()
+
+    def test_the_section_is_named_as_the_client_names_it(self):
+        from app.scraper import runner_sec, sec_client
+        assert runner_sec._owners_were_lost({"failed_sections": [sec_client.SECTION_OWNERS]})
+        assert not runner_sec._owners_were_lost({}) and not runner_sec._owners_were_lost({"failed_sections": None})
+
 
 # ── One CIK, one vertex type (findings item 21) ──────────────────────────────
 
