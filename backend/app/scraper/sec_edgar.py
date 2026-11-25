@@ -1136,13 +1136,72 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
     (`_browse_registrants`).
     """
     for form_type in _BROWSE_PASSES:
+        if not form_type:
+            break                       # the type-free pass: `_exact_name_registrant` below
         registrants = _browse_index(name, form_type)
         if registrants is None:
             continue
-        match = (_closest_registrant(name, registrants, form_type) if form_type
-                 else _exact_registrant(name, registrants))
+        if match := _closest_registrant(name, registrants, form_type):
+            return match
+    if match := _exact_name_registrant(name):
+        return match
+    log.info("SEC EDGAR: browse-edgar found no registered match for %r", name)
+    return None
+
+
+def _named_registrants(name: str, query: str) -> tuple[list[tuple[str, str | None]] | None, bool]:
+    """Every registrant that may be exactly ``name``, found under ``query``,
+    and whether the bulk name list answered: from the list when there is one
+    (`sec_names.registrants_named` — no request, and no punctuation trap: the
+    live index lists nothing for "Amgen Inc." with its dot), else from the live
+    index. A list hit carries no name on purpose: the list holds former names
+    too, so `_exact_registrant` reads the filer's record and holds its CURRENT
+    name against the query. None when the live request failed."""
+    from app.scraper import sec_names
+    listed = sec_names.registrants_named(name, query)
+    if listed is not None:
+        return [(cik, None) for cik in listed[:_BROWSE_COUNT[""]]], True
+    return _browse_index(query, ""), False
+
+
+def _files_something_read(match: dict, name: str, how: str) -> bool:
+    """Whether the matched registrant files what the scraper reads; says so when not."""
+    try:
+        sub = _submissions(match["cik"])
+    except httpx.HTTPError:
+        sub = {}
+    if _files_what_we_read(sub):
+        return True
+    log.info("SEC EDGAR: %r %s is %r (CIK %s), which files nothing the scraper reads — not taken",
+             name, how, match["name"], match["cik"])
+    return False
+
+
+def _exact_name_registrant(name: str) -> dict | None:
+    """The registrant of exactly this name, whatever it files — the type-free
+    pass of the name lookup, and the rule a proxy table's holder is found by
+    (`sec_writer._table_holder_node`): first among the names starting with the
+    name as written, then among those starting with its base words.
+
+    A registrant found through the bulk name list is taken when it files what
+    the scraper reads: the list reaches EDGAR's dormant duplicates that the
+    live index's spelling hid — "T. Rowe Price Group, Inc." lists nothing
+    live, and in the list it is T ROWE PRICE GROUP INC, five no-action letters
+    of 2015, not the filer PRICE T ROWE GROUP INC (item 59). One that files
+    nothing read is left to the live index, asked as before the list: a fund
+    that files Form D alone, a broker that files 13F notices, is still the
+    holder a proxy names, and the live index's answer for the name as written
+    took 12 such of 752 holder names (guard 2026-11-24)."""
+    tried: set[str] = set()
+    registrants, from_list = _named_registrants(name, name)
+    if registrants:
+        match = _exact_registrant(name, registrants)
+        if match and from_list and not _files_something_read(match, name, "in the name list"):
+            live = _browse_index(name, "")
+            match = _exact_registrant(name, live) if live else None
         if match:
             return match
+        tried = {cik for cik, _ in registrants}
 
     # The index is a PREFIX search on the registered spelling, so a query
     # carrying another form word than the registrant's never lists it:
@@ -1159,18 +1218,11 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
     # 2006) gives the scrape nothing a name search should decide.
     base = " ".join(name_key(name))
     if base and base.casefold() != name.casefold():
-        registrants = _browse_index(base, "")
-        if registrants and (match := _exact_registrant(name, registrants)):
-            try:
-                sub = _submissions(match["cik"])
-            except httpx.HTTPError:
-                sub = {}
-            if _files_what_we_read(sub):
-                return match
-            log.info("SEC EDGAR: %r by its base name is %r (CIK %s), which files nothing the scraper reads — not taken",
-                     name, match["name"], match["cik"])
-
-    log.info("SEC EDGAR: browse-edgar found no registered match for %r", name)
+        # not the ones the first query already held against the name
+        registrants = [r for r in _named_registrants(name, base)[0] or [] if r[0] not in tried]
+        if registrants and (match := _exact_registrant(name, registrants)) \
+                and _files_something_read(match, name, "by its base name"):
+            return match
     return None
 
 

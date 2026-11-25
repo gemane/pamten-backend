@@ -2228,9 +2228,10 @@ industry fill (one record per filer without a SIC code, 1,728 in a rebuild).
 EDGAR publishes every name it knows a filer by — companies and people, current
 and former names — as one file, `Archives/edgar/cik-lookup-data.txt`: about a
 million "NAME:CIK:" lines, 40 MB, rewritten daily. Where `SEC_NAME_LIST_DIR`
-names a directory, a **person's** name search is answered from it instead of
-browse-edgar: no request, and nothing to lose when the search page changes
-(item 132 lost every name search of a rebuild).
+names a directory, a **person's** name search and a **company's exact-name**
+search are answered from it instead of browse-edgar: no request, and nothing
+to lose when the search page changes (item 132 lost every name search of a
+rebuild).
 
 - **The index.** The list is downloaded at most once in 24 hours (3 s) and
   written as a sorted file of normalised names (upper case, dots dropped,
@@ -2252,8 +2253,37 @@ browse-edgar: no request, and nothing to lose when the search page changes
   live search finds the CIK the person holds for 87, the list for 95; the list
   answers 24 names the live search finds nobody for, and never the reverse.
   Requests for the names themselves: about 450 before, none now.
-- **Not yet from the list:** the company-name searches, and a remembered miss.
-  The list is no source of graph data: it only says which CIKs a name may be.
+- **A company's exact name** (`sec_names.registrants_named`, read through
+  `sec_edgar._exact_name_registrant`): the type-free pass of the name lookup
+  and the lookup of a proxy table's holder (`_table_holder_node`) take the
+  CIKs the list holds under the same name key — legal form, EDGAR's tag, case,
+  accents and punctuation aside; the list is unaccented, so "Nestlé" is folded
+  first. The live index cannot do this: it is a prefix match on EDGAR's own
+  spelling, punctuation included — "Amgen Inc." with its dot lists nothing,
+  "Walmart Inc" neither, and "Walmart" lists WALMART STORES alone. Asking
+  without punctuation found 67 of 123 such names; the list finds them all.
+  Three holds:
+  - *The filer's current name decides.* The list holds former names like
+    current ones (FRANKLIN RESOURCES INC is FRANKLIN TEMPLETON INC today), so
+    a hit carries no name and `_exact_registrant` reads the filer's record.
+  - *A list hit must file what the scraper reads.* The list reaches EDGAR's
+    dormant duplicates the live spelling hid (T ROWE PRICE GROUP INC, five
+    no-action letters, item 59).
+  - *One that files nothing read is left to the live index*, asked for the
+    name as written, as before the list: a fund that files Form D alone or a
+    broker filing 13F notices is still the holder a proxy names (12 of 752).
+  The two filtered passes (10-K, 20-F filers, the closest name) stay live: the
+  list knows no form types.
+- **Measured** (guard 2026-11-24) on the 752 holder names with a legal form in
+  663 cached proxy tables, live search of 2026-11-23 against the list: the
+  same registrant for 276, a registrant where the live search found none for
+  156, none lost, and 4 moved to the record that files the holder's statements
+  (Vanguard Group: the 13G filer, not its transfer-agent record; Ameriprise,
+  Bank of Montreal, Merrill Lynch Professional Clearing likewise). On the 103
+  scrape targets the tickers file does not answer: 102 the same, Vanguard
+  Group moved as above; 104 name searches fewer.
+- **Not from the list:** a remembered miss. The list is no source of graph
+  data: it only says which CIKs a name may be.
 
 ---
 

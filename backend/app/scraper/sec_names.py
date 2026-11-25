@@ -13,9 +13,11 @@ index file read through `mmap` — a lookup is a binary search on disk, and the
 process holds none of the million names. With no list at hand (the setting
 empty, the first download failed) the caller asks the live search as before.
 
-Only the PERSON lookup reads it so far (`person_ciks`). The names are public
-filer names; nothing is written to the graph from here — the list only says
-which CIKs a name may be, and the caller's issuer check decides.
+Two lookups read it: a PERSON's name (`person_ciks`) and a COMPANY's exact
+name (`registrants_named`). The names are public filer names; nothing is
+written to the graph from here — the list only says which CIKs a name may be,
+and the caller's own check decides (the issuer's side for a person, the
+filer's current name for a company).
 """
 import logging
 import mmap
@@ -175,6 +177,41 @@ def person_ciks(words: list[str], limit: int, path: str | None = None) -> list[s
         if found:
             return found[:limit]
     return []
+
+
+#: lines read under one prefix when a company's name is looked up: the names of
+#: one key sort together at the start ("WALMART", "WALMART INC", "WALMART INC /DE/"),
+#: and a prefix as wide as "CAPITAL" has no single registrant to find
+COMPANY_PREFIX_LINES = 5000
+
+
+def registrants_named(name: str, prefix: str | None = None, path: str | None = None) -> list[str] | None:
+    """The CIKs the list holds under exactly ``name`` — the same name key
+    (`mapper.name_key`: legal form, EDGAR's tag, case, accents and punctuation
+    aside) — among the names starting with ``prefix`` (the name itself when
+    not given); None when there is no list to ask.
+
+    What the live search cannot do: its index is a prefix match on EDGAR's own
+    spelling, punctuation included, so "Amgen Inc." with its dot lists nothing
+    and "Walmart Inc" neither — of 752 holder names in the proxy tables it
+    found 280, the list those and 118 more (findings item 135). The list is
+    unaccented, so the prefix is folded first ("Nestlé"). It holds FORMER names
+    beside current ones (FRANKLIN RESOURCES INC is FRANKLIN TEMPLETON INC
+    today): the caller confirms a hit against the filer's own record."""
+    import unicodedata
+    from app.scraper.mapper import name_key
+    path = path or index_path()
+    if not path:
+        return None
+    key = name_key(name)
+    plain = unicodedata.normalize("NFKD", prefix if prefix is not None else name).encode("ascii", "ignore").decode()
+    if not key or not normalize(plain):
+        return []
+    found: list[str] = []
+    for listed, cik in names_starting(path, plain, limit=COMPANY_PREFIX_LINES):
+        if cik not in found and name_key(listed) == key:
+            found.append(cik)
+    return found
 
 
 def count(path: str) -> int:
