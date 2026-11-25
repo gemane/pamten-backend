@@ -34,7 +34,7 @@ FILER = Filer(cik=CIK, name="CAPITAL VENTURES INTERNATIONAL", home=None,
 @pytest.fixture(autouse=True)
 def _edgar():
     with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
-         patch("app.scraper.sec_edgar._submissions", return_value=SUBMISSIONS), \
+         patch("app.scraper.sec_client._submissions", return_value=SUBMISSIONS), \
          patch("app.scraper.legal_identity.filer_facts", return_value=FILER), \
          patch("app.scraper.legal_identity.gleif_parents", return_value=[]), \
          patch("app.scraper.legal_identity.Evidence.address_at", return_value=None), \

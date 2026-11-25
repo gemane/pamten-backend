@@ -13,7 +13,7 @@ from app.config import settings
 from app.db.arcadedb import close_client
 from app.db.schema import ensure_indexes
 from app.scraper.geocode import close_client as close_geocode_client
-from app.scraper.sec_edgar import close_client as close_sec_client
+from app.scraper.sec_client import close_client as close_sec_client
 from app.routers import (entities, persons, relationships, search, sources, federation,
                          flags, stats, app_version, export, media,
                          analytics as analytics_router)

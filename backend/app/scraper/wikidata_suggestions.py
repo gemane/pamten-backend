@@ -211,7 +211,8 @@ def edgar_facts(cik: str) -> dict | None:
     no such filer."""
     import httpx
 
-    from app.scraper.sec_edgar import _submissions, sec_country
+    from app.scraper.sec_client import _submissions
+    from app.scraper.sec_filer import sec_country
     try:
         sub = _submissions(cik)
     except httpx.HTTPStatusError as exc:

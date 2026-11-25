@@ -30,25 +30,25 @@ def _node():
 
 
 def _sec_scrape():
-    from app.scraper import runner, sec_edgar
+    from app.scraper import runner, sec_edgar, sec_filer, sec_insiders
     payload = {"name": "MOLSON COORS BEVERAGE CO", "cik": CIK, "lei": None, "former_names": [],
                "ownership_filings": [], "holdings": [], "executives": []}
     with patch.object(sec_edgar, "scrape_company", return_value=payload), \
-         patch.object(sec_edgar, "fetch_filer_country", return_value="US"), \
-         patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_website", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_sic", return_value=None), \
-         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
+         patch.object(sec_filer, "fetch_filer_country", return_value="US"), \
+         patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_website", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_sic", return_value=None), \
+         patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):
         runner.run_scrape_sec_edgar("Molson Coors")
 
 
 def _wikidata():
     # the item's CIK is a pointer: EDGAR writes the filer (register_pointer)
-    from app.scraper import sec_edgar
+    from app.scraper import sec_client
     from app.scraper.runner import _upsert_entity
     with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
-         patch.object(sec_edgar, "_submissions", return_value={"name": "MOLSON COORS BEVERAGE CO"}):
+         patch.object(sec_client, "_submissions", return_value={"name": "MOLSON COORS BEVERAGE CO"}):
         return _upsert_entity("Molson Coors Brewing Company", None, None, "", "Q3319685",
                               source_id="wikidata", sec_cik=CIK, aliases=["Molson Coors"])
 

@@ -16,7 +16,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from app.scraper import sec_edgar, sec_lei
+from app.scraper import sec_13dg_text, sec_client, sec_lei
 from app.scraper.sec_lei import (confirm_filer_lei, document_states_lei, lei_checksum_ok,
                                  leis_in, name_labels)
 
@@ -31,7 +31,7 @@ KRAFT_FOODS = "5493003STKEZ2S0RNU91"
 
 
 def text(name):
-    return sec_edgar._plain_text((FIXTURES / name).read_text())
+    return sec_13dg_text._plain_text((FIXTURES / name).read_text())
 
 
 class TestTheChecksum:
@@ -115,8 +115,8 @@ class TestConfirmFilerLei:
     UNILEVER_DOC = (FIXTURES / "unilever_6k_pdmr_lei_excerpt.htm").read_text()
 
     def test_a_confirmed_lei_comes_with_its_filing(self):
-        with patch.object(sec_edgar, "_get", return_value={"hits": {"hits": [hit(["0000217410"])]}}) as get, \
-             patch.object(sec_edgar, "_get_text", return_value=self.UNILEVER_DOC) as read:
+        with patch.object(sec_client, "_get", return_value={"hits": {"hits": [hit(["0000217410"])]}}) as get, \
+             patch.object(sec_client, "_get_text", return_value=self.UNILEVER_DOC) as read:
             out = confirm_filer_lei("217410", UNILEVER, ["UNILEVER PLC"])
         assert get.call_args.args[1] == {"q": f'"{UNILEVER}"', "ciks": "0000217410"}
         read.assert_called_once_with(
@@ -125,23 +125,23 @@ class TestConfirmFilerLei:
                        "source_url": read.call_args.args[0]}
 
     def test_a_hit_not_filed_under_the_cik_is_not_read(self):
-        with patch.object(sec_edgar, "_get", return_value={"hits": {"hits": [hit(["0000320193"])]}}), \
-             patch.object(sec_edgar, "_get_text") as read:
+        with patch.object(sec_client, "_get", return_value={"hits": {"hits": [hit(["0000320193"])]}}), \
+             patch.object(sec_client, "_get_text") as read:
             assert confirm_filer_lei("217410", UNILEVER, ["UNILEVER PLC"]) is None
         read.assert_not_called()
 
     def test_a_shared_hit_needs_the_filers_name(self):
         kraft = (FIXTURES / "kraft_heinz_424b5_lei_excerpt.htm").read_text()
         shared = hit(["0000046640", "0001637459"], "0001193125-25-030026:d930629d424b5.htm", "424B5")
-        with patch.object(sec_edgar, "_get", return_value={"hits": {"hits": [shared]}}), \
-             patch.object(sec_edgar, "_get_text", return_value=kraft):
+        with patch.object(sec_client, "_get", return_value={"hits": {"hits": [shared]}}), \
+             patch.object(sec_client, "_get_text", return_value=kraft):
             assert confirm_filer_lei("1637459", KRAFT_FOODS, ["KRAFT HEINZ CO"]) is None
             assert confirm_filer_lei("46640", KRAFT_FOODS, ["KRAFT HEINZ FOODS CO"])["cik"] == "0000046640"
 
     def test_at_most_max_documents_are_read(self):
         hits = [hit(["0000217410"], f"0000217410-23-00003{i}:doc{i}.htm") for i in range(5)]
-        with patch.object(sec_edgar, "_get", return_value={"hits": {"hits": hits}}), \
-             patch.object(sec_edgar, "_get_text", return_value="no code here") as read:
+        with patch.object(sec_client, "_get", return_value={"hits": {"hits": hits}}), \
+             patch.object(sec_client, "_get_text", return_value="no code here") as read:
             assert confirm_filer_lei("217410", UNILEVER, ["UNILEVER PLC"]) is None
         assert read.call_count == sec_lei.MAX_DOCUMENTS
 
@@ -149,16 +149,16 @@ class TestConfirmFilerLei:
         hits = [hit(["0000217410"], "0000217410-23-000038:gone.htm"), hit(["0000217410"])]
         err = httpx.HTTPStatusError("404", request=httpx.Request("GET", "x"),
                                     response=httpx.Response(404))
-        with patch.object(sec_edgar, "_get", return_value={"hits": {"hits": hits}}), \
-             patch.object(sec_edgar, "_get_text", side_effect=[err, self.UNILEVER_DOC]):
+        with patch.object(sec_client, "_get", return_value={"hits": {"hits": hits}}), \
+             patch.object(sec_client, "_get_text", side_effect=[err, self.UNILEVER_DOC]):
             assert confirm_filer_lei("217410", UNILEVER, ["UNILEVER PLC"])["lei"] == UNILEVER
 
     def test_a_failed_search_is_unknown_not_a_failure(self):
-        with patch.object(sec_edgar, "_get", side_effect=httpx.ConnectError("down")):
+        with patch.object(sec_client, "_get", side_effect=httpx.ConnectError("down")):
             assert confirm_filer_lei("217410", UNILEVER, ["UNILEVER PLC"]) is None
 
     def test_no_request_for_a_code_that_is_no_lei(self):
-        with patch.object(sec_edgar, "_get") as get:
+        with patch.object(sec_client, "_get") as get:
             assert confirm_filer_lei("217410", "549300MKFYEKVRWML318", ["UNILEVER PLC"]) is None
             assert confirm_filer_lei(None, UNILEVER, ["UNILEVER PLC"]) is None
         get.assert_not_called()

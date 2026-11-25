@@ -175,7 +175,7 @@ class TestRegisterFacts:
     def test_edgar_names_and_country(self):
         sub = {"name": "BlackRock Finance, Inc.", "formerNames": [{"name": "BLACKROCK INC."}],
                "stateOfIncorporation": "DE"}
-        with patch("app.scraper.sec_edgar._submissions", return_value=sub):
+        with patch("app.scraper.sec_client._submissions", return_value=sub):
             facts = ws.edgar_facts("1364742")
         assert facts["names"] == ["BlackRock Finance, Inc.", "BLACKROCK INC."] and facts["country"] == "US"
 
@@ -183,9 +183,9 @@ class TestRegisterFacts:
         def err(code):
             resp = httpx.Response(code, request=httpx.Request("GET", "https://data.sec.gov/x"))
             return httpx.HTTPStatusError("e", request=resp.request, response=resp)
-        with patch("app.scraper.sec_edgar._submissions", side_effect=err(404)):
+        with patch("app.scraper.sec_client._submissions", side_effect=err(404)):
             assert ws.edgar_facts("1") is None
-        with patch("app.scraper.sec_edgar._submissions", side_effect=err(500)):
+        with patch("app.scraper.sec_client._submissions", side_effect=err(500)):
             with pytest.raises(httpx.HTTPStatusError):
                 ws.edgar_facts("1")
 
@@ -342,7 +342,7 @@ class TestTheReport:
         # the report judges as the writer does (`register_pointer.moved_on`, findings item 66):
         # EDGAR lists "BlackRock, Inc." under the new parent's CIK — the name moved
         with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
+             patch("app.scraper.sec_lookup.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
             report, _ = self._build([], items, US, lambda lei: None, edgar.get, [old_filer],
                                     {"P5531": {"0001364742": ["Q219635"]}})
             assert report["counts"]["refused_pairs"] == 1
@@ -358,7 +358,7 @@ class TestTheReport:
                     "sec_cik": "0000038777", "former_names": ["FRANKLIN RESOURCES INC|2026-08-14"]}
         items = {"Q744683": _item(label="Franklin Templeton Investments", aliases=["Franklin Resources"], ciks=["0000038777"])}
         with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company", return_value={"cik": "0000038777", "name": "FRANKLIN TEMPLETON INC"}):
+             patch("app.scraper.sec_lookup.search_company", return_value={"cik": "0000038777", "name": "FRANKLIN TEMPLETON INC"}):
             report, _ = self._build([], items, US, lambda lei: None,
                                     {"0000038777": {"names": ["FRANKLIN TEMPLETON INC"], "country": "US", "status": None}}.get,
                                     [franklin], {"P5531": {"0000038777": ["Q744683"]}})

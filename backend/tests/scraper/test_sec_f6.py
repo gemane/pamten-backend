@@ -5,13 +5,14 @@ blank form-of-receipt template, then the table stating "ADS CUSIP No.:
 641069406"), its F-6/A of 2004 (the Rule 144A ADS 641069 50 5, bracketed and
 line-broken codes, prose about CUSIP numbers) and Wesfarmers' F-6EF of 2008
 ("CUSIP #" with nothing after it)."""
+import contextlib
 import pathlib
 from unittest.mock import patch
 
 import httpx
 import pytest
 
-from app.scraper import sec_edgar, sec_f6
+from app.scraper import sec_client, sec_edgar, sec_f6
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
@@ -78,22 +79,22 @@ class TestFetch:
         texts = {"0001193805-26-000160": "CUSIP NUMBER: ____",          # newest: template only
                  "0001193805-09-001403": _fixture("f6_nestle_2026_excerpt.txt"),
                  "0001193805-04-000900": _fixture("f6_nestle_2004_excerpt.txt")}
-        with patch.object(sec_edgar, "_submissions", return_value=NESTLE), \
-             patch.object(sec_edgar, "_get_text", side_effect=lambda url: texts[url.rsplit("/", 1)[1][:-4]]) as get:
+        with patch.object(sec_client, "_submissions", return_value=NESTLE), \
+             patch.object(sec_client, "_get_text", side_effect=lambda url: texts[url.rsplit("/", 1)[1][:-4]]) as get:
             out = sec_f6.fetch_ads_cusips("0000792990")
         assert out["cusips"] == ["641069406"] and out["filings_read"] == 2
         assert out["source_url"].endswith("/000119380509001403/0001193805-09-001403.txt")
         assert get.call_count == 2, "the 2004 filing is not read"
 
     def test_a_filer_without_f6_costs_the_submissions_read_only(self):
-        with patch.object(sec_edgar, "_submissions", return_value=_subs(("10-K", "a", "2026-01-01"))), \
-             patch.object(sec_edgar, "_get_text") as get:
+        with patch.object(sec_client, "_submissions", return_value=_subs(("10-K", "a", "2026-01-01"))), \
+             patch.object(sec_client, "_get_text") as get:
             assert sec_f6.fetch_ads_cusips("0000320193") == {"cusips": [], "source_url": None, "filings_read": 0}
         get.assert_not_called()
 
     def test_none_stated_anywhere(self):
-        with patch.object(sec_edgar, "_submissions", return_value=NESTLE), \
-             patch.object(sec_edgar, "_get_text", return_value=_fixture("f6_wesfarmers_2008_excerpt.txt")):
+        with patch.object(sec_client, "_submissions", return_value=NESTLE), \
+             patch.object(sec_client, "_get_text", return_value=_fixture("f6_wesfarmers_2008_excerpt.txt")):
             assert sec_f6.fetch_ads_cusips("0001436381") == {"cusips": [], "source_url": None, "filings_read": 4}
 
     def test_a_missing_filing_is_skipped(self):
@@ -101,39 +102,41 @@ class TestFetch:
             if "000119380526000160" in url:
                 raise _http_error(404)
             return _fixture("f6_nestle_2026_excerpt.txt")
-        with patch.object(sec_edgar, "_submissions", return_value=NESTLE), patch.object(sec_edgar, "_get_text", side_effect=get):
+        with patch.object(sec_client, "_submissions", return_value=NESTLE), patch.object(sec_client, "_get_text", side_effect=get):
             assert sec_f6.fetch_ads_cusips("0000792990")["cusips"] == ["641069406"]
 
     def test_a_lost_request_stops_the_reading_and_marks_the_run(self):
         # an older filing must not stand in for the newer one the network lost
-        token = sec_edgar._failed_sections.set([])
+        token = sec_client._failed_sections.set([])
         try:
-            with patch.object(sec_edgar, "_submissions", return_value=NESTLE), \
-                 patch.object(sec_edgar, "_get_text", side_effect=httpx.ReadTimeout("slow")) as get:
+            with patch.object(sec_client, "_submissions", return_value=NESTLE), \
+                 patch.object(sec_client, "_get_text", side_effect=httpx.ReadTimeout("slow")) as get:
                 assert sec_f6.fetch_ads_cusips("0000792990")["cusips"] == []
             assert get.call_count == 1
-            assert sec_edgar._failed_sections.get() == [sec_f6.SECTION]
+            assert sec_client._failed_sections.get() == [sec_f6.SECTION]
         finally:
-            sec_edgar._failed_sections.reset(token)
+            sec_client._failed_sections.reset(token)
 
     def test_a_lost_submissions_read_marks_the_run(self):
-        token = sec_edgar._failed_sections.set([])
+        token = sec_client._failed_sections.set([])
         try:
-            with patch.object(sec_edgar, "_submissions", side_effect=_http_error(503)):
+            with patch.object(sec_client, "_submissions", side_effect=_http_error(503)):
                 assert sec_f6.fetch_ads_cusips("0000792990")["cusips"] == []
-            assert sec_edgar._failed_sections.get() == [sec_f6.SECTION]
+            assert sec_client._failed_sections.get() == [sec_f6.SECTION]
         finally:
-            sec_edgar._failed_sections.reset(token)
+            sec_client._failed_sections.reset(token)
 
 
 class TestScrape:
     def test_the_scrape_carries_the_ads_cusips(self):
-        stubs = {"company_by_cik": {"cik": "0000792990", "name": "NESTLE SA"},
-                 "fetch_former_names": [], "fetch_company_lei": None, "fetch_ownership_filings": [],
-                 "fetch_executives": [], "fetch_filer_holdings": [], "fetch_shares_outstanding_detail": None}
-        with patch.multiple(sec_edgar, **{k: (lambda *a, _v=v, **k2: _v) for k, v in stubs.items()}), \
+        stubs = {"app.scraper.sec_filer.company_by_cik": {"cik": "0000792990", "name": "NESTLE SA"},
+                 "app.scraper.sec_filer.fetch_former_names": [], "app.scraper.sec_filer.fetch_company_lei": None, "app.scraper.sec_13dg.fetch_ownership_filings": [],
+                 "app.scraper.sec_insiders.fetch_executives": [], "app.scraper.sec_holdings.fetch_filer_holdings": [], "app.scraper.sec_shares.fetch_shares_outstanding_detail": None}
+        with contextlib.ExitStack() as stack, \
              patch("app.scraper.sec_roster.roster_insiders", return_value=[]), \
              patch.object(sec_f6, "fetch_ads_cusips",
                           return_value={"cusips": ["641069406"], "source_url": "u", "filings_read": 1}):
+            for target, value in stubs.items():
+                stack.enter_context(patch(target, return_value=value))
             data = sec_edgar.scrape_company("Nestlé", cik="0000792990")
         assert data["ads_cusips"] == ["641069406"] and data["ads_cusip_url"] == "u"

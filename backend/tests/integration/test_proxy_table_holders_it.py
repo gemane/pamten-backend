@@ -34,9 +34,9 @@ def _seed(it_db):
 
 
 def _write(table, filing=FILING, registrant=None, exited=None):
-    from app.scraper import sec_edgar
+    from app.scraper import sec_lookup
     from app.scraper.sec_writer import write_table_holders
-    with patch.object(sec_edgar, "_browse_index", return_value=[registrant] if registrant else []), \
+    with patch.object(sec_lookup, "_browse_index", return_value=[registrant] if registrant else []), \
          patch("app.scraper.sec_writer.statement_persons", return_value=[]):
         return write_table_holders(ISSUER, filing, table, SID, {"filings": {"recent": {"form": ["10-K", "10-K/A"]}}},
                                    exited=exited)
@@ -124,15 +124,15 @@ def test_with_the_bulk_name_list_a_holder_is_found_without_a_search(it_db, tmp_p
     """Findings item 135: the live index lists nothing for "Amgen Inc." with its
     dot, so the 5 % row was dropped at every run; the list holds AMGEN INC, and
     the filer's own record confirms the name it bears today."""
-    from app.scraper import sec_edgar, sec_names
+    from app.scraper import sec_client, sec_lookup, sec_names
     from app.scraper.sec_writer import write_table_holders
     _seed(it_db)
     raw = b"AMGEN INC:0000318154:\n" + b"".join(b"ZZ FILLER %04d INC:%010d:\n" % (i, i) for i in range(1100))
     index = sec_names.index_path(str(tmp_path), download=lambda: raw)
     record = {"name": "AMGEN INC", "filings": {"recent": {"form": ["SC 13G"], "filingDate": ["2026-02-10"]}}}
     with patch.object(sec_names, "index_path", return_value=index), \
-         patch.object(sec_edgar, "_browse_index") as live, \
-         patch.object(sec_edgar, "_submissions", return_value=record), \
+         patch.object(sec_lookup, "_browse_index") as live, \
+         patch.object(sec_client, "_submissions", return_value=record), \
          patch("app.scraper.sec_writer.statement_persons", return_value=[]):
         out = write_table_holders(ISSUER, FILING, {"as_of": None, "rows": [_row("Amgen Inc.", 9.6, "Class A")]}, SID,
                                   {"filings": {"recent": {"form": ["10-K", "10-K/A"]}}})
@@ -218,10 +218,10 @@ def _pass(table):
     """The whole-graph pass over the seeded issuer, its table given."""
     from app.scraper.sec_writer import close_absent_from_tables
     subs = {"cik": "2041610", "filings": {"recent": {"form": ["10-K", "10-K/A"]}}}
-    with patch("app.scraper.sec_edgar._submissions", return_value=subs), \
+    with patch("app.scraper.sec_client._submissions", return_value=subs), \
          patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
-         patch("app.scraper.sec_edgar._get_text", return_value="<html></html>"), \
-         patch("app.scraper.sec_edgar._browse_index", return_value=[]), \
+         patch("app.scraper.sec_client._get_text", return_value="<html></html>"), \
+         patch("app.scraper.sec_lookup._browse_index", return_value=[]), \
          patch("app.scraper.proxy_statement.read_holder_rows",
                return_value=[{"name": r["name"], "percents": [r["stake_pct"]]} for r in table["rows"]]), \
          patch("app.scraper.proxy_statement.read_holder_table", return_value=table), \
@@ -289,7 +289,7 @@ def test_the_pass_writes_who_reported_since_the_table_and_not_who_left(it_db):
     Enterprises filed a 13D. Vanguard is not written from the table, BlackRock
     is, and Cox's statement is written as a scrape of the issuer would."""
     from pathlib import Path
-    from app.scraper import sec_edgar
+    from app.scraper import sec_13dg_xml, sec_client, sec_filer, sec_lookup
     from app.scraper.sec_writer import read_table_and_close
     it_db.run_command(f"CREATE (:Source {{id: '{SID}', name: 'SEC EDGAR'}})")
     it_db.run_command("CREATE (:Entity {id: 'sec:0002057463', name: 'GCI Liberty Inc', type: 'company', "
@@ -307,14 +307,14 @@ def test_the_pass_writes_who_reported_since_the_table_and_not_who_left(it_db):
            "comment_text": "", "persons": [{"name": "Cox Enterprises, Inc.", "cik": "0000000042", "percent": 28.7,
                                             "aggregate": 2870.0, "sole_voting": 2870.0, "shared_voting": 0.0,
                                             "sole_dispositive": 2870.0, "shared_dispositive": 0.0, "type_code": "CO"}]}
-    exit_xml = sec_edgar._parse_13dg_xml((fixtures / "13ga_vanguard_exit.xml").read_text())
+    exit_xml = sec_13dg_xml._parse_13dg_xml((fixtures / "13ga_vanguard_exit.xml").read_text())
     table = {"as_of": "2026-03-02", "rows": [_row("The Vanguard Group", 10.84), _row("BlackRock, Inc.", 6.9)]}
-    with patch.object(sec_edgar, "_submissions", return_value=subs), \
-         patch.object(sec_edgar, "_get_text", return_value="<html></html>"), \
-         patch.object(sec_edgar, "_fetch_13dg_xml",
+    with patch.object(sec_client, "_submissions", return_value=subs), \
+         patch.object(sec_client, "_get_text", return_value="<html></html>"), \
+         patch.object(sec_13dg_xml, "_fetch_13dg_xml",
                       side_effect=lambda cik, acc: exit_xml if acc == VANGUARD_EXIT else cox), \
-         patch.object(sec_edgar, "fetch_former_names", return_value=[]), \
-         patch.object(sec_edgar, "_browse_index", return_value=[]), \
+         patch.object(sec_filer, "fetch_former_names", return_value=[]), \
+         patch.object(sec_lookup, "_browse_index", return_value=[]), \
          patch("app.scraper.proxy_statement.read_holder_table", return_value=table), \
          patch("app.scraper.proxy_statement.read_holder_rows", return_value=[]), \
          patch("app.scraper.sec_writer.statement_persons", return_value=[]):
@@ -328,12 +328,12 @@ def test_the_pass_writes_who_reported_since_the_table_and_not_who_left(it_db):
 
 
 def test_the_issuers_own_scrape_does_not_read_the_statements_again(it_db):
-    from app.scraper import sec_edgar
+    from app.scraper import sec_client
     from app.scraper.sec_writer import read_table_and_close
     _seed(it_db)
     subs = {"cik": "0002041610", "filings": {"recent": {"form": ["DEF 14A"], "filingDate": ["2026-03-12"],
                                    "accessionNumber": ["0001140361-26-000001"], "primaryDocument": ["def14a.htm"]}}}
-    with patch.object(sec_edgar, "_get_text", return_value="<html></html>"), \
+    with patch.object(sec_client, "_get_text", return_value="<html></html>"), \
          patch("app.scraper.sec_writer.write_statements_since") as since:
         res = read_table_and_close(ISSUER, "0002041610", subs, write=True, source_id=SID)
     since.assert_not_called()
@@ -343,13 +343,13 @@ def test_the_issuers_own_scrape_does_not_read_the_statements_again(it_db):
 def test_a_registered_funds_statements_are_not_read(it_db):
     """Its table is not written (it lists holders of record), so there is
     nothing the statements since could correct."""
-    from app.scraper import sec_edgar
+    from app.scraper import sec_client
     from app.scraper.sec_writer import read_table_and_close
     _seed(it_db)
     subs = {"cik": "0002041610", "filings": {"recent": {"form": ["DEF 14A", "N-CSR"], "filingDate": ["2026-03-12", "2026-02-01"],
                                                         "accessionNumber": ["0001140361-26-000001", "0002041610-26-000002"],
                                                         "primaryDocument": ["def14a.htm", "ncsr.htm"]}}}
-    with patch.object(sec_edgar, "_get_text", return_value="<html></html>"), \
+    with patch.object(sec_client, "_get_text", return_value="<html></html>"), \
          patch("app.scraper.sec_writer.write_statements_since") as since:
         res = read_table_and_close(ISSUER, "0002041610", subs, write=True, source_id=SID, statements_for="Skydance Corp")
     since.assert_not_called()

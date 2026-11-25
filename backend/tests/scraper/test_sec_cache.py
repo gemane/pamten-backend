@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from app.config import settings
-from app.scraper import sec_cache, sec_edgar
+from app.scraper import sec_cache, sec_client
 
 FILING = "https://www.sec.gov/Archives/edgar/data/1181412/000118141222000003/primary_doc.xml"
 
@@ -59,39 +59,39 @@ class TestFetchThrough:
     def test_second_fetch_of_a_filing_never_touches_the_network(self, tmp_path):
         calls: list = []
         with patch.object(settings, "SEC_CACHE_DIR", str(tmp_path)), \
-             patch.object(sec_edgar, "_get_client", lambda: self._client(calls)), \
-             patch.object(sec_edgar, "REQUEST_DELAY", 0):
-            assert sec_edgar._get_text(FILING) == "<doc/>"
-            assert sec_edgar._get_text(FILING) == "<doc/>"
+             patch.object(sec_client, "_get_client", lambda: self._client(calls)), \
+             patch.object(sec_client, "REQUEST_DELAY", 0):
+            assert sec_client._get_text(FILING) == "<doc/>"
+            assert sec_client._get_text(FILING) == "<doc/>"
         assert calls == [FILING], "one network fetch, then the disk"
 
     def test_live_urls_are_fetched_every_time(self, tmp_path):
         calls: list = []
         subs = "https://data.sec.gov/submissions/CIK0001181412.json"
         with patch.object(settings, "SEC_CACHE_DIR", str(tmp_path)), \
-             patch.object(sec_edgar, "_get_client", lambda: self._client(calls, body=b"{}")), \
-             patch.object(sec_edgar, "REQUEST_DELAY", 0):
-            sec_edgar._get(subs)
-            sec_edgar._get(subs)
+             patch.object(sec_client, "_get_client", lambda: self._client(calls, body=b"{}")), \
+             patch.object(sec_client, "REQUEST_DELAY", 0):
+            sec_client._get(subs)
+            sec_client._get(subs)
         assert calls == [subs, subs]
         assert not list(tmp_path.rglob("*.gz")), "nothing written for a live URL"
 
     def test_off_when_the_dir_is_unset(self, tmp_path):
         calls: list = []
         with patch.object(settings, "SEC_CACHE_DIR", ""), \
-             patch.object(sec_edgar, "_get_client", lambda: self._client(calls)), \
-             patch.object(sec_edgar, "REQUEST_DELAY", 0):
-            sec_edgar._get_text(FILING)
-            sec_edgar._get_text(FILING)
+             patch.object(sec_client, "_get_client", lambda: self._client(calls)), \
+             patch.object(sec_client, "REQUEST_DELAY", 0):
+            sec_client._get_text(FILING)
+            sec_client._get_text(FILING)
         assert calls == [FILING, FILING]
 
     def test_an_error_response_is_not_cached(self, tmp_path):
         calls: list = []
         with patch.object(settings, "SEC_CACHE_DIR", str(tmp_path)), \
-             patch.object(sec_edgar, "_get_client", lambda: self._client(calls, status=404)), \
-             patch.object(sec_edgar, "REQUEST_DELAY", 0), \
+             patch.object(sec_client, "_get_client", lambda: self._client(calls, status=404)), \
+             patch.object(sec_client, "REQUEST_DELAY", 0), \
              pytest.raises(httpx.HTTPStatusError):
-            sec_edgar._get_text(FILING)
+            sec_client._get_text(FILING)
         assert not list(tmp_path.rglob("*.gz"))
 
 
@@ -121,10 +121,10 @@ class TestSharedLayer:
     def test_render_style_no_disk_caches_in_the_bucket_only(self, shared):
         calls: list = []
         with patch.object(settings, "SEC_CACHE_DIR", ""), \
-             patch.object(sec_edgar, "_get_client", lambda: self._client(calls)), \
-             patch.object(sec_edgar, "REQUEST_DELAY", 0):
-            assert sec_edgar._get_text(FILING) == "<doc/>"
-            assert sec_edgar._get_text(FILING) == "<doc/>"
+             patch.object(sec_client, "_get_client", lambda: self._client(calls)), \
+             patch.object(sec_client, "REQUEST_DELAY", 0):
+            assert sec_client._get_text(FILING) == "<doc/>"
+            assert sec_client._get_text(FILING) == "<doc/>"
         assert calls == [FILING]
         assert list(shared.objects) == ["edgar/1181412/000118141222000003/primary_doc.xml.gz"]
         assert gzip.decompress(next(iter(shared.objects.values()))) == b"<doc/>"
@@ -134,21 +134,21 @@ class TestSharedLayer:
         shared.objects[sec_cache.s3_key(key)] = gzip.compress(b"<from-bucket/>")
         calls: list = []
         with patch.object(settings, "SEC_CACHE_DIR", str(tmp_path)), \
-             patch.object(sec_edgar, "_get_client", lambda: self._client(calls)), \
-             patch.object(sec_edgar, "REQUEST_DELAY", 0):
-            assert sec_edgar._get_text(FILING) == "<from-bucket/>"
+             patch.object(sec_client, "_get_client", lambda: self._client(calls)), \
+             patch.object(sec_client, "REQUEST_DELAY", 0):
+            assert sec_client._get_text(FILING) == "<from-bucket/>"
             assert calls == [], "served from the bucket, no network"
             assert sec_cache.read(str(tmp_path), key) == b"<from-bucket/>", "now local too"
             shared.calls.clear()
-            assert sec_edgar._get_text(FILING) == "<from-bucket/>"
+            assert sec_client._get_text(FILING) == "<from-bucket/>"
         assert not any(c.startswith("get") for c in shared.calls), "third read is local"
 
     def test_a_fresh_fetch_writes_every_layer(self, shared, tmp_path):
         calls: list = []
         with patch.object(settings, "SEC_CACHE_DIR", str(tmp_path)), \
-             patch.object(sec_edgar, "_get_client", lambda: self._client(calls)), \
-             patch.object(sec_edgar, "REQUEST_DELAY", 0):
-            sec_edgar._get_text(FILING)
+             patch.object(sec_client, "_get_client", lambda: self._client(calls)), \
+             patch.object(sec_client, "REQUEST_DELAY", 0):
+            sec_client._get_text(FILING)
         assert sec_cache.read(str(tmp_path), sec_cache.cacheable(FILING)) == b"<doc/>"
         assert "edgar/1181412/000118141222000003/primary_doc.xml.gz" in shared.objects
 
@@ -156,9 +156,9 @@ class TestSharedLayer:
         calls: list = []
         subs = "https://data.sec.gov/submissions/CIK0001181412.json"
         with patch.object(settings, "SEC_CACHE_DIR", ""), \
-             patch.object(sec_edgar, "_get_client", lambda: self._client(calls, body=b"{}")), \
-             patch.object(sec_edgar, "REQUEST_DELAY", 0):
-            sec_edgar._get(subs)
+             patch.object(sec_client, "_get_client", lambda: self._client(calls, body=b"{}")), \
+             patch.object(sec_client, "REQUEST_DELAY", 0):
+            sec_client._get(subs)
         assert shared.objects == {} and shared.calls == []
 
     def test_an_undecodable_object_is_a_miss(self, shared):
@@ -166,8 +166,8 @@ class TestSharedLayer:
         shared.objects[sec_cache.s3_key(key)] = b"not gzip"
         calls: list = []
         with patch.object(settings, "SEC_CACHE_DIR", ""), \
-             patch.object(sec_edgar, "_get_client", lambda: self._client(calls)), \
-             patch.object(sec_edgar, "REQUEST_DELAY", 0):
-            assert sec_edgar._get_text(FILING) == "<doc/>"
+             patch.object(sec_client, "_get_client", lambda: self._client(calls)), \
+             patch.object(sec_client, "REQUEST_DELAY", 0):
+            assert sec_client._get_text(FILING) == "<doc/>"
         assert calls == [FILING], "refetched, and the bad object was overwritten"
         assert gzip.decompress(shared.objects[sec_cache.s3_key(key)]) == b"<doc/>"

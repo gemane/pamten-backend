@@ -85,7 +85,7 @@ def _registers():
          patch("app.scraper.legal_identity.gleif_parents", side_effect=lambda lei: LLC_PARENT if lei == LLC_LEI else []), \
          patch("app.scraper.legal_identity.gleif_children", return_value=[]), \
          patch("app.scraper.legal_identity.filer_held_at", return_value=[]), \
-         patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=lambda cik: FILERS[cik].name), \
+         patch("app.scraper.sec_filer.fetch_filer_name", side_effect=lambda cik: FILERS[cik].name), \
          patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):   # no filing states an LEI here
         yield
 
@@ -200,7 +200,7 @@ def test_a_cik_wikidata_states_lands_on_the_gleif_node(it_db):
     pointer is the only way in. The GLEIF node takes it, no second node."""
     from app.scraper.runner import _upsert_entity
     assert _gleif(NV_LEI) == f"lei:{NV_LEI}"
-    with patch("app.scraper.sec_edgar._submissions", return_value=NV_SUBMISSIONS):
+    with patch("app.scraper.sec_client._submissions", return_value=NV_SUBMISSIONS):
         got = _upsert_entity("NV Energy", None, None, None, "Q1961658", source_id="wikidata",
                              lei=NV_LEI, sec_cik="741508")
     assert got == f"lei:{NV_LEI}"
@@ -212,7 +212,7 @@ def test_a_cik_wikidata_states_lands_on_the_gleif_node(it_db):
 def test_a_stated_cik_the_registers_refuse_writes_nothing(it_db):
     from app.scraper.runner import _upsert_entity
     _gleif(LLC_LEI)                                                # Domino's Pizza LLC, US-MI
-    with patch("app.scraper.sec_edgar._submissions") as edgar:
+    with patch("app.scraper.sec_client._submissions") as edgar:
         _upsert_entity("Domino's Pizza LLC", None, None, None, "Q1", source_id="wikidata",
                        lei=LLC_LEI, sec_cik="1286681")             # the Inc.'s CIK: name and place differ
     edgar.assert_not_called()

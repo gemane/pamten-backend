@@ -10,7 +10,7 @@ The fixtures are the two real filings.
 import re
 from unittest.mock import patch
 
-from app.scraper import sec_edgar
+from app.scraper import sec_13dg, sec_13dg_text, sec_client, sec_filer
 from tests.scraper.test_sec_ownership_feed_paging import _Feed, _entry, _fixture, _page
 
 ISSUER = "0000908937"              # Sirius XM Holdings Inc.
@@ -47,10 +47,10 @@ def _stranger(xml: str) -> str:
 
 def _run(docs: dict, entries: list[str]):
     feed = _Feed([_page(entries)], docs)
-    with patch.object(sec_edgar, "_get_text", side_effect=feed), \
-         patch.object(sec_edgar, "fetch_former_names", return_value=[]), \
-         patch.object(sec_edgar, "fetch_filer_name", side_effect=FILER_NAMES.get):
-        return sec_edgar.fetch_ownership_filings("Sirius XM Holdings Inc.", ISSUER)
+    with patch.object(sec_client, "_get_text", side_effect=feed), \
+         patch.object(sec_filer, "fetch_former_names", return_value=[]), \
+         patch.object(sec_filer, "fetch_filer_name", side_effect=FILER_NAMES.get):
+        return sec_13dg.fetch_ownership_filings("Sirius XM Holdings Inc.", ISSUER)
 
 
 def _both(newer_xml=BERKSHIRE, older_xml=BUFFETT):
@@ -77,7 +77,7 @@ def test_a_filer_named_on_no_newer_schedule_stays_a_holder():
 
 def test_a_13d_group_member_filing_under_its_own_cik_is_not_skipped():
     """In a bloc every member reports shares of its own: not a repetition."""
-    with patch.object(sec_edgar, "_co_filers_form_a_bloc", return_value=True):
+    with patch.object(sec_13dg_text, "_co_filers_form_a_bloc", return_value=True):
         res = _both()
     assert sorted(r["investor_cik"] for r in res) == ["0000315090", "0001067983"]
 
@@ -100,13 +100,13 @@ def test_cover_page_names_reads_one_name_per_cover_page():
     text = ("<p>1. NAMES OF REPORTING PERSONS Warren E. Buffett 2. CHECK THE APPROPRIATE BOX</p>"
             "<p>1. Names of Reporting Persons Berkshire Hathaway Inc. "
             "I.R.S. Identification Nos. 47-0813844</p>")
-    assert sec_edgar._cover_page_names(text) == ["Warren E. Buffett", "Berkshire Hathaway Inc"]
+    assert sec_13dg_text._cover_page_names(text) == ["Warren E. Buffett", "Berkshire Hathaway Inc"]
 
 
 def test_named_in_matches_edgars_word_order():
-    assert sec_edgar._named_in("BUFFETT WARREN E", ["Berkshire Hathaway Inc.", "Warren E. Buffett"])
-    assert not sec_edgar._named_in("BUFFETT HOWARD G", ["Warren E. Buffett"])
-    assert not sec_edgar._named_in(None, ["Warren E. Buffett"])
+    assert sec_13dg_text._named_in("BUFFETT WARREN E", ["Berkshire Hathaway Inc.", "Warren E. Buffett"])
+    assert not sec_13dg_text._named_in("BUFFETT HOWARD G", ["Warren E. Buffett"])
+    assert not sec_13dg_text._named_in(None, ["Warren E. Buffett"])
 
 
 
@@ -117,8 +117,8 @@ def test_the_newer_filers_own_name_under_another_cik_is_another_company():
     names = dict(FILER_NAMES, **{"0000999999": "BERKSHIRE HATHAWAY INC"})
     feed = _Feed([_page([_entry(NEWER, "2025-11-14"), _entry(OLDER, "2025-02-14")])],
                  {_xml_url(NEWER): BERKSHIRE, _xml_url(OLDER): namesake})
-    with patch.object(sec_edgar, "_get_text", side_effect=feed), \
-         patch.object(sec_edgar, "fetch_former_names", return_value=[]), \
-         patch.object(sec_edgar, "fetch_filer_name", side_effect=names.get):
-        res = sec_edgar.fetch_ownership_filings("Sirius XM Holdings Inc.", ISSUER)
+    with patch.object(sec_client, "_get_text", side_effect=feed), \
+         patch.object(sec_filer, "fetch_former_names", return_value=[]), \
+         patch.object(sec_filer, "fetch_filer_name", side_effect=names.get):
+        res = sec_13dg.fetch_ownership_filings("Sirius XM Holdings Inc.", ISSUER)
     assert sorted(r["investor_cik"] for r in res) == ["0000999999", "0001067983"]

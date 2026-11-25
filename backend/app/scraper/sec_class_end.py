@@ -50,7 +50,7 @@ import logging
 import re
 from datetime import date, timedelta
 
-from app.scraper import sec_edgar
+from app.scraper import sec_client
 
 log = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ def class_ends(cik: str, submissions: dict | None = None) -> list[dict]:
     (see the module docstring). One request for the submissions (unless
     given) and one per Form 15 / 25 found; a document that cannot be read is
     skipped, an unreadable submissions file raises (the caller decides)."""
-    subs = submissions if submissions is not None else sec_edgar._submissions(cik)
+    subs = submissions if submissions is not None else sec_client._submissions(cik)
     recent = (subs.get("filings") or {}).get("recent") or {}
     rows = list(zip(recent.get("form") or [], recent.get("filingDate") or [],
                     recent.get("accessionNumber") or [], recent.get("primaryDocument") or []))
@@ -183,7 +183,7 @@ def class_ends(cik: str, submissions: dict | None = None) -> list[dict]:
     # judged after the grace; a NEW statement means a new holder of the issuer
     amendments = sorted(d for f, d, _, _ in rows if _SUBJECT.match(f) and f.endswith("/A"))
     originals = sorted(d for f, d, _, _ in rows if _SUBJECT.match(f) and not f.endswith("/A"))
-    base = f"{sec_edgar.ARCHIVES_URL}/{sec_edgar._cik_int(cik)}"
+    base = f"{sec_client.ARCHIVES_URL}/{sec_client._cik_int(cik)}"
     ends = []
     for form, day, acc, doc in rows:
         if form not in _FORM15 and form not in _FORM25:
@@ -192,11 +192,11 @@ def class_ends(cik: str, submissions: dict | None = None) -> list[dict]:
         try:
             if form in _FORM15:
                 url = f"{folder}/{doc}"
-                cls, holders = form15_fields(sec_edgar._get_text(url))
+                cls, holders = form15_fields(sec_client._get_text(url))
                 ended = is_equity_class(cls) and few_holders(holders)
             else:
                 url = f"{folder}/primary_doc.xml"
-                cls, rule = form25_fields(sec_edgar._get_text(url))
+                cls, rule = form25_fields(sec_client._get_text(url))
                 ended = is_equity_class(cls) and class_ceased(rule)
         except Exception as exc:  # noqa: BLE001 — one unreadable form is no end
             log.warning("SEC: could not read %s %s of CIK %s: %s", form, acc, cik, exc)

@@ -97,7 +97,7 @@ def test_the_list_read_after_both_statements_still_ends_it(it_db):
                                                                        "sec_cik": "0002012383"}), \
          patch("app.scraper.runner._upsert_entity_by_name", return_value=OLD), \
          patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data), \
-         patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=(None, None)):
+         patch("app.scraper.sec_filer.fetch_filer_identity", return_value=(None, None)):
         assert runner.run_sec_ex21("BlackRock", force=True)["status"] == "ok"
     assert _owners(it_db)[(OLD, "2025-03-31")]["why"] == "reported_by_parent"
 
@@ -118,12 +118,12 @@ def test_a_holdings_run_ends_it(it_db):
     holding = {"subject_name": "DAVITA INC.", "subject_cik": None, "stake_percent": 5.5831,
                "file_date": "2025-04-25", "filing_type": "13G/A", "since": "2025-03-31",
                "since_basis": "first_reported", "source_url": "https://www.sec.gov/new"}
-    with patch("app.scraper.sec_edgar.fetch_filer_name", return_value="BlackRock, Inc."), \
-         patch("app.scraper.sec_edgar.fetch_filer_holdings", return_value=[holding]), \
-         patch("app.scraper.sec_edgar.fetch_affiliated_managers", return_value=[]), \
-         patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"), \
-         patch("app.scraper.sec_edgar.fetch_filer_headquarters", return_value=None), \
-         patch("app.scraper.sec_edgar.fetch_filer_website", return_value=None), \
+    with patch("app.scraper.sec_filer.fetch_filer_name", return_value="BlackRock, Inc."), \
+         patch("app.scraper.sec_holdings.fetch_filer_holdings", return_value=[holding]), \
+         patch("app.scraper.sec_13f.fetch_affiliated_managers", return_value=[]), \
+         patch("app.scraper.sec_filer.fetch_filer_country", return_value="US"), \
+         patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
+         patch("app.scraper.sec_filer.fetch_filer_website", return_value=None), \
          patch("app.scraper.runner._record_sec_industry"), \
          patch("app.scraper.runner._upsert_entity_by_name",
                side_effect=lambda **kw: NEW if kw.get("cik") == "0002012383" else DAVITA):

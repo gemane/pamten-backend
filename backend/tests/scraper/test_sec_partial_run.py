@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from app.scraper import graph_writer, sec_edgar
+from app.scraper import graph_writer, sec_client, sec_edgar, sec_filer, sec_shares
 from app.scraper.ondemand import decide_scrape
 from app.scraper.run_log import mark_partial
 
@@ -21,12 +21,12 @@ def _status(code):
 
 class TestSectionFailed:
     def _collect(self, exc):
-        token = sec_edgar._failed_sections.set([])
+        token = sec_client._failed_sections.set([])
         try:
-            lost = sec_edgar._section_failed("13D/G owners", exc)
-            return lost, sec_edgar._failed_sections.get()
+            lost = sec_client._section_failed("13D/G owners", exc)
+            return lost, sec_client._failed_sections.get()
         finally:
-            sec_edgar._failed_sections.reset(token)
+            sec_client._failed_sections.reset(token)
 
     def test_a_timeout_is_a_lost_section(self):
         assert self._collect(httpx.ReadTimeout("stalled")) == (True, ["13D/G owners"])
@@ -41,9 +41,9 @@ class TestSectionFailed:
         assert self._collect(ValueError("bad json")) == (False, [])
 
     def test_outside_a_scrape_nothing_is_recorded(self):
-        assert sec_edgar._failed_sections.get() is None
-        assert sec_edgar._section_failed("insiders", httpx.ReadTimeout("x")) is True
-        assert sec_edgar._failed_sections.get() is None
+        assert sec_client._failed_sections.get() is None
+        assert sec_client._section_failed("insiders", httpx.ReadTimeout("x")) is True
+        assert sec_client._failed_sections.get() is None
 
 
 class TestScrapeCompanyReportsLostSections:
@@ -53,13 +53,13 @@ class TestScrapeCompanyReportsLostSections:
         """scrape_company with every request stubbed; the three that carry a
         whole section can be made to fail."""
         ok_subs = {"filings": {"recent": {}}}
-        with patch.object(sec_edgar, "company_by_cik", return_value=self.COMPANY), \
-             patch.object(sec_edgar, "fetch_former_names", return_value=[]), \
-             patch.object(sec_edgar, "fetch_company_lei", return_value=None), \
-             patch.object(sec_edgar, "fetch_shares_outstanding_detail", return_value=None), \
-             patch.object(sec_edgar, "_get_text", side_effect=get_text or (lambda *a, **k: "<feed/>")), \
-             patch.object(sec_edgar, "_get", side_effect=get or (lambda *a, **k: ok_subs)), \
-             patch.object(sec_edgar, "_submissions", side_effect=submissions or (lambda *a, **k: ok_subs)):
+        with patch.object(sec_filer, "company_by_cik", return_value=self.COMPANY), \
+             patch.object(sec_filer, "fetch_former_names", return_value=[]), \
+             patch.object(sec_filer, "fetch_company_lei", return_value=None), \
+             patch.object(sec_shares, "fetch_shares_outstanding_detail", return_value=None), \
+             patch.object(sec_client, "_get_text", side_effect=get_text or (lambda *a, **k: "<feed/>")), \
+             patch.object(sec_client, "_get", side_effect=get or (lambda *a, **k: ok_subs)), \
+             patch.object(sec_client, "_submissions", side_effect=submissions or (lambda *a, **k: ok_subs)):
             return sec_edgar.scrape_company("Gitlab", cik="0001653482")
 
     def test_a_complete_scrape_lost_nothing(self):
@@ -105,7 +105,7 @@ class TestScrapeCompanyReportsLostSections:
         def browse(*a, **k):
             raise httpx.ReadTimeout("stalled")
         self._scrape(get_text=browse)
-        assert sec_edgar._failed_sections.get() is None
+        assert sec_client._failed_sections.get() is None
 
 
 class TestFreshnessStamp:

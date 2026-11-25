@@ -22,20 +22,20 @@ def _flags():
 
 
 def test_the_scrape_grades_a_filer_side_holding(it_db):
-    from app.scraper import runner, sec_edgar
+    from app.scraper import runner, sec_edgar, sec_filer, sec_holdings, sec_insiders
     subs = _subs([("SCHEDULE 13G", "a-1", "2026-04-30")])
     docs = {"a-1": XML.format(cik="0000105770", name="West Pharmaceutical", pct="7.48")}
-    with patch("app.scraper.sec_edgar._get", return_value=subs), \
-         patch("app.scraper.sec_edgar._get_text", side_effect=_doc_for(docs)):
-        holdings = sec_edgar.fetch_filer_holdings("0002100119")
+    with patch("app.scraper.sec_client._get", return_value=subs), \
+         patch("app.scraper.sec_client._get_text", side_effect=_doc_for(docs)):
+        holdings = sec_holdings.fetch_filer_holdings("0002100119")
     payload = {"name": "VANGUARD CAPITAL MANAGEMENT LLC", "cik": "0002100119", "lei": None,
                "former_names": [], "ownership_filings": [], "holdings": holdings, "executives": []}
     with patch.object(sec_edgar, "scrape_company", return_value=payload), \
-         patch.object(sec_edgar, "fetch_filer_country", return_value="US"), \
-         patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_website", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_sic", return_value=None), \
-         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
+         patch.object(sec_filer, "fetch_filer_country", return_value="US"), \
+         patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_website", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_sic", return_value=None), \
+         patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):
         runner.run_scrape_sec_edgar("Vanguard Capital Management")
     edges = run_query("MATCH (a:Entity)-[r:OWNS]->(b:Entity {name: 'West Pharmaceutical'}) "
@@ -48,13 +48,13 @@ def test_the_scrape_grades_a_filer_side_holding(it_db):
 def _old_altaba_holdings():
     """Altaba's real 2019 13G/A on Alibaba, read through the old-filing path
     (index page + cover text, no XML — findings item 44)."""
-    from app.scraper import sec_edgar
+    from app.scraper import sec_filer, sec_holdings
     from tests.scraper.test_sec_holdings import OLD_OUT, _old_docs
-    with patch("app.scraper.sec_edgar._get", return_value=_subs([("SC 13G/A", OLD_OUT, "2019-02-14")])), \
-         patch("app.scraper.sec_edgar._get_text", side_effect=_old_docs()), \
-         patch.object(sec_edgar, "fetch_filer_name", return_value="ALTABA INC."), \
-         patch.object(sec_edgar, "fetch_former_names", return_value=[]):
-        return sec_edgar.fetch_filer_holdings("0001011006")
+    with patch("app.scraper.sec_client._get", return_value=_subs([("SC 13G/A", OLD_OUT, "2019-02-14")])), \
+         patch("app.scraper.sec_client._get_text", side_effect=_old_docs()), \
+         patch.object(sec_filer, "fetch_filer_name", return_value="ALTABA INC."), \
+         patch.object(sec_filer, "fetch_former_names", return_value=[]):
+        return sec_holdings.fetch_filer_holdings("0001011006")
 
 
 def _alibaba_edges():
@@ -64,16 +64,16 @@ def _alibaba_edges():
 
 
 def test_the_scrape_grades_an_old_cover_page_holding_form(it_db):
-    from app.scraper import runner, sec_edgar
+    from app.scraper import runner, sec_edgar, sec_filer, sec_insiders
     holdings = _old_altaba_holdings()
     payload = {"name": "ALTABA INC.", "cik": "0001011006", "lei": None,
                "former_names": [], "ownership_filings": [], "holdings": holdings, "executives": []}
     with patch.object(sec_edgar, "scrape_company", return_value=payload), \
-         patch.object(sec_edgar, "fetch_filer_country", return_value="US"), \
-         patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_website", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_sic", return_value=None), \
-         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
+         patch.object(sec_filer, "fetch_filer_country", return_value="US"), \
+         patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_website", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_sic", return_value=None), \
+         patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):
         runner.run_scrape_sec_edgar("Altaba")
     assert _alibaba_edges() == [{"rf": "form", "ft": "13G/A", "pct": 11.0}]
@@ -86,15 +86,15 @@ def test_the_scrape_grades_an_old_cover_page_holding_form(it_db):
 
 def test_the_holdings_run_grades_an_old_cover_page_holding_form(it_db):
     # `run_sec_holdings` wrote `field` for every row whatever it was read from.
-    from app.scraper import runner, sec_edgar
+    from app.scraper import runner, sec_13f, sec_filer, sec_holdings
     holdings = _old_altaba_holdings()
-    with patch.object(sec_edgar, "fetch_filer_name", return_value="ALTABA INC."), \
-         patch.object(sec_edgar, "fetch_filer_holdings", return_value=holdings), \
-         patch.object(sec_edgar, "fetch_affiliated_managers", return_value=[]), \
-         patch.object(sec_edgar, "fetch_filer_country", return_value="US"), \
-         patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_website", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_sic", return_value=None):
+    with patch.object(sec_filer, "fetch_filer_name", return_value="ALTABA INC."), \
+         patch.object(sec_holdings, "fetch_filer_holdings", return_value=holdings), \
+         patch.object(sec_13f, "fetch_affiliated_managers", return_value=[]), \
+         patch.object(sec_filer, "fetch_filer_country", return_value="US"), \
+         patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_website", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_sic", return_value=None):
         runner.run_sec_holdings("0001011006")
     assert _alibaba_edges() == [{"rf": "form", "ft": "13G/A", "pct": 11.0}]
     assert [r["cusip"] for r in run_sql("SELECT cusip FROM Entity WHERE sec_cik = '0001577552'")] == ["01609W102"]

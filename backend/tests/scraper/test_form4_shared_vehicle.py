@@ -7,8 +7,9 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from app.scraper.sec_edgar import (SharesOutstanding, _form4_blocks, _form4_holdings, _parse_form34_xml,
-                                   split_shared_blocks, vehicle_name, without_vehicles)
+from app.scraper.sec_insiders import (_form4_blocks, _form4_holdings, _parse_form34_xml, split_shared_blocks,
+                                      vehicle_name, without_vehicles)
+from app.scraper.sec_shares import SharesOutstanding
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SERIES_B = SharesOutstanding(60_264_000_000.0, "2026-02-28", {})      # America Movil's cover count

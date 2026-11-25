@@ -28,22 +28,23 @@ HOWARD = {"name": "Howard Buffett", "role": "Director", "title": "", "former": F
 def _scrape(window, roster):
     """`scrape_company` for real up to its two insider readers: the window's
     list is given, the roster's is added to it as the scrape does."""
-    from app.scraper import runner, sec_edgar, sec_roster
-    with patch.object(sec_edgar, "search_company", return_value={"cik": "0001067983", "name": "BERKSHIRE HATHAWAY INC"}), \
-         patch.object(sec_edgar, "fetch_former_names", return_value=[]), \
-         patch.object(sec_edgar, "fetch_company_lei", return_value=None), \
-         patch.object(sec_edgar, "fetch_ownership_filings", return_value=[]), \
-         patch.object(sec_edgar, "fetch_executives", return_value=[dict(e) for e in window]), \
+    from app.scraper import (runner, sec_13dg, sec_client, sec_filer, sec_holdings, sec_insiders, sec_lookup,
+                             sec_roster, sec_shares)
+    with patch.object(sec_lookup, "search_company", return_value={"cik": "0001067983", "name": "BERKSHIRE HATHAWAY INC"}), \
+         patch.object(sec_filer, "fetch_former_names", return_value=[]), \
+         patch.object(sec_filer, "fetch_company_lei", return_value=None), \
+         patch.object(sec_13dg, "fetch_ownership_filings", return_value=[]), \
+         patch.object(sec_insiders, "fetch_executives", return_value=[dict(e) for e in window]), \
          patch.object(sec_roster, "roster_insiders", return_value=[dict(e) for e in roster]) as asked, \
-         patch.object(sec_edgar, "fetch_filer_holdings", return_value=[]), \
-         patch.object(sec_edgar, "fetch_shares_outstanding_detail", return_value=None), \
+         patch.object(sec_holdings, "fetch_filer_holdings", return_value=[]), \
+         patch.object(sec_shares, "fetch_shares_outstanding_detail", return_value=None), \
          patch("app.scraper.sec_f6.fetch_ads_cusips", return_value={}), \
-         patch.object(sec_edgar, "fetch_filer_country", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_website", return_value=None), \
-         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
-         patch.object(sec_edgar, "fetch_insider_holding", return_value=None), \
-         patch.object(sec_edgar, "_submissions", return_value={"cik": "1067983", "filings": {"recent": {}}}), \
+         patch.object(sec_filer, "fetch_filer_country", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_website", return_value=None), \
+         patch.object(sec_insiders, "fetch_departures", return_value=[]), \
+         patch.object(sec_insiders, "fetch_insider_holding", return_value=None), \
+         patch.object(sec_client, "_submissions", return_value={"cik": "1067983", "filings": {"recent": {}}}), \
          patch.object(runner, "_record_sec_industry", return_value=None), \
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \

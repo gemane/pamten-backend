@@ -7,7 +7,7 @@ Manual lookup:
 
 Endpoints used:
   The company is resolved like every SEC scrape: by the CIK the caller holds,
-  else by sec_edgar.search_company (tickers file, then EDGAR's indexes).
+  else by sec_lookup.search_company (tickers file, then EDGAR's indexes).
   GET https://data.sec.gov/submissions/CIK<10-digit-cik>.json
     — filing index to find the most recent DEF 14A accession number
   GET https://www.sec.gov/Archives/edgar/data/<CIK>/<accession>/<primary-doc>.htm
@@ -29,7 +29,7 @@ Fields returned:
   share structures where voting power differs from economic ownership.
 
 Rate limits:
-  Every request goes through sec_edgar._response (findings item 42): the pooled
+  Every request goes through sec_client._response (findings item 42): the pooled
   client and its User-Agent, the 0.12 s spacing, one retry on a stall or a
   429/503, the Archives cache, and the "request lost" log (findings item 45).
   Docs: https://www.sec.gov/os/accessing-edgar-data
@@ -70,7 +70,7 @@ ARCHIVES_URL    = "https://www.sec.gov/Archives/edgar/data"
 # "Could not locate beneficial ownership table". `_response` raises on any
 # error status; the callers turn that into their `error` result.
 def _get(url: str, **params) -> httpx.Response:
-    from app.scraper.sec_edgar import _response
+    from app.scraper.sec_client import _response
     return _response(url, params or None)
 
 
@@ -117,10 +117,11 @@ def find_latest_def14a(company_name: str, cik: str | None = None) -> tuple[str, 
     filing_date), or None when it files none.
 
     The company is resolved like every SEC scrape (findings item 47): the CIK
-    the caller holds, else `sec_edgar.search_company`. This module used to ask
+    the caller holds, else `sec_lookup.search_company`. This module used to ask
     browse-edgar's name search, which matches the start of the registered
     name — "Amazon.com" never found AMAZON COM INC."""
-    from app.scraper.sec_edgar import _filer_record, search_company
+    from app.scraper.sec_client import _filer_record
+    from app.scraper.sec_lookup import search_company
     if not cik:
         company = search_company(company_name)
         if not company:

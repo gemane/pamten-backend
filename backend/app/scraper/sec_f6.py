@@ -40,13 +40,13 @@ import html
 import logging
 import re
 
-from app.scraper import sec_edgar
+from app.scraper import sec_client
 from app.scraper.gleif_isin import cusip_valid
-from app.scraper.sec_edgar import ARCHIVES_URL, _cik_int, _iso_date
+from app.scraper.sec_client import ARCHIVES_URL, _cik_int, _iso_date
 
 # The requests go through `sec_edgar.<helper>` at call time, never a name bound
 # at import: this module is imported lazily inside a scrape, and a binding made
-# while a test patched `sec_edgar._submissions` kept the patch for good.
+# while a test patched `sec_client._submissions` kept the patch for good.
 
 log = logging.getLogger(__name__)
 
@@ -108,18 +108,18 @@ def fetch_ads_cusips(cik: str, max_filings: int = MAX_FILINGS) -> dict:
     reading stops — an older filing must not stand in for a newer one."""
     empty = {"cusips": [], "source_url": None, "filings_read": 0}
     try:
-        filings = f6_filings(sec_edgar._submissions(cik), max_filings)
+        filings = f6_filings(sec_client._submissions(cik), max_filings)
     except Exception as exc:  # noqa: BLE001 - an id is a nicety, never worth aborting a scrape
-        if not sec_edgar._section_failed(SECTION, exc):
+        if not sec_client._section_failed(SECTION, exc):
             log.warning("SEC EDGAR: F-6 list for CIK=%s failed: %s", cik, exc)
         return empty
     read = 0
     for filing in filings:
         url = submission_url(cik, filing["accession"])
         try:
-            text = sec_edgar._get_text(url)
+            text = sec_client._get_text(url)
         except Exception as exc:  # noqa: BLE001
-            if not sec_edgar._section_failed(SECTION, exc):
+            if not sec_client._section_failed(SECTION, exc):
                 log.warning("SEC EDGAR: F-6 %s for CIK=%s failed: %s", filing["accession"], cik, exc)
                 continue            # a 404 is "not there": the next filing may state it
             return {**empty, "filings_read": read}

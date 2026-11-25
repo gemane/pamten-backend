@@ -14,7 +14,7 @@ pytestmark = pytest.mark.integration
 def _flags():
     with patch.object(settings, "SCRAPER_ENABLED", True), \
          patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
-         patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=(None, None)):   # no network
+         patch("app.scraper.sec_filer.fetch_filer_identity", return_value=(None, None)):   # no network
         yield
 
 

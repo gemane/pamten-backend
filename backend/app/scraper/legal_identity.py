@@ -16,7 +16,7 @@ one name key and one street — so `same_legal_entity` asks four things:
    "Anheuser-Busch InBev SA/NV" is GLEIF's "ANHEUSER-BUSCH INBEV" with code
    R85P, whose abbreviations are NV, SA and AG (`gleif_elf_abbr.json`).
 2. **The same place of registration**: GLEIF's jurisdiction ("US-DE", "KY")
-   against where the filer is incorporated (`sec_edgar.incorporation_place`:
+   against where the filer is incorporated (`sec_filer.incorporation_place`:
    its newest tagged cover first (10-K/20-F/40-F/10-Q/8-K), EDGAR's header field — wrong for
    HubSpot and Alibaba — only when the report states none).
    GLEIF giving only "US" where EDGAR says New York is no contradiction, but
@@ -478,7 +478,8 @@ def clear_caches() -> None:
 @_cached
 def filer_facts(cik: str) -> Filer | None:
     """EDGAR's facts on a filer for the rule, or None when EDGAR cannot say."""
-    from app.scraper.sec_edgar import _submissions, former_name_entries, incorporation_place, sec_headquarters
+    from app.scraper.sec_client import _submissions
+    from app.scraper.sec_filer import former_name_entries, incorporation_place, sec_headquarters
     try:
         sub = _submissions(cik)
     except Exception as exc:  # noqa: BLE001 - EDGAR unreachable: no verdict
@@ -522,7 +523,7 @@ def filing_address_at(cik: str, day: str) -> tuple[str, str, str | None] | None:
     """(street, city, note) of the filer's business address as the header of
     its filing closest to ``day`` states it; today's address, noted, when no
     filing lies within a year of it."""
-    from app.scraper.sec_edgar import _cik10, _get, _get_text, _submissions
+    from app.scraper.sec_client import _cik10, _get, _get_text, _submissions
     try:
         sub = _submissions(cik)
         rows = list(zip((sub.get("filings") or {}).get("recent", {}).get("accessionNumber", []),
@@ -636,7 +637,7 @@ def filer_held_at(cik: str, day: str) -> list[tuple[str, str | None]]:
     (3 of 4, 10 of 12, 5 of 6 GLEIF children on their lists) stayed apart
     from their GLEIF records (findings item 19)."""
     from app.database import db
-    from app.scraper.sec_edgar import _cik10
+    from app.scraper.sec_client import _cik10
     out: list[tuple[str, str | None]] = []
     with db.get_session() as session:
         rows = session.run(

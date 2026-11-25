@@ -192,7 +192,7 @@ def test_a_renamed_registrant_keeps_the_item(it_db):
     data = {**_company_data([]), "name": "Franklin Templeton Investments", "aliases": ["Franklin Resources"],
             "sec_cik": "0000038777", "sec_ciks": ["0000038777"]}
     with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
-         patch("app.scraper.sec_edgar.search_company",
+         patch("app.scraper.sec_lookup.search_company",
                return_value={"cik": "0000038777", "name": "FRANKLIN TEMPLETON INC"}) as search:
         counts = _scrape(it_db, data)
     search.assert_called_once_with("Franklin Resources")
@@ -212,7 +212,7 @@ def test_a_name_another_registrant_now_bears_still_refuses(it_db):
     data = {**_company_data([]), "name": "BlackRock", "aliases": ["BlackRock, Inc."],
             "sec_cik": "0001364742", "sec_ciks": ["0001364742"]}
     with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
-         patch("app.scraper.sec_edgar.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
+         patch("app.scraper.sec_lookup.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
         counts = _scrape(it_db, data)
     assert counts.get("conflicts") == 1
     row = dict(it_db.run_sql("SELECT wikidata_id FROM Entity WHERE id = 'sec:0001364742'")[0])

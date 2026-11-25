@@ -284,9 +284,9 @@ def _submissions(*filings):
 
 
 def _since(submissions, feed=(), day="2026-08-21"):
-    from app.scraper import sec_edgar
+    from app.scraper import sec_13dg
     from app.scraper.sec_writer import _statements_since
-    with patch.object(sec_edgar, "_ownership_feed_entries", return_value=iter(feed)) as asked:
+    with patch.object(sec_13dg, "_ownership_feed_entries", return_value=iter(feed)) as asked:
         out = _statements_since(MINIMED, day, submissions)
     return out, asked.called
 

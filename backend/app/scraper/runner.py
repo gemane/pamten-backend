@@ -1219,13 +1219,13 @@ def _same_filer(a: str | None, b: str | None) -> bool:
 
 def _one_filer_record(fn):
     """The company's filer record is requested once for the whole call
-    (`sec_edgar.one_filer_record_per_scrape`): reading a subsidiary list asked
+    (`sec_client.one_filer_record_per_scrape`): reading a subsidiary list asked
     for the filer's own record three times — once to find the filing, again
     for its name and its address (32 requests for 11 filers, measured
     2026-11-24; findings item 135)."""
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        from app.scraper.sec_edgar import one_filer_record_per_scrape
+        from app.scraper.sec_client import one_filer_record_per_scrape
         with one_filer_record_per_scrape():
             return fn(*args, **kwargs)
     return wrapper
@@ -1279,7 +1279,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
 
     from app.routers.search import resolve_best_entity
     from app.scraper.run_log import record_run
-    from app.scraper.sec_edgar import fetch_filer_identity
+    from app.scraper.sec_filer import fetch_filer_identity
     from app.scraper.sec_ex21 import (_at_home, _is_filer, fetch_subsidiaries, jurisdiction_country,
                                        jurisdiction_subdivision, own_names)
     from app.scraper.sec_writer import detach_owns_sec
@@ -1752,7 +1752,7 @@ def run_proxy_statement(company: str) -> dict:
     from app.routers.search import resolve_best_entity
     from app.scraper.proxy_statement import fetch_proxy_ownership
     from app.scraper.run_log import record_run
-    from app.scraper.sec_edgar import collect_lost_requests
+    from app.scraper.sec_client import collect_lost_requests
 
     entity = resolve_best_entity(company, None)
     with record_run("sec-proxy", company) as run:
@@ -1774,7 +1774,7 @@ def run_proxy_write(company: str, entity_id: str | None = None) -> dict:
     _proxy_flags()
     from app.scraper.proxy_write import write_proxy_ownership
     from app.scraper.run_log import record_run
-    from app.scraper.sec_edgar import collect_lost_requests
+    from app.scraper.sec_client import collect_lost_requests
 
     with record_run("sec-proxy-write", company) as run:
         with collect_lost_requests() as lost:
@@ -1914,10 +1914,11 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
 
     from app.routers.search import resolve_best_entity
     from app.scraper.run_log import record_run
-    from app.scraper.sec_edgar import (_13F_WINDOW_DAYS, _cik10, _pct_of,
-                                       fetch_13f_holders,
-                                       fetch_shares_outstanding,
-                                       latest_13f_deadline, next_13f_deadline)
+    from app.scraper.sec_13dg_text import _pct_of
+    from app.scraper.sec_13f import (_13F_WINDOW_DAYS, fetch_13f_holders, latest_13f_deadline,
+                                     next_13f_deadline)
+    from app.scraper.sec_client import _cik10
+    from app.scraper.sec_shares import fetch_shares_outstanding
     from app.scraper.sec_writer import mark_13f_stale
 
     entity = resolve_best_entity(company, None)
@@ -2128,9 +2129,9 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
         raise PermissionError("SEC EDGAR scraper is disabled. "
                               "Set SCRAPER_SEC_EDGAR_ENABLED=true to enable.")
 
-    from app.scraper.sec_edgar import (fetch_filer_country, fetch_filer_headquarters,
-                                       fetch_filer_holdings, fetch_filer_name,
+    from app.scraper.sec_filer import (fetch_filer_country, fetch_filer_headquarters, fetch_filer_name,
                                        fetch_filer_website)
+    from app.scraper.sec_holdings import fetch_filer_holdings
 
     filer_name = fetch_filer_name(cik)
     if not filer_name:
@@ -2181,7 +2182,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
 
     # Group structure from the 13F cover page — one extra request, and a far
     # better signal than name matching.
-    from app.scraper.sec_edgar import fetch_affiliated_managers
+    from app.scraper.sec_13f import fetch_affiliated_managers
     affiliates = _write_affiliates(filer_id, fetch_affiliated_managers(cik), source_id)
 
     succession = None
@@ -2282,7 +2283,7 @@ def _find_person(full_name: str, sec_cik: str | None = None) -> str | None:
 
 def _denominator_of(exec_rec: dict, data: dict) -> float | None:
     """The count a Form 4 holding was measured against. A record from
-    `sec_edgar.stake_for` always carries `shares_outstanding` — the count of
+    `sec_insiders.stake_for` always carries `shares_outstanding` — the count of
     the holding's own class, or None when the issuer's classes did not match
     it, which must stay None (the issuer's total is another class's count).
     A record without the key predates the per-class stake: the total, as
@@ -2407,7 +2408,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     # into the result (findings item 45): a lost Form 4 or 13D/G document is
     # dropped by its caller so the scrape goes on, and only the count tells a
     # rebuild that a company's numbers rest on a gap.
-    from app.scraper.sec_edgar import collect_lost_requests, one_filer_record_per_scrape
+    from app.scraper.sec_client import collect_lost_requests, one_filer_record_per_scrape
     # … and a filer's record is requested once for the scrape and its writer
     # together (findings item 135: 57 % of a scrape's requests were re-reads)
     with collect_lost_requests() as lost, one_filer_record_per_scrape():
@@ -2422,7 +2423,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
 
 def _scrape_sec_edgar(company_name: str, country: str | None) -> dict:
     # Import here to avoid circular imports and to keep the cold-start fast
-    from app.scraper.sec_edgar import fetch_filer_country, scrape_company
+    from app.scraper.sec_edgar import scrape_company
+    from app.scraper.sec_filer import fetch_filer_country
 
     log.info("SEC EDGAR runner: starting scrape for %r", company_name)
     stored = _stored_entity(company_name, country)
@@ -2494,7 +2496,7 @@ def _record_sec_industry(entity_id: str, cik: str | None, source_id: str) -> Non
     and address were read from. Nothing for an entity without a CIK."""
     if not cik:
         return
-    from app.scraper.sec_edgar import fetch_filer_sic
+    from app.scraper.sec_filer import fetch_filer_sic
     sic = fetch_filer_sic(cik)
     if sic:
         industry.record(entity_id, "us-sic", sic[0], sic[1], source_id=source_id,
@@ -2504,7 +2506,7 @@ def _record_sec_industry(entity_id: str, cik: str | None, source_id: str) -> Non
 
 def _write_ownership_filings(target_id: str, target_name: str, filings: list[dict], source_id: str,
                               scraped: list[dict]) -> None:
-    """Write an issuer's 13D/G statements (`sec_edgar.fetch_ownership_filings`):
+    """Write an issuer's 13D/G statements (`sec_13dg.fetch_ownership_filings`):
     the holder nodes, the voting groups and joint filings, and the OWNS edges,
     open or already ended. One function for the issuer's own scrape and for
     the statements the whole-graph table pass reads for a company nobody
@@ -2646,7 +2648,7 @@ def _write_ownership_filings(target_id: str, target_name: str, filings: list[dic
 def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -> dict:
     """The write phase of `run_scrape_sec_edgar`: the filer, its holders, its
     insiders and officers, from the scraped `data`."""
-    from app.scraper.sec_edgar import fetch_filer_headquarters, fetch_filer_website
+    from app.scraper.sec_filer import fetch_filer_headquarters, fetch_filer_website
     source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
     scraped: list[dict] = []
 
@@ -2748,7 +2750,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
     if data.get("cik"):
         try:
             from app.scraper.sec_class_end import class_ends
-            from app.scraper.sec_edgar import _submissions
+            from app.scraper.sec_client import _submissions
             from app.scraper.sec_writer import close_at_class_end, read_table_and_close
             subs = _submissions(data["cik"])
             close_at_class_end(target_id, class_ends(data["cik"], subs))
@@ -2935,7 +2937,7 @@ def _form4_vehicles(target_id: str) -> list[dict]:
 
 def _write_shared_vehicles(target_id: str, data: dict, source_id: str, scraped: list[dict],
                            role_holders: dict[str, str]) -> None:
-    """The positions several insiders report alike (`sec_edgar.split_shared_blocks`),
+    """The positions several insiders report alike (`sec_insiders.split_shared_blocks`),
     each written once, from a node of the holder the filers name, to the
     issuer (findings item 111, the user's choice of 2026-11-12: the vehicle is
     the owner). The node is found among this issuer's vehicles only, never by
@@ -2993,14 +2995,14 @@ def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, share
     recent window (Larry Fink at BlackRock). Departures — the seats EDGAR never
     closes on its own: a departing insider files nothing; the company announces
     it in an 8-K, Item 5.02, read for the people we list, never to mint anyone
-    (`sec_edgar.fetch_departures`).
+    (`sec_insiders.fetch_departures`).
 
     Run by `_write_sec_edgar` at the end of a SEC scrape, and once more by
     `run_scrape_all` when a source after the SEC's added seats (findings item
     67): with the registers running before the knowledge bases (item 60) the
     SEC part met no Wikidata officers yet, and 22 of them lost their Form 4
     lookups, their CIKs and their item ids in the 2026-11-06 rebuild."""
-    from app.scraper.sec_edgar import fetch_departures, fetch_insider_holding, without_vehicles
+    from app.scraper.sec_insiders import fetch_departures, fetch_insider_holding, without_vehicles
     known = dict(role_holders or {})
     with db.get_session() as session:
         for r in session.run(
@@ -3177,7 +3179,7 @@ def run_sec_seat_holders(entity_id: str, cik: str, company_name: str) -> dict:
     XBRL fetch, no filing is re-read. Returns what it wrote."""
     from dataclasses import asdict
 
-    from app.scraper.sec_edgar import fetch_shares_outstanding_detail
+    from app.scraper.sec_shares import fetch_shares_outstanding_detail
     source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
     detail = fetch_shares_outstanding_detail(cik)
     scraped: list[dict] = []

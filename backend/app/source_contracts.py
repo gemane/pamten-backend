@@ -63,8 +63,8 @@ def _sec(fn: Callable[[], None]) -> Callable[[], None]:
     swallow a failed request (one filing must not sink a scrape), so the probe
     would only see "nothing found" — the URL says what was sent."""
     def probe() -> None:
-        from app.scraper import sec_edgar
-        with sec_edgar.collect_lost_requests() as lost:
+        from app.scraper import sec_client
+        with sec_client.collect_lost_requests() as lost:
             try:
                 fn()
             except Broken as exc:
@@ -75,22 +75,22 @@ def _sec(fn: Callable[[], None]) -> Callable[[], None]:
 
 
 def _sec_tickers() -> None:
-    from app.scraper import sec_edgar
-    rows = sec_edgar._get_tickers() or {}
+    from app.scraper import sec_lookup
+    rows = sec_lookup._get_tickers() or {}
     _expect(any(str(v.get("cik_str")) == str(int(APPLE_CIK)) for v in rows.values()),
             f"company_tickers.json does not list Apple ({len(rows)} rows)")
 
 
 def _sec_company_search() -> None:
-    from app.scraper import sec_edgar
-    found = sec_edgar._browse_index("Apple Inc", "10-K")
+    from app.scraper import sec_lookup
+    found = sec_lookup._browse_index("Apple Inc", "10-K")
     _expect(found is not None, "the search gave no readable answer (refused, or not the Atom feed)")
     _expect(any(cik == APPLE_CIK for cik, _ in found), f"'Apple Inc' among 10-K filers lists {found[:3]}")
 
 
 def _sec_person_search() -> None:
-    from app.scraper import sec_edgar
-    found = sec_edgar._search_person_ciks(["Timothy", "Cook"])     # the live search, whatever list is kept
+    from app.scraper import sec_lookup
+    found = sec_lookup._search_person_ciks(["Timothy", "Cook"])     # the live search, whatever list is kept
     _expect(COOK_CIK in found, f"'Timothy Cook' among Form 4 filers lists {found}")
 
 
@@ -103,15 +103,15 @@ def _sec_name_list() -> None:
 
 
 def _sec_submissions() -> None:
-    from app.scraper import sec_edgar
-    recent = (sec_edgar._submissions(APPLE_CIK).get("filings") or {}).get("recent") or {}
+    from app.scraper import sec_client
+    recent = (sec_client._submissions(APPLE_CIK).get("filings") or {}).get("recent") or {}
     _expect(recent.get("form") and recent.get("accessionNumber") and recent.get("primaryDocument"),
             f"Apple's submissions document has no recent filings (keys {sorted(recent)[:6]})")
 
 
 def _sec_holder_feed() -> None:
-    from app.scraper import sec_edgar
-    first = next(iter(sec_edgar._ownership_feed_entries(APPLE_CIK)), None)
+    from app.scraper import sec_13dg
+    first = next(iter(sec_13dg._ownership_feed_entries(APPLE_CIK)), None)
     _expect(first and first.get("accession") and first.get("index_url"),
             f"the 13D/G feed about Apple gave {first!r}")
 
@@ -136,8 +136,8 @@ def _sec_insider_page() -> None:
 
 
 def _sec_full_text() -> None:
-    from app.scraper import sec_edgar
-    data = sec_edgar._get(sec_edgar.SEARCH_URL, {"q": '"Apple Inc"', "forms": "10-K"})
+    from app.scraper import sec_client
+    data = sec_client._get(sec_client.SEARCH_URL, {"q": '"Apple Inc"', "forms": "10-K"})
     hits = ((data or {}).get("hits") or {}).get("hits")
     _expect(hits and (hits[0].get("_source") or {}).get("ciks"),
             f"the full-text search gave no hit with a filer number (keys {sorted(data or {})[:5]})")

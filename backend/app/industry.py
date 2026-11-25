@@ -315,7 +315,7 @@ def backfill(limit: int | None = None, fetch=None) -> dict:
     whose `uk_sic_codes` were stored but never turned into statements get
     those. Fill-only: a statement already recorded is not re-fetched."""
     from app.db.arcadedb import run_sql
-    from app.scraper.sec_edgar import fetch_filer_sic
+    from app.scraper.sec_filer import fetch_filer_sic
     from app.scraper.graph_writer import _ensure_source
     from app.scraper.sources import KNOWN_SOURCES
 

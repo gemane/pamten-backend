@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.scraper import sec_edgar, sec_names
+from app.scraper import sec_client, sec_lookup, sec_names
 
 # the list's shape: four lines without a name, companies and people, a former
 # name of one filer, latin-1 bytes
@@ -74,7 +74,7 @@ def test_every_name_of_the_index_is_found_by_itself(index):
     ("Thomas S. Murphy, Jr.", []),
 ])
 def test_person_ciks(index, name, ciks):
-    assert sec_names.person_ciks(sec_edgar._name_words(name), 5, index) == ciks
+    assert sec_names.person_ciks(sec_lookup._name_words(name), 5, index) == ciks
 
 
 def test_person_candidates_are_cut_to_the_limit(index):
@@ -127,21 +127,21 @@ class TestRefresh:
 class TestTheLookupAsksTheListFirst:
     def test_the_list_gives_more_candidates_than_the_search(self, index):
         with patch.object(sec_names, "person_ciks", return_value=[]) as listed:
-            sec_edgar._lookup_person_ciks("Robyn Denholm")
-        listed.assert_called_once_with(["Robyn", "Denholm"], sec_edgar.LIST_PERSON_CANDIDATES)
-        assert sec_edgar.LIST_PERSON_CANDIDATES > sec_edgar.MAX_PERSON_CANDIDATES
+            sec_lookup._lookup_person_ciks("Robyn Denholm")
+        listed.assert_called_once_with(["Robyn", "Denholm"], sec_lookup.LIST_PERSON_CANDIDATES)
+        assert sec_lookup.LIST_PERSON_CANDIDATES > sec_lookup.MAX_PERSON_CANDIDATES
 
     def test_with_a_list_no_request_is_sent(self, index):
         with patch.object(sec_names, "index_path", return_value=index), \
-             patch.object(sec_edgar, "_response") as response:
-            assert sec_edgar._lookup_person_ciks("Robyn Denholm") == ["0001242782"]
-            assert sec_edgar._lookup_person_ciks("Bill Gates") == []        # nobody listed is an answer too
+             patch.object(sec_client, "_response") as response:
+            assert sec_lookup._lookup_person_ciks("Robyn Denholm") == ["0001242782"]
+            assert sec_lookup._lookup_person_ciks("Bill Gates") == []        # nobody listed is an answer too
         response.assert_not_called()
 
     def test_without_a_list_the_live_search_is_asked(self):
         with patch.object(sec_names, "index_path", return_value=None), \
-             patch.object(sec_edgar, "_search_person_ciks", return_value=["0001242782"]) as search:
-            assert sec_edgar._lookup_person_ciks("Robyn M. Denholm") == ["0001242782"]
+             patch.object(sec_lookup, "_search_person_ciks", return_value=["0001242782"]) as search:
+            assert sec_lookup._lookup_person_ciks("Robyn M. Denholm") == ["0001242782"]
         search.assert_called_once_with(["Robyn", "M.", "Denholm"])
 
 
@@ -225,7 +225,7 @@ def test_no_list_is_none_for_a_company_too():
 
 
 class TestTheCompanyLookupAsksTheListFirst:
-    """`sec_edgar._exact_name_registrant`: the type-free pass of the name lookup
+    """`sec_lookup._exact_name_registrant`: the type-free pass of the name lookup
     and the rule a proxy table's holder is found by."""
 
     @staticmethod
@@ -239,9 +239,9 @@ class TestTheCompanyLookupAsksTheListFirst:
             asked.append(cik)
             return subs[cik]
         with patch.object(sec_names, "index_path", return_value=path), \
-             patch.object(sec_edgar, "_browse_index", return_value=list(listed_live)) as live, \
-             patch.object(sec_edgar, "_submissions", side_effect=record):
-            return sec_edgar._exact_name_registrant(name), asked, live
+             patch.object(sec_lookup, "_browse_index", return_value=list(listed_live)) as live, \
+             patch.object(sec_client, "_submissions", side_effect=record):
+            return sec_lookup._exact_name_registrant(name), asked, live
 
     def test_a_name_the_live_index_misses_is_found_with_no_search_request(self, companies):
         found, asked, live = self.run("Walmart Inc.", companies, {"0000104169": self.sub("Walmart Inc.")})
@@ -287,9 +287,9 @@ class TestTheCompanyLookupAsksTheListFirst:
         assert found == {"cik": "0000104169", "name": "Walmart Inc."}
 
     def test_without_a_list_the_live_index_is_asked_and_a_lone_match_needs_no_filing_check(self):
-        with patch.object(sec_edgar, "_browse_index", return_value=[("0000104169", "Walmart Inc.")]) as live, \
-             patch.object(sec_edgar, "_submissions") as record:
-            assert sec_edgar._exact_name_registrant("Walmart Inc.") == {"cik": "0000104169", "name": "Walmart Inc."}
+        with patch.object(sec_lookup, "_browse_index", return_value=[("0000104169", "Walmart Inc.")]) as live, \
+             patch.object(sec_client, "_submissions") as record:
+            assert sec_lookup._exact_name_registrant("Walmart Inc.") == {"cik": "0000104169", "name": "Walmart Inc."}
         live.assert_called_once_with("Walmart Inc.", "")
         record.assert_not_called()
 

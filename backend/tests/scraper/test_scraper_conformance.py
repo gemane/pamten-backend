@@ -47,23 +47,23 @@ def _call_sec_edgar() -> str:
     """SEC sets the User-Agent once on a pooled client, not per request.
 
     The requirement is unchanged — SEC rejects anonymous traffic — but the header
-    is now applied at client construction (see sec_edgar._get_client), so capture
+    is now applied at client construction (see sec_client._get_client), so capture
     it there. Reading only per-request kwargs would report no User-Agent for a
     scraper that is in fact sending one.
     """
-    from app.scraper import sec_edgar
+    from app.scraper import sec_client
     captured: dict = {}
 
     def _fake_client(*_args, **kwargs):
         captured.update(kwargs.get("headers") or {})
         return MagicMock(get=MagicMock(return_value=_fake_response({})))
 
-    sec_edgar.close_client()                       # force a fresh build under the patch
+    sec_client.close_client()                       # force a fresh build under the patch
     try:
         with patch("httpx.Client", _fake_client), patch("time.sleep"):
-            sec_edgar._get("https://data.sec.gov/x")
+            sec_client._get("https://data.sec.gov/x")
     finally:
-        sec_edgar.close_client()                   # don't leak the fake into other tests
+        sec_client.close_client()                   # don't leak the fake into other tests
     return captured.get("User-Agent", "")
 
 

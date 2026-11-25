@@ -142,9 +142,9 @@ class TestWhatTheOtherTextReadersStamp:
     def test_a_legacy_cover_page_is_a_form_reading(self):
         # pinned in test_sec_edgar (the regex path of fetch_ownership_filings);
         # here only that the constant the writer imports is the right grade
-        from app.scraper import sec_edgar
-        assert sec_edgar.READ_FORM == "form"
-        assert not hasattr(sec_edgar, "READ_PROSE"), "the cover page is a form, not prose"
+        from app.scraper import sec_13dg
+        assert sec_13dg.READ_FORM == "form"
+        assert not hasattr(sec_13dg, "READ_PROSE"), "the cover page is a form, not prose"
 
     def test_an_8k_departure_is_a_narrative_reading(self):
         # pinned in test_runner (the 8-K close's kwargs); here the import

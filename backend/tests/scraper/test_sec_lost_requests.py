@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from app.config import settings
-from app.scraper import runner, sec_edgar
+from app.scraper import runner, sec_client, sec_edgar
 from app.scraper.run_log import mark_partial
 
 URL = "https://www.sec.gov/Archives/edgar/data/1367016/000106299322013957/form4.xml"
@@ -38,13 +38,13 @@ def _fetch(*answers, url=URL, params=None):
     """_get_text against scripted answers, inside a collector; returns
     (text or the exception, the collected URLs)."""
     client, _ = _client(*answers)
-    with patch.object(sec_edgar, "_get_client", return_value=client), \
+    with patch.object(sec_client, "_get_client", return_value=client), \
          patch.object(settings, "SEC_CACHE_DIR", None), \
          patch("app.objectstore.enabled", return_value=False), \
          patch("time.sleep"), \
-         sec_edgar.collect_lost_requests() as lost:
+         sec_client.collect_lost_requests() as lost:
         try:
-            got = sec_edgar._get_text(url, params)
+            got = sec_client._get_text(url, params)
         except httpx.HTTPError as exc:
             got = exc
     return got, lost
@@ -52,23 +52,23 @@ def _fetch(*answers, url=URL, params=None):
 
 def _lost_lines(caplog):
     return [r.getMessage() for r in caplog.records
-            if r.name == sec_edgar.log.name and "request lost" in r.getMessage()]
+            if r.name == sec_client.log.name and "request lost" in r.getMessage()]
 
 
 class TestTheLossIsTold:
     def test_a_second_stall_is_lost_after_the_retry(self, caplog):
-        caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
+        caplog.set_level(logging.WARNING, logger=sec_client.log.name)
         got, lost = _fetch(httpx.ReadTimeout("stalled"), httpx.ReadTimeout("again"))
         assert isinstance(got, httpx.ReadTimeout) and lost == [URL]
         assert _lost_lines(caplog) == [f"SEC EDGAR: request lost (ReadTimeout, after the retry) on {URL}"]
 
     def test_a_recovered_stall_is_not_lost(self, caplog):
-        caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
+        caplog.set_level(logging.WARNING, logger=sec_client.log.name)
         got, lost = _fetch(httpx.ReadTimeout("stalled"), "<xml/>")
         assert got == "<xml/>" and lost == [] and _lost_lines(caplog) == []
 
     def test_a_second_503_is_lost_and_its_retry_is_told(self, caplog):
-        caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
+        caplog.set_level(logging.WARNING, logger=sec_client.log.name)
         got, lost = _fetch(503, 503)
         assert isinstance(got, httpx.HTTPStatusError) and lost == [URL]
         msgs = [r.getMessage() for r in caplog.records]
@@ -81,7 +81,7 @@ class TestTheLossIsTold:
 
     @pytest.mark.parametrize("answer", [httpx.ConnectError("refused"), 500, 403])
     def test_an_error_without_a_retry_is_lost_too(self, answer, caplog):
-        caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
+        caplog.set_level(logging.WARNING, logger=sec_client.log.name)
         _, lost = _fetch(answer)
         assert lost == [URL]
         assert _lost_lines(caplog) and "after the retry" not in _lost_lines(caplog)[0]
@@ -89,16 +89,16 @@ class TestTheLossIsTold:
     @pytest.mark.parametrize("status", [400, 403])
     def test_a_refusal_is_an_error_with_edgars_reason(self, status, caplog):
         # not the network: EDGAR read the request and said no (findings item 132)
-        caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
+        caplog.set_level(logging.WARNING, logger=sec_client.log.name)
         resp = httpx.Response(status, text="Invalid count,\n Received: 5",
                               request=httpx.Request("GET", URL))
         client = MagicMock()
         client.get.return_value = resp
-        with patch.object(sec_edgar, "_get_client", return_value=client), \
+        with patch.object(sec_client, "_get_client", return_value=client), \
              patch.object(settings, "SEC_CACHE_DIR", None), \
              patch("app.objectstore.enabled", return_value=False), patch("time.sleep"), \
-             sec_edgar.collect_lost_requests() as lost, pytest.raises(httpx.HTTPStatusError):
-            sec_edgar._get_text(URL)
+             sec_client.collect_lost_requests() as lost, pytest.raises(httpx.HTTPStatusError):
+            sec_client._get_text(URL)
         assert lost == [URL]                                   # still counted for the scrape
         [rec] = [r for r in caplog.records if "request lost" in r.getMessage()]
         assert rec.levelno == logging.ERROR
@@ -107,13 +107,13 @@ class TestTheLossIsTold:
 
     @pytest.mark.parametrize("answer", [500, httpx.ConnectError("down")])
     def test_the_network_and_a_5xx_stay_a_warning(self, answer, caplog):
-        caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
+        caplog.set_level(logging.WARNING, logger=sec_client.log.name)
         _fetch(answer)
         [rec] = [r for r in caplog.records if "request lost" in r.getMessage()]
         assert rec.levelno == logging.WARNING and "REFUSED" not in rec.getMessage()
 
     def test_a_404_is_an_answer_not_a_loss(self, caplog):
-        caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
+        caplog.set_level(logging.WARNING, logger=sec_client.log.name)
         got, lost = _fetch(404)
         assert isinstance(got, httpx.HTTPStatusError) and lost == [] and _lost_lines(caplog) == []
 
@@ -123,18 +123,18 @@ class TestTheLossIsTold:
         assert lost == [f"{url}?action=getcompany&CIK=1"]
 
     def test_outside_a_collector_it_is_only_logged(self, caplog):
-        caplog.set_level(logging.WARNING, logger=sec_edgar.log.name)
+        caplog.set_level(logging.WARNING, logger=sec_client.log.name)
         client, _ = _client(httpx.ConnectError("down"))
-        with patch.object(sec_edgar, "_get_client", return_value=client), \
+        with patch.object(sec_client, "_get_client", return_value=client), \
              patch.object(settings, "SEC_CACHE_DIR", None), \
              patch("app.objectstore.enabled", return_value=False), patch("time.sleep"):
             with pytest.raises(httpx.ConnectError):
-                sec_edgar._get_text(URL)
-        assert sec_edgar._lost_requests.get() is None and len(_lost_lines(caplog)) == 1
+                sec_client._get_text(URL)
+        assert sec_client._lost_requests.get() is None and len(_lost_lines(caplog)) == 1
 
     def test_the_collector_closes_with_its_block(self):
         _fetch(httpx.ConnectError("down"))
-        assert sec_edgar._lost_requests.get() is None
+        assert sec_client._lost_requests.get() is None
 
 
 class TestTheRunnerCountsThem:
@@ -146,7 +146,7 @@ class TestTheRunnerCountsThem:
 
         def scrape(company_name, country):
             try:                                   # a caller that swallows, as ~20 do
-                sec_edgar._get_text(URL)
+                sec_client._get_text(URL)
             except httpx.HTTPError:
                 pass
             return dict(result)
@@ -156,7 +156,7 @@ class TestTheRunnerCountsThem:
              patch("app.objectstore.enabled", return_value=False), \
              patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch.object(runner, "_scrape_sec_edgar", side_effect=scrape), \
-             patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
+             patch.object(sec_client, "_get_client", return_value=client), patch("time.sleep"):
             return runner.run_scrape_sec_edgar("Morgan Stanley")
 
     def test_a_swallowed_loss_is_counted_and_the_run_stays_ok(self):

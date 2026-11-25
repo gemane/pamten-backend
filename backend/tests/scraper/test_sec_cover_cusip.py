@@ -15,11 +15,10 @@ from unittest.mock import patch
 
 import pytest
 
-from app.scraper import sec_edgar
-from app.scraper.sec_edgar import (
-    _cover_cusip, _parse_13dg_xml, _parse_cusip_from_text, _parse_holding_filing,
-    _parse_holding_filing_text, fetch_filer_holdings,
-)
+from app.scraper import sec_13dg, sec_client, sec_filer
+from app.scraper.sec_13dg_text import _cover_cusip, _parse_cusip_from_text
+from app.scraper.sec_13dg_xml import _parse_13dg_xml
+from app.scraper.sec_holdings import _parse_holding_filing, _parse_holding_filing_text, fetch_filer_holdings
 from tests.scraper.test_sec_edgar import _serve
 from tests.scraper.test_sec_holdings import XML, _doc_for, _subs
 
@@ -105,7 +104,7 @@ def _xml_with_cusip(cusip: str) -> str:
 
 class TestTheFilerSide:
     def test_an_xml_holding_carries_its_subjects_cusip(self):
-        with patch("app.scraper.sec_edgar._get_text", return_value=_xml_with_cusip("82968B103")):
+        with patch("app.scraper.sec_client._get_text", return_value=_xml_with_cusip("82968B103")):
             row = _parse_holding_filing("0002100119", "a-1")
         assert row["subject_cusip"] == "82968B103"
 
@@ -117,18 +116,18 @@ class TestTheFilerSide:
         cover = ("SCHEDULE 13G Sirius XM Holdings Inc. (Name of Issuer) Common Stock "
                  "(Title of Class of Securities) 82968B103 (CUSIP Number) "
                  "PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 9: 7.1% ")
-        pages = {sec_edgar._filing_index_url("0001364742", "0001086364-24-006303"): index,
+        pages = {sec_client._filing_index_url("0001364742", "0001086364-24-006303"): index,
                  "https://www.sec.gov/Archives/edgar/data/1364742/a.txt": cover}
-        with patch.object(sec_edgar, "_get_text", side_effect=lambda url, params=None: pages[url]):
+        with patch.object(sec_client, "_get_text", side_effect=lambda url, params=None: pages[url]):
             row = _parse_holding_filing_text("0001364742", "0001086364-24-006303", "BlackRock, Inc.")
         assert row["subject_cik"] == "0000908937"
         assert row["subject_cusip"] == "82968B103"
 
     def test_the_holdings_list_passes_it_on(self):
         docs = {"a-1": _xml_with_cusip("82968B103")}
-        with patch("app.scraper.sec_edgar._submissions",
+        with patch("app.scraper.sec_client._submissions",
                    return_value=_subs([("SCHEDULE 13G", "a-1", "2026-02-01")])), \
-             patch("app.scraper.sec_edgar._get_text", side_effect=_doc_for(docs)):
+             patch("app.scraper.sec_client._get_text", side_effect=_doc_for(docs)):
             holdings = fetch_filer_holdings("0002100119")
         assert [h["subject_cusip"] for h in holdings] == ["82968B103"]
 
@@ -153,16 +152,16 @@ class TestTheIssuerSide:
                    "PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11: 7.0% ")
         pages = {None: atom, "https://x.test/old-index.htm": old_index,
                  "https://www.sec.gov/Archives/edgar/data/1/old.htm": old_doc}
-        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
-             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
-            results = sec_edgar.fetch_ownership_filings("Sirius XM Holdings Inc.", "908937")
+        with patch.object(sec_client, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_filer, "fetch_former_names", return_value=[]):
+            results = sec_13dg.fetch_ownership_filings("Sirius XM Holdings Inc.", "908937")
         assert [r["issuer_cusip"] for r in results] == ["82968B103"]
 
     def test_an_xml_schedule_gives_the_issuer_its_cusip(self):
         # Vanguard's real 13G on Apple (0002100119-26-000139) lists 037833100
         from tests.scraper.test_sec_edgar import TestStructuredScrapeEndToEnd as E
         pages = {E.XML_URL: (FIXTURES / "13g_vanguard.xml").read_text()}
-        with patch.object(sec_edgar, "_get_text", side_effect=_serve(E.ATOM, pages)), \
-             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
-            results = sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
+        with patch.object(sec_client, "_get_text", side_effect=_serve(E.ATOM, pages)), \
+             patch.object(sec_filer, "fetch_former_names", return_value=[]):
+            results = sec_13dg.fetch_ownership_filings("Apple Inc", "0000320193")
         assert [r["issuer_cusip"] for r in results] == ["037833100"]

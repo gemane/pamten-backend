@@ -84,12 +84,12 @@ def test_a_holdings_run_dims_it(it_db):
     holding = {"subject_name": "Tesla, Inc.", "subject_cik": None, "stake_percent": 4.96,
                "file_date": "2026-10-27", "filing_type": "13G/A", "event_date": "2026-09-30",
                "final_report": "2026-09-30", "source_url": URL}
-    with patch("app.scraper.sec_edgar.fetch_filer_name", return_value="BlackRock, Inc."), \
-         patch("app.scraper.sec_edgar.fetch_filer_holdings", return_value=[holding]), \
-         patch("app.scraper.sec_edgar.fetch_affiliated_managers", return_value=[]), \
-         patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"), \
-         patch("app.scraper.sec_edgar.fetch_filer_headquarters", return_value=None), \
-         patch("app.scraper.sec_edgar.fetch_filer_website", return_value=None), \
+    with patch("app.scraper.sec_filer.fetch_filer_name", return_value="BlackRock, Inc."), \
+         patch("app.scraper.sec_holdings.fetch_filer_holdings", return_value=[holding]), \
+         patch("app.scraper.sec_13f.fetch_affiliated_managers", return_value=[]), \
+         patch("app.scraper.sec_filer.fetch_filer_country", return_value="US"), \
+         patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
+         patch("app.scraper.sec_filer.fetch_filer_website", return_value=None), \
          patch("app.scraper.runner._record_sec_industry"), \
          patch("app.scraper.runner._upsert_entity_by_name",
                side_effect=lambda **kw: BLK if kw.get("cik") == "0002012383" else TSLA):

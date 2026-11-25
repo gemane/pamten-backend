@@ -124,7 +124,7 @@ class TestPermissionGuards:
              patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.scraper_registry.get_source_enabled", return_value=True), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
-             patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"), \
+             patch("app.scraper.sec_filer.fetch_filer_country", return_value="US"), \
              patch("app.scraper.runner.one_statement_per_run", fake_run), \
              patch("app.scraper.runner._write_sec_edgar",
                    side_effect=lambda *a: (events.append("write"), {"status": "ok"})[1]) as write, \
@@ -251,7 +251,7 @@ class TestRunScrapeSecEdgar:
         return [patch("app.scraper.runner.get_source_enabled", return_value=True),
                 patch("app.scraper.runner.db.get_session", ctx),
                 patch("app.scraper.sec_edgar.scrape_company", return_value=data),
-                patch("app.scraper.sec_edgar.fetch_departures",
+                patch("app.scraper.sec_insiders.fetch_departures",
                       **extra.get("departures", {"return_value": []}))]
 
     def test_a_form_3_date_reaches_the_role_edge(self):
@@ -262,7 +262,7 @@ class TestRunScrapeSecEdgar:
         with patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
-             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch("app.scraper.sec_insiders.fetch_departures", return_value=[]), \
              patch("app.scraper.runner._upsert_role_sec",
                    side_effect=lambda *a, **kw: role_calls.append((a, kw))):
             run_scrape_sec_edgar("Tesla")
@@ -277,7 +277,7 @@ class TestRunScrapeSecEdgar:
         with patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
-             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch("app.scraper.sec_insiders.fetch_departures", return_value=[]), \
              patch("app.scraper.runner._find_person", return_value="p-jane"), \
              patch("app.scraper.runner._upsert_person_by_name",
                    side_effect=lambda name, **kw: minted.append(name) or "p-x"), \
@@ -303,7 +303,7 @@ class TestRunScrapeSecEdgar:
         with patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
-             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch("app.scraper.sec_insiders.fetch_departures", return_value=[]), \
              patch("app.scraper.runner._find_person", return_value=None), \
              patch("app.scraper.runner._upsert_person_by_name",
                    side_effect=lambda name, **kw: minted.append((name, kw.get("sec_cik"))) or "p-jane"), \
@@ -325,7 +325,7 @@ class TestRunScrapeSecEdgar:
         with patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
-             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch("app.scraper.sec_insiders.fetch_departures", return_value=[]), \
              patch("app.scraper.runner._find_person", return_value="p-jane"), \
              patch("app.scraper.runner._upsert_person_by_name",
                    side_effect=lambda name, **kw: minted.append(name) or "p-x"), \
@@ -342,7 +342,7 @@ class TestRunScrapeSecEdgar:
         with patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
-             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch("app.scraper.sec_insiders.fetch_departures", return_value=[]), \
              patch("app.scraper.runner._find_person", return_value=None), \
              patch("app.scraper.runner._upsert_role_sec", side_effect=lambda *a, **kw: roles.append(a)):
             run_scrape_sec_edgar("Tesla")
@@ -358,7 +358,7 @@ class TestRunScrapeSecEdgar:
         with patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=self.SEC_DATA), \
-             patch("app.scraper.sec_edgar.fetch_departures", side_effect=fake_departures), \
+             patch("app.scraper.sec_insiders.fetch_departures", side_effect=fake_departures), \
              patch("app.scraper.runner._upsert_person_by_name",
                    side_effect=lambda name, **kw: "p-" + name.split()[-1].lower()), \
              patch("app.scraper.runner._upsert_role_sec", return_value=None), \
@@ -1173,7 +1173,7 @@ def test_sec_person_centric_insider_owns():
          patch("app.scraper.runner.db.get_session", fake_ctx), \
          patch("app.scraper.sec_writer.close_reported_by_parent", return_value=0), \
          patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
-         patch("app.scraper.sec_edgar.fetch_insider_holding",
+         patch("app.scraper.sec_insiders.fetch_insider_holding",
                return_value={"shares_owned": 2000, "stake_percent": 2.0,
                              "source_url": "https://sec.gov/f4", "source_date": "2024-02-01"}), \
          patch("app.scraper.runner.stated_by_13dg", return_value=False), \
@@ -1217,7 +1217,7 @@ class TestPersonCentricCik:
              patch("app.scraper.runner.db.get_session", fake_ctx), \
              patch("app.scraper.sec_writer.close_reported_by_parent", return_value=0), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
-             patch("app.scraper.sec_edgar.fetch_insider_holding", side_effect=fake_holding), \
+             patch("app.scraper.sec_insiders.fetch_insider_holding", side_effect=fake_holding), \
              patch("app.scraper.runner._vertex_holding_cik", return_value=held_by), \
              patch("app.scraper.runner._stamp_person_cik", side_effect=fake_stamp), \
              patch("app.scraper.runner.stated_by_13dg", return_value=False), \
@@ -1339,7 +1339,7 @@ class TestForm4YieldsTo13dg:
         owns, asked, result = self._run(
             data, stated={"musk"}, ctx=fake_ctx,
             **{"app.scraper.runner._upsert_entity_by_name": {"return_value": "tsla"},
-               "app.scraper.sec_edgar.fetch_insider_holding": {"return_value": {
+               "app.scraper.sec_insiders.fetch_insider_holding": {"return_value": {
                    "shares_owned": 1123324786, "stake_percent": 28.4188,
                    "source_url": "https://sec.gov/f4", "source_date": "2026-06-17"}}})
         assert asked == ["musk"] and owns == []
@@ -1750,7 +1750,7 @@ class TestIdentifierBridge:
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.register_pointer.write_from_pointer") as reg, \
              patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
+             patch("app.scraper.sec_lookup.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
             eid = _upsert_entity("BlackRock", None, None, None, "Q219635", aliases=["BlackRock, Inc.", "BLK"],
                                  lei=["549300LRIF3NWCU26A80"], sec_cik=["0001364742"])
         assert eid is None
@@ -1822,7 +1822,7 @@ class TestRelatedCompanyGate:
         # EDGAR lists "BlackRock, Inc." under the new parent's CIK: the name moved (item 66)
         with patch("app.database.db.get_session", ctx), \
              patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
-             patch("app.scraper.sec_edgar.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
+             patch("app.scraper.sec_lookup.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
             assert _resolve_related_company({"qid": "Q219635", "name": "BlackRock",
                                              "sec_ciks": ["0001364742"]}) is False
 
@@ -1977,7 +1977,7 @@ class TestSecIndustry:
 
     def test_the_filers_sic_is_recorded_with_its_provenance(self):
         from app.scraper.runner import _record_sec_industry
-        with patch("app.scraper.sec_edgar.fetch_filer_sic", return_value=("3711", "Motor Vehicles & Passenger Car Bodies")), \
+        with patch("app.scraper.sec_filer.fetch_filer_sic", return_value=("3711", "Motor Vehicles & Passenger Car Bodies")), \
              patch("app.scraper.runner.industry.record") as rec:
             _record_sec_industry("e1", "0001318605", "src")
         rec.assert_called_once()
@@ -1988,7 +1988,7 @@ class TestSecIndustry:
 
     def test_no_cik_or_no_code_writes_nothing(self):
         from app.scraper.runner import _record_sec_industry
-        with patch("app.scraper.sec_edgar.fetch_filer_sic", return_value=None) as fetch, \
+        with patch("app.scraper.sec_filer.fetch_filer_sic", return_value=None) as fetch, \
              patch("app.scraper.runner.industry.record") as rec:
             _record_sec_industry("e1", None, "src")
             fetch.assert_not_called()
@@ -2001,9 +2001,9 @@ class TestSecIndustry:
         from app.scraper import runner
         data = {"name": "Tesla, Inc.", "cik": "0001318605", "ownership_filings": [], "executives": []}
         recorded = []
-        with patch("app.scraper.sec_edgar.fetch_filer_headquarters", return_value=None), \
-             patch("app.scraper.sec_edgar.fetch_filer_website", return_value=None), \
-             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+        with patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
+             patch("app.scraper.sec_filer.fetch_filer_website", return_value=None), \
+             patch("app.scraper.sec_insiders.fetch_departures", return_value=[]), \
              patch.object(runner, "_ensure_source", return_value="src"), \
              patch.object(runner, "_upsert_entity_by_name", return_value="tesla-id"), \
              patch.object(runner, "_record_sec_industry", side_effect=lambda *a: recorded.append(a)), \
@@ -2024,14 +2024,14 @@ class TestClassEndInTheScrape:
     def _scrape(self, data):
         from app.scraper import runner
         ends = [{"date": "2020-04-01", "form": "25-NSE", "class": "Common Stock", "url": "u"}]
-        with patch("app.scraper.sec_edgar.fetch_filer_headquarters", return_value=None), \
-             patch("app.scraper.sec_edgar.fetch_filer_website", return_value=None), \
-             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+        with patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
+             patch("app.scraper.sec_filer.fetch_filer_website", return_value=None), \
+             patch("app.scraper.sec_insiders.fetch_departures", return_value=[]), \
              patch.object(runner, "_ensure_source", return_value="src"), \
              patch.object(runner, "_upsert_entity_by_name", return_value="sprint-id"), \
              patch.object(runner, "_record_sec_industry"), \
              patch("app.scraper.sec_writer.close_reported_by_parent"), \
-             patch("app.scraper.sec_edgar._submissions", return_value={"subs": 1}) as subs, \
+             patch("app.scraper.sec_client._submissions", return_value={"subs": 1}) as subs, \
              patch("app.scraper.sec_class_end.class_ends", return_value=ends) as read, \
              patch("app.scraper.sec_writer.close_at_class_end", return_value=1) as close, \
              patch("app.scraper.sec_writer.read_table_and_close", return_value={}) as table, \

@@ -655,7 +655,7 @@ parser. Anything that does not map is either a new property (document it) or noi
       into `schema._DATES` (or `_TIMESTAMPS`) so it carries the rule too.
 - [ ] **A placeholder in a field is not a value.** Form 4's title box says "See Remarks"
       when the title is in the remarks box; five dev seats carried the placeholder as
-      their role until 2026-10-25 (`sec_edgar._officer_role` now reads the remarks — only
+      their role until 2026-10-25 (`sec_insiders._officer_role` now reads the remarks — only
       when they read as a title, since a sentence there can describe a post at another
       company — and falls back to "Officer" rather than ever storing the pointer). Look for the
       source's own "see elsewhere" / "not applicable" / "other" tokens before storing
@@ -1409,7 +1409,7 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the 50-document cap covered for it, and the 15-month window exposed it (findings item 29,
       2026-11-01). Search a register in the register's own name order, and check a fallback's
       hit rate on real inputs when the path in front of it shrinks.
-- [ ] **Back off on 429/5xx**, and respect `Retry-After` when it is sent. (A source using `sec_edgar._get`/`_get_text` inherits this — one capped retry — since the 13F work.)
+- [ ] **Back off on 429/5xx**, and respect `Retry-After` when it is sent. (A source using `sec_client._get`/`_get_text` inherits this — one capped retry — since the 13F work.)
 - [ ] **Retry a stall too, not only a status code, and keep the read timeout short.** A source
       can leave a request hanging with no answer at all; a retry on 429/503 never sees that
       case. sec.gov did this to ~1 request in 30, and each one waited out a 30 s read timeout
@@ -1551,7 +1551,7 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       suffix rule with the phrases it is part of ("& Co", "and Company", "GmbH & Co. KG")
       and with a name the word sits inside ("Procter & Gamble"), and keep every key that
       compares names (`normalize_entity_name`, `graph_writer._name_key`,
-      `sec_edgar._ticker_normalize`, `sec_edgar._significant_tokens`) in step — the
+      `sec_lookup._ticker_normalize`, `sec_13dg_text._significant_tokens`) in step — the
       apostrophe was handled three ways in them ("Domino's" kept it, split off an "s",
       or dropped it) until 2026-10-30; each now calls `mapper.fold_apostrophes` first. The
       accents were the same story: `name_key` and `legal_name_key` folded them, the stored
@@ -2127,6 +2127,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       id found none of the earlier ones (findings item 124, step 7). Collect every id the
       node has had from the forwarding rows first, then ask the log — and test it with a
       chain and a re-key, not with one merge.
+- [ ] **A source that outgrows one file is split by what each part reads, and the
+      move is proved to be only a move.** `sec_edgar.py` reached 5,100 lines and was
+      split into eleven modules (2026-11-25, see
+      [`sec_edgar_scraper.md`](sec_edgar_scraper.md), *Where the code lives*). Three
+      things kept it safe: a script moved the code and rewrote every reference, so no
+      line was retyped; a syntax-tree comparison showed all 280 top-level items
+      unchanged apart from the module prefix; and a caller reaches another module's
+      function through the module (`sec_client._get(...)`), because a test patches a
+      function where it lives — an imported copy (`from sec_client import _get`)
+      would keep calling the real one and the test would reach the network.
 
 ## 9. Documentation
 

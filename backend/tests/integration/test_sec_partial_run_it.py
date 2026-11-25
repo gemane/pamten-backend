@@ -22,11 +22,11 @@ def _flags():
     with patch.object(settings, "SCRAPER_ENABLED", True), \
          patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
          patch("app.scraper.runner.get_source_enabled", return_value=True), \
-         patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"), \
-         patch("app.scraper.sec_edgar.fetch_filer_headquarters", return_value=None), \
-         patch("app.scraper.sec_edgar.fetch_filer_website", return_value=None), \
-         patch("app.scraper.sec_edgar.fetch_filer_sic", return_value=None), \
-         patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+         patch("app.scraper.sec_filer.fetch_filer_country", return_value="US"), \
+         patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
+         patch("app.scraper.sec_filer.fetch_filer_website", return_value=None), \
+         patch("app.scraper.sec_filer.fetch_filer_sic", return_value=None), \
+         patch("app.scraper.sec_insiders.fetch_departures", return_value=[]), \
          patch("app.scraper.graph_writer._geocode_after_scrape", return_value={}):
         yield
 
@@ -99,10 +99,10 @@ def test_a_lost_request_is_noted_on_an_ok_row(it_db):
     from fastapi.testclient import TestClient
     from app.main import app
     from app.auth.dependencies import require_contributor
-    from app.scraper import sec_edgar
+    from app.scraper import sec_client
 
     def scrape(*a, **k):
-        sec_edgar._request_lost("https://www.sec.gov/Archives/x/form4.xml", None,
+        sec_client._request_lost("https://www.sec.gov/Archives/x/form4.xml", None,
                                 httpx.ReadTimeout("stalled"), True)
         return _data([])
     app.dependency_overrides[require_contributor] = lambda: {"id": "u", "role": "contributor"}

@@ -352,13 +352,13 @@ class TestTheWholeScrapeWritesTheGroup:
 
     def _scrape(self, graph, filing):
         from unittest.mock import patch
-        from app.scraper import runner, sec_edgar
+        from app.scraper import runner, sec_edgar, sec_filer
         payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
                    "ownership_filings": [filing], "executives": [], "holdings": [],
                    "former_names": [], "lei": None}
         with patch.object(sec_edgar, "scrape_company", return_value=payload), \
-             patch.object(sec_edgar, "fetch_filer_country", return_value=None), \
-             patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
+             patch.object(sec_filer, "fetch_filer_country", return_value=None), \
+             patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
              patch.object(runner, "get_source_enabled", return_value=True), \
              patch.object(runner.settings, "SCRAPER_ENABLED", True), \
              patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
@@ -458,13 +458,13 @@ class TestTheWholeScrapeWritesTheGroup:
                         "source_date": "2026-02-01",
                         "source_url": "https://sec.gov/f4-index.htm"}
         from unittest.mock import patch
-        from app.scraper import runner, sec_edgar
+        from app.scraper import runner, sec_edgar, sec_filer
         payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
                    "ownership_filings": [], "executives": [payload_exec],
                    "holdings": [], "former_names": [], "lei": None}
         with patch.object(sec_edgar, "scrape_company", return_value=payload), \
-             patch.object(sec_edgar, "fetch_filer_country", return_value=None), \
-             patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
+             patch.object(sec_filer, "fetch_filer_country", return_value=None), \
+             patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
              patch.object(runner, "get_source_enabled", return_value=True), \
              patch.object(runner.settings, "SCRAPER_ENABLED", True), \
              patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
@@ -486,14 +486,14 @@ class TestTheWholeScrapeWritesTheGroup:
                         "source_date": "2026-02-01",
                         "source_url": "https://sec.gov/f4-index.htm"}
         from unittest.mock import patch
-        from app.scraper import runner, sec_edgar
+        from app.scraper import runner, sec_edgar, sec_filer
         payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
                    "ownership_filings": [], "executives": [payload_exec],
                    "holdings": [], "former_names": [], "lei": None,
                    "shares_outstanding": 2_000_000_000}
         with patch.object(sec_edgar, "scrape_company", return_value=payload), \
-             patch.object(sec_edgar, "fetch_filer_country", return_value=None), \
-             patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
+             patch.object(sec_filer, "fetch_filer_country", return_value=None), \
+             patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
              patch.object(runner, "get_source_enabled", return_value=True), \
              patch.object(runner.settings, "SCRAPER_ENABLED", True), \
              patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
@@ -531,14 +531,14 @@ class TestTheWholeScrapeWritesTheGroup:
                         "source_date": "2026-02-01",
                         "source_url": "https://sec.gov/f4-index.htm"}
         from unittest.mock import patch
-        from app.scraper import runner, sec_edgar
+        from app.scraper import runner, sec_edgar, sec_filer
         payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
                    "ownership_filings": [], "executives": [payload_exec],
                    "holdings": [], "former_names": [], "lei": None,
                    "shares_outstanding": 2_000_000_000}
         with patch.object(sec_edgar, "scrape_company", return_value=payload), \
-             patch.object(sec_edgar, "fetch_filer_country", return_value=None), \
-             patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
+             patch.object(sec_filer, "fetch_filer_country", return_value=None), \
+             patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
              patch.object(runner, "get_source_enabled", return_value=True), \
              patch.object(runner.settings, "SCRAPER_ENABLED", True), \
              patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):

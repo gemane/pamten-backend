@@ -60,8 +60,8 @@ def build_index(raw: bytes) -> bytes:
 
 
 def _download() -> bytes:
-    from app.scraper import sec_edgar
-    return sec_edgar._response(LIST_URL, {}).content
+    from app.scraper import sec_client
+    return sec_client._response(LIST_URL, {}).content
 
 
 def index_path(directory: str | None = None, download=None, now=time.time,

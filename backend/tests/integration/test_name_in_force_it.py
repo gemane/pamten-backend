@@ -30,8 +30,8 @@ SUBMISSIONS = {
 
 
 def _edgar():
-    return (patch("app.scraper.sec_edgar._submissions", side_effect=lambda cik: SUBMISSIONS[cik]),
-            patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=lambda cik: SUBMISSIONS[cik]["name"]),
+    return (patch("app.scraper.sec_client._submissions", side_effect=lambda cik: SUBMISSIONS[cik]),
+            patch("app.scraper.sec_filer.fetch_filer_name", side_effect=lambda cik: SUBMISSIONS[cik]["name"]),
             # no filing states the LEI: the registers decide, as the case is about (item 64)
             patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None))
 

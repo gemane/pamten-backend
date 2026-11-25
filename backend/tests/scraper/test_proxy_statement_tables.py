@@ -143,7 +143,7 @@ class TestFindingTheFiling:
                                    "filingDate": ["2026-04-10", "2026-04-09"]}}}
 
     def test_the_name_goes_through_the_sec_company_search(self):
-        with patch("app.scraper.sec_edgar.search_company",
+        with patch("app.scraper.sec_lookup.search_company",
                    return_value={"cik": "0001018724", "name": "AMAZON COM INC"}) as search, \
              patch.object(ps, "_get_json", return_value=self.SUBS) as get:
             found = ps.find_latest_def14a("Amazon.com")
@@ -152,13 +152,13 @@ class TestFindingTheFiling:
         assert found == ("0001018724", "000110465926041026", "tm261382-1_def14a.htm", "2026-04-09")
 
     def test_a_held_cik_skips_the_search(self):
-        with patch("app.scraper.sec_edgar.search_company") as search, \
+        with patch("app.scraper.sec_lookup.search_company") as search, \
              patch.object(ps, "_get_json", return_value=self.SUBS):
             assert ps.find_latest_def14a("anything", cik="1018724")[0] == "0001018724"
         search.assert_not_called()
 
     def test_an_unknown_company_or_no_proxy_is_none(self):
-        with patch("app.scraper.sec_edgar.search_company", return_value=None):
+        with patch("app.scraper.sec_lookup.search_company", return_value=None):
             assert ps.find_latest_def14a("Nobody") is None
         with patch.object(ps, "_get_json", return_value={"filings": {"recent": {}}}):
             assert ps.find_latest_def14a("x", cik="1") is None

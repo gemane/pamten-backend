@@ -12,7 +12,8 @@ from unittest.mock import patch
 
 import pytest
 
-from app.scraper.sec_edgar import SharesOutstanding, _parse_form34_xml, split_shared_blocks, stake_for
+from app.scraper.sec_insiders import _parse_form34_xml, split_shared_blocks, stake_for
+from app.scraper.sec_shares import SharesOutstanding
 
 pytestmark = pytest.mark.integration
 
@@ -53,14 +54,14 @@ def graph(it_db):
 
 
 def _scrape(payload: dict, holding: dict | None = None):
-    from app.scraper import runner, sec_edgar
+    from app.scraper import runner, sec_client, sec_edgar, sec_filer, sec_insiders
     with patch.object(sec_edgar, "scrape_company", return_value=payload), \
-         patch.object(sec_edgar, "fetch_filer_country", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
-         patch.object(sec_edgar, "fetch_filer_website", return_value=None), \
-         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
-         patch.object(sec_edgar, "fetch_insider_holding", return_value=holding), \
-         patch.object(sec_edgar, "_submissions", return_value={}), \
+         patch.object(sec_filer, "fetch_filer_country", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_headquarters", return_value=None), \
+         patch.object(sec_filer, "fetch_filer_website", return_value=None), \
+         patch.object(sec_insiders, "fetch_departures", return_value=[]), \
+         patch.object(sec_insiders, "fetch_insider_holding", return_value=holding), \
+         patch.object(sec_client, "_submissions", return_value={}), \
          patch.object(runner, "get_source_enabled", return_value=True), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):

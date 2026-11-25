@@ -125,7 +125,7 @@ def _docs(url):
 
 class TestClassEnds:
     def _run(self, rows):
-        with patch.object(ce.sec_edgar, "_get_text", side_effect=_docs) as get:
+        with patch.object(ce.sec_client, "_get_text", side_effect=_docs) as get:
             return ce.class_ends("0000101830", _subs(rows)), get
 
     def test_sprint_ends_on_its_25nse_then_its_form15(self):
@@ -188,27 +188,27 @@ class TestClassEnds:
 
     @pytest.mark.parametrize("form", ["N-CEN", "N-CSR", "NPORT-P", "485BPOS"])
     def test_a_fund_trust_is_skipped_without_a_request(self, form):
-        with patch.object(ce.sec_edgar, "_get_text") as get:
+        with patch.object(ce.sec_client, "_get_text") as get:
             assert ce.class_ends("0001100663", _subs([SPRINT_25, (form, "2026-01-01", "x-4", "n.htm")])) == []
         get.assert_not_called()
 
     def test_an_issuer_filed_form_25_is_not_read(self):
-        with patch.object(ce.sec_edgar, "_get_text") as get:
+        with patch.object(ce.sec_client, "_get_text") as get:
             assert ce.class_ends("1", _subs([("25", "2020-04-01", "0000000000-20-000009", "x.xml")])) == []
         get.assert_not_called()
 
     def test_an_unreadable_form_is_skipped(self):
-        with patch.object(ce.sec_edgar, "_get_text", side_effect=RuntimeError("boom")):
+        with patch.object(ce.sec_client, "_get_text", side_effect=RuntimeError("boom")):
             assert ce.class_ends("0000101830", _subs([SPRINT_25])) == []
 
     def test_no_filings_no_request(self):
-        with patch.object(ce.sec_edgar, "_get_text") as get:
+        with patch.object(ce.sec_client, "_get_text") as get:
             assert ce.class_ends("1", _subs([])) == []
             assert ce.class_ends("1", {}) == []
         get.assert_not_called()
 
     def test_the_submissions_are_read_when_not_given(self):
-        with patch.object(ce.sec_edgar, "_submissions", return_value=_subs([SPRINT_25])) as subs, \
-             patch.object(ce.sec_edgar, "_get_text", side_effect=_docs):
+        with patch.object(ce.sec_client, "_submissions", return_value=_subs([SPRINT_25])) as subs, \
+             patch.object(ce.sec_client, "_get_text", side_effect=_docs):
             assert len(ce.class_ends("0000101830")) == 1
         subs.assert_called_once_with("0000101830")

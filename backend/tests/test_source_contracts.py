@@ -7,7 +7,7 @@ import pytest
 
 from app import source_calls, source_contracts as sc
 from app.config import settings
-from app.scraper import ch_officers, legal_identity, sec_edgar, sec_roster, wikidata
+from app.scraper import ch_officers, legal_identity, sec_13dg, sec_client, sec_lookup, sec_roster, wikidata
 
 APPLE = sc.APPLE_CIK
 
@@ -78,21 +78,21 @@ class TestRun:
 # answer, answers that must break it)
 _OFFICER = {"name": "SMITH, John", "links": {"officer": {"appointments": "/officers/x/appointments"}}}
 CASES = [
-    (sc._sec_tickers, (sec_edgar, "_get_tickers"),
+    (sc._sec_tickers, (sec_lookup, "_get_tickers"),
      {"0": {"cik_str": 320193}}, [{}, {"0": {"cik_str": 1}}, None]),
-    (sc._sec_company_search, (sec_edgar, "_browse_index"),
+    (sc._sec_company_search, (sec_lookup, "_browse_index"),
      [(APPLE, None)], [None, [], [("0000000001", "Other Inc")]]),
-    (sc._sec_person_search, (sec_edgar, "_search_person_ciks"),
+    (sc._sec_person_search, (sec_lookup, "_search_person_ciks"),
      ["0000000009", sc.COOK_CIK], [[], ["0000000009"]]),
-    (sc._sec_submissions, (sec_edgar, "_submissions"),
+    (sc._sec_submissions, (sec_client, "_submissions"),
      {"filings": {"recent": {"form": ["10-K"], "accessionNumber": ["a"], "primaryDocument": ["d"]}}},
      [{}, {"filings": {"recent": {"form": []}}}, {"filings": {"recent": {"form": ["10-K"]}}}]),
-    (sc._sec_holder_feed, (sec_edgar, "_ownership_feed_entries"),
+    (sc._sec_holder_feed, (sec_13dg, "_ownership_feed_entries"),
      iter([{"accession": "a", "index_url": "u"}]), [iter([]), iter([{"accession": "a"}])]),
     (sc._sec_insider_page, (sec_roster, "issuer_owners"),
      [{"name": "LEVINSON ARTHUR D", "cik": "0001214128"}, {"name": "COOK TIMOTHY D", "cik": sc.COOK_CIK}],
      [[], [{"name": "LEVINSON ARTHUR D", "cik": "0001214128"}]]),
-    (sc._sec_full_text, (sec_edgar, "_get"),
+    (sc._sec_full_text, (sec_client, "_get"),
      {"hits": {"hits": [{"_source": {"ciks": ["320193"]}}]}},
      [{}, {"hits": {"hits": []}}, {"hits": {"hits": [{"_source": {}}]}}]),
     (sc._gleif_relationship, (legal_identity, "_gleif_get"),
@@ -170,7 +170,7 @@ class TestTheProbeList:
     def test_the_person_search_probe_asks_the_live_search_whatever_list_is_kept(self):
         from app.scraper import sec_names
         with patch.object(sec_names, "person_ciks", return_value=[sc.COOK_CIK]) as listed, \
-             patch.object(sec_edgar, "_search_person_ciks", return_value=[]), pytest.raises(sc.Broken):
+             patch.object(sec_lookup, "_search_person_ciks", return_value=[]), pytest.raises(sc.Broken):
             sc._sec_person_search()
         listed.assert_not_called()
 
@@ -186,13 +186,13 @@ class TestTheProbeList:
     def test_the_insider_page_probe_goes_through_the_roster_s_own_reader(self):
         page = ("<table><tr><th>Owner</th><th>Filings</th><th>Transaction Date</th><th>Type of Owner</th></tr>"
                 f"<tr><td>COOK TIMOTHY D</td><td>{int(sc.COOK_CIK)}</td><td>2026-10-01</td><td>officer: CEO</td></tr></table>")
-        with patch.object(sec_edgar, "_get_text", return_value=page) as get:
+        with patch.object(sec_client, "_get_text", return_value=page) as get:
             sc._sec_insider_page()
         assert get.call_args.args == (sec_roster.OWNERS_URL, {"action": "getissuer", "CIK": sc.APPLE_CIK})
         assert source_calls.request_type("sec-edgar", httpx.URL(sec_roster.OWNERS_URL, params=get.call_args.args[1])) \
             == "insider-page"
         # SEC.gov's maintenance page: a page, and no owner table in it
-        with patch.object(sec_edgar, "_get_text", return_value="<html>This page is temporarily unavailable.</html>"), \
+        with patch.object(sec_client, "_get_text", return_value="<html>This page is temporarily unavailable.</html>"), \
              pytest.raises(sc.Broken, match="0 owners read"):
             sc._sec_insider_page()
 
@@ -209,7 +209,7 @@ class TestTheProbeList:
 
     def test_a_refused_insider_page_is_reported_with_its_status(self):
         probe = sc.Probe("sec-edgar", "a company's reporting owners", sc._sec(sc._sec_insider_page), "insider-page")
-        with patch.object(sec_edgar, "_get_text", side_effect=_status_error(503)):
+        with patch.object(sec_client, "_get_text", side_effect=_status_error(503)):
             [(_, why)] = sc.run([probe], sleep=lambda s: None)
         assert "503" in why
 
@@ -240,12 +240,12 @@ class TestTheChangeThatTaughtIt:
         return [p for p in sc.probes() if "name search" in p.name]
 
     def test_the_name_searches_pass_against_todays_edgar(self):
-        allowed = {str(n) for n in sec_edgar.BROWSE_PAGE_SIZES}
-        with patch.object(sec_edgar, "_get_client", return_value=self._edgar(allowed)), patch("time.sleep"):
+        allowed = {str(n) for n in sec_client.BROWSE_PAGE_SIZES}
+        with patch.object(sec_client, "_get_client", return_value=self._edgar(allowed)), patch("time.sleep"):
             assert sc.run(self._name_probes(), sleep=lambda s: None) == []
 
     def test_a_page_size_edgar_stops_taking_fails_both_and_names_the_request(self):
-        with patch.object(sec_edgar, "_get_client", return_value=self._edgar({"500"})), patch("time.sleep"):
+        with patch.object(sec_client, "_get_client", return_value=self._edgar({"500"})), patch("time.sleep"):
             failed = sc.run(self._name_probes(), sleep=lambda s: None)
         assert [p.name for p, _ in failed] == ["company-name search", "person-name search"]
         assert all("request lost: https://www.sec.gov/cgi-bin/browse-edgar?" in why and "count=10" in why

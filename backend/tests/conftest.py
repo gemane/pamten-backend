@@ -95,7 +95,7 @@ def legal_identity_caches():
     annual-report covers `sec_edgar` keeps per URL, must not leak from one
     test's mocks into the next."""
     from app.scraper.legal_identity import clear_caches
-    from app.scraper.sec_edgar import _cover_of
+    from app.scraper.sec_filer import _cover_of
     clear_caches()
     _cover_of.cache_clear()
     yield

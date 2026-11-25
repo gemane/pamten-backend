@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from app.config import settings
-from app.scraper import proxy_statement, sec_edgar
+from app.scraper import proxy_statement, sec_client, sec_lookup
 
 CIK = "0001652044"
 DOC = "https://www.sec.gov/Archives/edgar/data/1652044/000130817926000342/goog-20260424.htm"
@@ -50,8 +50,8 @@ def _client(doc_answers):
 
 def _fetch(*doc_answers):
     client, calls = _client(doc_answers)
-    with patch.object(sec_edgar, "_get_client", return_value=client), \
-         patch.object(sec_edgar, "search_company", return_value={"cik": CIK}), \
+    with patch.object(sec_client, "_get_client", return_value=client), \
+         patch.object(sec_lookup, "search_company", return_value={"cik": CIK}), \
          patch.object(settings, "SEC_CACHE_DIR", None), \
          patch("app.objectstore.enabled", return_value=False), patch("time.sleep"):
         return proxy_statement.fetch_proxy_ownership("Alphabet Inc."), calls
@@ -79,8 +79,8 @@ def test_a_stall_is_retried():
 def test_a_failed_search_is_an_error_result_not_an_exception():
     client = MagicMock()
     client.get.side_effect = httpx.ConnectError("down")
-    with patch.object(sec_edgar, "_get_client", return_value=client), \
-         patch.object(sec_edgar, "search_company", return_value={"cik": CIK}), \
+    with patch.object(sec_client, "_get_client", return_value=client), \
+         patch.object(sec_lookup, "search_company", return_value={"cik": CIK}), \
          patch.object(settings, "SEC_CACHE_DIR", None), \
          patch("app.objectstore.enabled", return_value=False), patch("time.sleep"):
         out = proxy_statement.fetch_proxy_ownership("Alphabet Inc.")
@@ -89,11 +89,11 @@ def test_a_failed_search_is_an_error_result_not_an_exception():
 
 def test_the_lost_request_is_counted():
     client, _ = _client([503, 503])
-    with patch.object(sec_edgar, "_get_client", return_value=client), \
-         patch.object(sec_edgar, "search_company", return_value={"cik": CIK}), \
+    with patch.object(sec_client, "_get_client", return_value=client), \
+         patch.object(sec_lookup, "search_company", return_value={"cik": CIK}), \
          patch.object(settings, "SEC_CACHE_DIR", None), \
          patch("app.objectstore.enabled", return_value=False), patch("time.sleep"), \
-         sec_edgar.collect_lost_requests() as lost:
+         sec_client.collect_lost_requests() as lost:
         proxy_statement.fetch_proxy_ownership("Alphabet Inc.")
     assert lost == [DOC]
 

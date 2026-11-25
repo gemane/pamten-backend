@@ -8,7 +8,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from app.scraper import sec_edgar, sec_roster
+from app.scraper import sec_client, sec_roster
 from app.scraper.sec_roster import has_seat, match_owner, parse_owners, person_parts, roster_insiders
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -109,7 +109,7 @@ FORM3 = {"name": "Kenneth I Chenault", "title": "", "role": "Director", "shares_
 
 def _roster(people, window, form3=None, owners=BERKSHIRE, filing=FILING):
     with patch("app.scraper.proxy_statement.latest_table_filing", return_value=filing), \
-         patch.object(sec_edgar, "_get_text", return_value="<html></html>"), \
+         patch.object(sec_client, "_get_text", return_value="<html></html>"), \
          patch.object(sec_roster, "roster_people", return_value=people), \
          patch.object(sec_roster, "issuer_owners", return_value=owners) as asked, \
          patch.object(sec_roster, "own_form3", side_effect=lambda pc, ic: dict(form3) if form3 and pc == form3["person_cik"] else None) as f3:
@@ -171,7 +171,7 @@ def test_a_joint_form_3_dates_the_seat_and_the_owner_list_names_the_person():
              "period_of_report": "2024-09-06", "source_url": "https://www.sec.gov/joint-index.htm", "role": "Director"}
     with patch.object(sec_roster, "own_form3", return_value=dict(joint)), \
          patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
-         patch.object(sec_edgar, "_get_text", return_value="<html></html>"), \
+         patch.object(sec_client, "_get_text", return_value="<html></html>"), \
          patch.object(sec_roster, "roster_people", return_value=["William Donnell"]), \
          patch.object(sec_roster, "issuer_owners", return_value=owners):
         out = roster_insiders("0001042893", [], {"cik": "1042893"})
@@ -204,7 +204,7 @@ POOL_WINDOW = [{"name": n, "role": "Director", "person_cik": str(i).zfill(10)} f
 def _pool(people, form3s, window=POOL_WINDOW):
     seated = [e["name"] for e in window]                 # the proxy names who sits, and the people asked about
     with patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
-         patch.object(sec_edgar, "_get_text", return_value="<html></html>"), \
+         patch.object(sec_client, "_get_text", return_value="<html></html>"), \
          patch.object(sec_roster, "roster_people", return_value=seated + people), \
          patch.object(sec_roster, "issuer_owners", return_value=POOL_OWNERS), \
          patch.object(sec_roster, "own_form3", side_effect=lambda pc, ic: dict(form3s[pc]) if pc in form3s else None):
@@ -261,12 +261,12 @@ def test_no_table_filing_no_roster():
 
 def test_an_unreadable_owner_list_marks_the_insiders_section_and_writes_nobody():
     with patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
-         patch.object(sec_edgar, "_get_text", return_value="<html></html>"), \
+         patch.object(sec_client, "_get_text", return_value="<html></html>"), \
          patch.object(sec_roster, "roster_people", return_value=["Kenneth I. Chenault"]), \
          patch.object(sec_roster, "issuer_owners", side_effect=httpx.ConnectError("down")), \
-         patch.object(sec_edgar, "_section_failed") as failed:
+         patch.object(sec_client, "_section_failed") as failed:
         assert roster_insiders("0001067983", [], {"cik": "1067983"}) == []
-    assert failed.call_args.args[0] == sec_edgar.SECTION_INSIDERS
+    assert failed.call_args.args[0] == sec_client.SECTION_INSIDERS
 
 
 def test_the_lookups_are_capped():
@@ -296,8 +296,8 @@ def _own(filings, pages):
         if acc not in pages:
             raise httpx.ConnectError("no such filing")
         return pages[acc]
-    with patch.object(sec_edgar, "_submissions", return_value=subs), \
-         patch.object(sec_edgar, "_get_text", side_effect=text) as fetched:
+    with patch.object(sec_client, "_submissions", return_value=subs), \
+         patch.object(sec_client, "_get_text", side_effect=text) as fetched:
         out = sec_roster.own_form3("0001180524", "0001067983")
     return out, [c.args[0].split("/")[-2] for c in fetched.call_args_list]
 
@@ -380,8 +380,8 @@ def _jointly(filings, pages, since="2025-05-12"):
         if acc not in pages:
             raise httpx.ConnectError("no such filing")
         return pages[acc]
-    with patch.object(sec_edgar, "_submissions", return_value=subs), \
-         patch.object(sec_edgar, "_get_text", side_effect=text) as fetched:
+    with patch.object(sec_client, "_submissions", return_value=subs), \
+         patch.object(sec_client, "_get_text", side_effect=text) as fetched:
         out = sec_roster.filed_jointly(TUROWSKY, INNOVEX, since)
     return out, [c.args[0].split("/")[-2] for c in fetched.call_args_list]
 
@@ -436,7 +436,7 @@ def _yearly_board(joint, silent=False):
     seated = [e["name"] for e in POOL_WINDOW]
     subs = {"filings": {"recent": {"form": ["4", "10-K"], "filingDate": ["2026-08-10", "2026-02-01"]}}}
     with patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
-         patch.object(sec_edgar, "_get_text", return_value="<html></html>"), \
+         patch.object(sec_client, "_get_text", return_value="<html></html>"), \
          patch.object(sec_roster, "roster_people", return_value=seated + ["Carlos A. Sabater"]), \
          patch.object(sec_roster, "issuer_owners", return_value=POOL_OWNERS), \
          patch.object(sec_roster, "own_form3", return_value=dict(sabater)), \
