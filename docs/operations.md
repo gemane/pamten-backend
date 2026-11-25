@@ -516,6 +516,12 @@ python3 manage.py init-schema
 
 ## CLI (`manage.py`)
 
+A command is three things in `backend/manage.py`: a `cmd_<name>` function, an
+`_args_<name>` function right below it that adds its subparser and arguments,
+and a line in `COMMANDS`, whose order is the order `manage.py --help` lists the
+commands. `backend/tests/test_manage_commands.py` fails when one of the three is
+missing.
+
 | Command | Description |
 |---|---|
 | `init-schema` | Create vertex/edge types and lookup indexes (idempotent) |

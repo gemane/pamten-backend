@@ -54,6 +54,19 @@ def cmd_gleif_succession(args):
     if result is not None:
         print(result)
 
+
+def _args_gleif_succession(subparsers):
+    """The arguments of `manage.py gleif-succession`."""
+    # gleif-succession command
+    p_succ = subparsers.add_parser('gleif-succession',
+                                   help='Import GLEIF LEI-CDF succession (MERGED/DUPLICATE → SuccessorLEI) as SUCCEEDED_BY edges')
+    p_succ.add_argument('--file', required=True, help='Path to a local LEI-CDF golden-copy .json/.zip')
+    p_succ.add_argument('--limit', type=int, help='Max records to scan')
+    p_succ.add_argument('--only-file', help='File of LEIs (one per line, # comments): only the successions touching them — the curated subset')
+    p_succ.add_argument('--emit-leis', help='With --only-file: write the endpoints the subset lacked here (feed to gleif-lei-cdf --only-file to name them)')
+    p_succ.set_defaults(func=cmd_gleif_succession)
+
+
 def cmd_gleif_rr(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -64,6 +77,21 @@ def cmd_gleif_rr(args):
                                     emit_leis_path=getattr(args, "emit_leis", None)))
     if result is not None:
         print(result)
+
+
+def _args_gleif_rr(subparsers):
+    """The arguments of `manage.py gleif-rr`."""
+    # gleif-rr command
+    p_rr = subparsers.add_parser('gleif-rr',
+                                 help='Import GLEIF RR-CDF direct/ultimate parents as direct/indirect OWNS edges')
+    p_rr.add_argument('--file', required=True, help='Path to a local RR-CDF golden-copy .json/.zip')
+    p_rr.add_argument('--limit', type=int, help='Max records to scan')
+    p_rr.add_argument('--only', help='Comma-separated seed LEIs — import their whole corporate family')
+    p_rr.add_argument('--only-file', help='File of seed LEIs (one per line, # comments) — their corporate family')
+    p_rr.add_argument('--emit-leis', help='With --only: write the family LEIs here (feed to gleif-lei-cdf --only-file to name them)')
+
+    p_rr.set_defaults(func=cmd_gleif_rr)
+
 
 def cmd_gleif_rr_history(args):
     """GLEIF relationship history from the golden-copy archive (once, after
@@ -97,6 +125,23 @@ def cmd_gleif_rr_history(args):
         lambda: hist.apply_history(path, source_id, BODS_GLEIF_CREDIBILITY, dry_run=args.dry_run))
     if result is not None:
         print(result)
+
+
+def _args_gleif_rr_history(subparsers):
+    """The arguments of `manage.py gleif-rr-history`."""
+    p_rh = subparsers.add_parser('gleif-rr-history',
+        help='GLEIF relationship history from the archive (once, after the first full import): '
+             'ended relationships since 2018 and "at least since" starts')
+    p_rh.add_argument('--intervals', default='~/data/gleif-rr-history.jsonl.gz',
+                      help='The intervals file: built here if missing (or with --rebuild), '
+                           'reused otherwise — so a re-apply after a rebuild downloads nothing')
+    p_rh.add_argument('--rebuild', action='store_true', help='Download the archive again')
+    p_rh.add_argument('--from', dest='start', metavar='YYYY-MM',
+                      help='First month (default: the archive start, 2018-02)')
+    p_rh.add_argument('--download-only', action='store_true', help='Build the intervals file, write nothing')
+    p_rh.add_argument('--dry-run', action='store_true', help='Report what applying would write, write nothing')
+    p_rh.set_defaults(func=cmd_gleif_rr_history)
+
 
 def _apply_direct_db_url(args):
     """--db-url points the importer straight at ArcadeDB, bypassing a proxy that
@@ -141,6 +186,27 @@ def cmd_ch_psc(args):
     if result is not None:
         print(result)
 
+
+def _args_ch_psc(subparsers):
+    """The arguments of `manage.py ch-psc`."""
+    # ch-psc command (Companies House PSC snapshot — replaces UK PSC BODS)
+    p_chp = subparsers.add_parser('ch-psc',
+                                  help='Import a Companies House PSC snapshot (current UK beneficial ownership)')
+    p_chp.add_argument('--file', required=True, help='Path to a local PSC snapshot .zip/.txt')
+    p_chp.add_argument('--limit', type=int, help='Max records to scan')
+    p_chp.add_argument('--bulk-load', action='store_true',
+                       help='Drop secondary indexes during the load and rebuild after')
+    p_chp.add_argument('--batch-size', type=int,
+                       help='Records per flush (default 400). Lower it behind a short proxy timeout; raise it on a direct connection')
+    p_chp.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_chp.add_argument('--only', help='Comma-separated company numbers to import (curated test subset)')
+    p_chp.add_argument('--only-file', help='File of company numbers (one per line, # comments) to import')
+    p_chp.add_argument('--digest-out',
+                       help='Also write a digest of this snapshot here — the baseline the incremental `ch-psc-update` diffs against')
+    p_chp.set_defaults(func=cmd_ch_psc)
+
+
 def cmd_ch_psc_update(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -155,6 +221,35 @@ def cmd_ch_psc_update(args):
         skip_ok=True)   # driven by hand; a held lock is a skip, not a failure
     if result is not None:
         print(result)
+
+
+def _args_ch_psc_update(subparsers):
+    """The arguments of `manage.py ch-psc-update`."""
+    # ch-psc-update command (incremental refresh by snapshot diff)
+    p_pu = subparsers.add_parser('ch-psc-update',
+                                 help='Refresh UK PSC incrementally by diffing today\'s snapshot against the last one applied')
+    p_pu.add_argument('--file', default='/home/administrator/data/companies-house-psc/psc-snapshot.zip',
+                      help='PSC snapshot .zip/.txt (default: the standard data path)')
+    p_pu.add_argument('--digest', help='Baseline digest (default: psc-digest.tsv.gz beside --file)')
+    p_pu.add_argument('--limit', type=int, help='Max records to scan (a spot check; never advances the checkpoint fully)')
+    p_pu.add_argument('--batch-size', type=int, help='Records per probe/flush (default 1000)')
+    p_pu.add_argument('--only-existing', dest='only_existing', default=None,
+                      action=argparse.BooleanOptionalAction,
+                      help='Refresh only companies already in this database. Defaults ON when '
+                           'the PSC baseline here is a subset (refreshing it whole would drag '
+                           'in the rest of the register) and OFF after a full load')
+    p_pu.add_argument('--max-churn-pct', type=float, default=5.0,
+                      help='Refuse if more than this %% of records moved, scaled by the gap in '
+                           'days (default 5.0). A snapshot diff can rewrite the whole graph if '
+                           'something upstream shifts')
+    p_pu.add_argument('--force', action='store_true', help='Override the churn and staleness guards')
+    p_pu.add_argument('--dry-run', action='store_true', help='Report the diff, write nothing')
+    p_pu.add_argument('--rebuild-digest', action='store_true',
+                      help='Rewrite the baseline digest from this snapshot and exit — FORFEITS any changes since the last applied one')
+    p_pu.add_argument('--db-url',
+                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_pu.set_defaults(func=cmd_ch_psc_update)
+
 
 def cmd_ch_officers(args):
     """Read the serving officers of the UK companies in the graph from the
@@ -180,6 +275,26 @@ def cmd_ch_officers(args):
           f"{res['unreadable']} unreadable; {res['names_asked']} names with a title part asked for their split")
     if res["failed"]:
         sys.exit(1)
+
+
+def _args_ch_officers(subparsers):
+    """The arguments of `manage.py ch-officers`."""
+    # ch-officers command (Companies House register of officers)
+    p_cho = subparsers.add_parser(
+        'ch-officers',
+        help="Read the serving officers (directors and LLP members; no secretaries) of the UK companies "
+             "in the graph from the Companies House API and write them as seats; a seat whose "
+             "holder has resigned since is ended on the register's date. Manual; needs "
+             "COMPANIES_HOUSE_API_KEY")
+    p_cho.add_argument('--company', help='Only these company numbers (comma-separated)')
+    p_cho.add_argument('--limit', type=int, help='Only the first N companies (a trial run)')
+    p_cho.add_argument('--dry-run', action='store_true', help='Read and count, write nothing')
+    p_cho.add_argument('--history', action='store_true',
+                       help='Also write every resigned person as a closed seat (appointed on to resigned on); '
+                            'off by default — the serving officers only')
+    p_cho.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_cho.set_defaults(func=cmd_ch_officers)
 
 
 def cmd_sec_name_list(args):
@@ -209,6 +324,18 @@ def cmd_sec_name_list(args):
     print(f"EDGAR name list: {sec_names.count(got):,} names downloaded ({got})")
 
 
+def _args_sec_name_list(subparsers):
+    """The arguments of `manage.py sec-name-list`."""
+    # sec-name-list command (EDGAR's bulk name list → the local index)
+    p_snl = subparsers.add_parser(
+        'sec-name-list',
+        help="Download EDGAR's bulk name list (every filer name with its CIK, ~40 MB) and build the "
+             "local index a person's name search reads; needs SEC_NAME_LIST_DIR. Skips a list less "
+             "than a day old")
+    p_snl.add_argument('--force', action='store_true', help='Download even if the index is less than a day old')
+    p_snl.set_defaults(func=cmd_sec_name_list)
+
+
 def cmd_ch_company_data(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -222,6 +349,25 @@ def cmd_ch_company_data(args):
     if result is not None:
         print(result)
 
+
+def _args_ch_company_data(subparsers):
+    """The arguments of `manage.py ch-company-data`."""
+    # ch-company-data command (Companies House register — names/addresses for PSC companies)
+    p_chc = subparsers.add_parser('ch-company-data',
+                                  help='Enrich UK companies with names/addresses from a Companies House BasicCompanyData snapshot')
+    p_chc.add_argument('--file', required=True, help='Path to a local BasicCompanyData .zip')
+    p_chc.add_argument('--limit', type=int, help='Max rows to scan')
+    p_chc.add_argument('--bulk-load', action='store_true',
+                       help='Drop secondary indexes during the load and rebuild after')
+    p_chc.add_argument('--batch-size', type=int,
+                       help='Rows per flush (default 400). Lower it behind a short proxy timeout; raise it on a direct connection')
+    p_chc.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_chc.add_argument('--only', help='Comma-separated company numbers to import (curated test subset)')
+    p_chc.add_argument('--only-file', help='File of company numbers (one per line, # comments) to import')
+    p_chc.set_defaults(func=cmd_ch_company_data)
+
+
 def cmd_gleif_lei_cdf(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -234,6 +380,22 @@ def cmd_gleif_lei_cdf(args):
     if result is not None:
         print(result)
 
+
+def _args_gleif_lei_cdf(subparsers):
+    """The arguments of `manage.py gleif-lei-cdf`."""
+    # gleif-lei-cdf command (entities from the golden copy — replaces GLEIF BODS)
+    p_lei = subparsers.add_parser('gleif-lei-cdf',
+                                  help='Import GLEIF entities from the LEI-CDF golden copy (name/country/address)')
+    p_lei.add_argument('--file', required=True, help='Path to a local LEI-CDF golden-copy .json/.zip')
+    p_lei.add_argument('--limit', type=int, help='Max records to scan')
+    p_lei.add_argument('--jurisdiction', help='Country code filter, e.g. AT')
+    p_lei.add_argument('--bulk-load', action='store_true',
+                       help='Drop secondary indexes during the load and rebuild after (faster on the full 3.4M)')
+    p_lei.add_argument('--only', help='Comma-separated LEIs to import (curated test subset)')
+    p_lei.add_argument('--only-file', help='File of LEIs (one per line, # comments) to import')
+    p_lei.set_defaults(func=cmd_gleif_lei_cdf)
+
+
 def cmd_gleif_repex(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -243,6 +405,19 @@ def cmd_gleif_repex(args):
         lambda: run_import_gleif_repex(local_file=args.file, limit=args.limit))
     if result is not None:
         print(result)
+
+
+def _args_gleif_repex(subparsers):
+    """The arguments of `manage.py gleif-repex`."""
+    # gleif-repex command (why a company reports no parent)
+    p_rx = subparsers.add_parser('gleif-repex',
+                                 help='Import GLEIF reporting exceptions — the published reasons companies give for naming no parent')
+    p_rx.add_argument('--file', required=True, help='Path to a local repex golden-copy .json/.zip')
+    p_rx.add_argument('--limit', type=int, help='Max records to scan')
+    p_rx.add_argument('--db-url',
+                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_rx.set_defaults(func=cmd_gleif_repex)
+
 
 def cmd_merge_entities(args):
     """Fold one entity into another by hand (maintenance.merge_entities_by_id):
@@ -266,6 +441,18 @@ def cmd_merge_entities(args):
             print(f"  the survivor now carries a better hard id: {res['keep']['now_id']} (both old ids forward)")
 
 
+def _args_merge_entities(subparsers):
+    """The arguments of `manage.py merge-entities`."""
+    # dedupe-entities command (cross-source merge by shared external id)
+    p_me = subparsers.add_parser('merge-entities',
+        help="Fold one entity into another by hand — a pair with no shared hard id that a human judged "
+             "one company (2026-10-25). Refused on a keep-separate mark. Dry run unless --apply")
+    p_me.add_argument('--keep', required=True, help='Id of the entity that survives')
+    p_me.add_argument('--dead', required=True, help='Id of the entity folded into it and deleted')
+    p_me.add_argument('--apply', action='store_true', help='Merge (default: show what would move)')
+    p_me.set_defaults(func=cmd_merge_entities)
+
+
 def cmd_dedupe_entities(args):
     """Merge entities that share a hard external id (LEI / Companies House / SEC CIK /
     Wikidata) — the cross-source merge, no name match or Wikidata hub needed. Run after
@@ -281,6 +468,17 @@ def cmd_dedupe_entities(args):
             print(f"  {b['name']}: CIK node {b['cik_id']} takes LEI {b['lei_id']} ({b['source_url']})")
     print(f"Merged {res['entities_merged']} entities across "
           f"{res['groups_processed']} shared-id groups; {res.get('remaining', 0)} groups remaining")
+
+
+def _args_dedupe_entities(subparsers):
+    """The arguments of `manage.py dedupe-entities`."""
+    p_de = subparsers.add_parser('dedupe-entities',
+        help='Merge entities sharing a hard external id (LEI / CH number / SEC CIK / Wikidata); '
+             'first joins an LEI-only node to a CIK-only filer of its name when the filer\'s own '
+             'filings state the LEI (needs SEC scraping enabled)')
+    p_de.add_argument('--limit', type=int, help='Max shared-id groups to process (default: all)')
+    p_de.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_de.set_defaults(func=cmd_dedupe_entities)
 
 
 def _hard_id_person_ids() -> list[str]:
@@ -321,6 +519,20 @@ def cmd_dedupe_persons(args):
           f"{res['review_count']} groups need review")
 
 
+def _args_dedupe_persons(subparsers):
+    """The arguments of `manage.py dedupe-persons`."""
+    p_dp = subparsers.add_parser('dedupe-persons',
+        help='Merge the persons two sources wrote as two nodes — same name, a shared company or '
+             'birth date, high confidence only; the rest is reported for review. The net under the '
+             'post-scrape dedup, which sees only what one scrape touched')
+    p_dp.add_argument('--scraped-only', action='store_true',
+                      help='Seed from the persons with a SEC CIK or Wikidata item instead of scanning '
+                           'everyone — bounded on a graph with millions of register persons')
+    p_dp.add_argument('--dry-run', action='store_true', help='Report what would merge; change nothing')
+    p_dp.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_dp.set_defaults(func=cmd_dedupe_persons)
+
+
 def cmd_undo_person_merge(args):
     """Split a merged person back into the two it was made of (findings item
     123), from the pictures the merge stored. Without an id: the merges that
@@ -353,6 +565,17 @@ def cmd_undo_person_merge(args):
         print(f"  written since the merge, left with {rep['kept_id']} — check whose they are:")
         for line in rep["written_since"]:
             print(f"    {line}")
+
+
+def _args_undo_person_merge(subparsers):
+    """The arguments of `manage.py undo-person-merge`."""
+    p_um = subparsers.add_parser('undo-person-merge',
+        help='Split a merged person back into two from the pictures the merge stored; '
+             'without an id, list the merges that can be undone')
+    p_um.add_argument('snapshot_id', nargs='?', help="The merge's snapshot id (see the list)")
+    p_um.add_argument('--limit', type=int, default=50, help='How many merges to list')
+    p_um.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_um.set_defaults(func=cmd_undo_person_merge)
 
 
 def cmd_gleif_isin_bridge(args):
@@ -392,6 +615,23 @@ def cmd_gleif_isin_bridge(args):
           f"{res['contradictions']} contradictions, {res['kept_apart']} kept apart, {res['unmapped']} unmapped. "
           f"{verb} {res['joins'] + res['attaches']}.")
 
+
+def _args_gleif_isin_bridge(subparsers):
+    """The arguments of `manage.py gleif-isin-bridge`."""
+    # gleif-isin-bridge command (the securities bridge, findings item 71)
+    p_gi = subparsers.add_parser('gleif-isin-bridge',
+                                 help="Join EDGAR issuers to their LEI through GLEIF's LEI-ISIN file "
+                                      "(CUSIP -> US ISIN -> LEI). Dry run unless --apply")
+    p_gi.add_argument('--apply', action='store_true', help='Write the joins (default: report what would be written)')
+    p_gi.add_argument('--file', help="A local isin-lei-YYYYMMDDTHHMMSS.zip instead of downloading GLEIF's newest")
+    p_gi.add_argument('--allow-stale', dest='allow_stale', action='store_true',
+                      help='Use a file older than three days')
+    p_gi.add_argument('--dir', help='Where GLEIF\'s file is kept (default ~/.cache/gleif-isin; '
+                      'the production container passes /data/gleif-isin, its home is gone with the container)')
+    p_gi.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_gi.set_defaults(func=cmd_gleif_isin_bridge)
+
+
 def cmd_audit_registers(args):
     """Scan the LEI-CDF golden copy and write the general-register map.
 
@@ -414,6 +654,22 @@ def cmd_audit_registers(args):
             print(f"  {c}: {e['code']} {e['share']:.1%} of {e['records']:,}, {e['registers_seen']} registers")
 
 
+def _args_audit_registers(subparsers):
+    """The arguments of `manage.py audit-registers`."""
+    # audit-registers command (the general-register map, from the LEI-CDF golden copy)
+    p_ar = subparsers.add_parser('audit-registers',
+        help='Measure which register each country\'s companies sit on (GLEIF LEI-CDF) '
+             'and write the general-register map the PSC importer keys foreign controllers by')
+    p_ar.add_argument('--file', required=True, help='LEI-CDF golden copy (.json or .zip)')
+    p_ar.add_argument('--out', default='app/scraper/data/general_registers.json',
+                      help='Output JSON (default: the shipped map)')
+    p_ar.add_argument('--min-share', type=float, default=0.90,
+                      help='Dominant register\'s minimum share of a country\'s GENERAL entities')
+    p_ar.add_argument('--min-records', type=int, default=200,
+                      help='Minimum GENERAL entities a country needs to be mapped')
+    p_ar.set_defaults(func=cmd_audit_registers)
+
+
 def cmd_audit_psc_registers(args):
     """Coverage of the register rules over a real PSC snapshot, per country,
     with the phrasings the unkeyed controllers used — the next aliases."""
@@ -426,6 +682,16 @@ def cmd_audit_psc_registers(args):
     for c, e in res["countries"].items():
         print(f"{c:8} {e['with_number']:>7,} {e['named']:>6,} {e['sole']:>5,} {e['place']:>6,} "
               f"{e['format']:>6,} {e['general']:>7,} {e['unkeyed']:>7,}  {e['unkeyed_phrasings'][:4]}")
+
+
+def _args_audit_psc_registers(subparsers):
+    """The arguments of `manage.py audit-psc-registers`."""
+    p_apr = subparsers.add_parser('audit-psc-registers',
+        help='Measure, on a Companies House PSC snapshot, which register rule keys each '
+             'foreign corporate controller — and the phrasings the unkeyed ones used')
+    p_apr.add_argument('--file', required=True, help='PSC snapshot (.zip)')
+    p_apr.add_argument('--top', type=int, default=40, help='Countries to list')
+    p_apr.set_defaults(func=cmd_audit_psc_registers)
 
 
 def cmd_mark_shortcuts(args):
@@ -441,6 +707,17 @@ def cmd_mark_shortcuts(args):
           f"{res['marked_load_bearing']} load-bearing, "
           f"{res['unchanged']} unchanged; {res['remaining']} parents remaining")
 
+
+def _args_mark_shortcuts(subparsers):
+    """The arguments of `manage.py mark-shortcuts`."""
+    # mark-shortcuts command (flag redundant ultimate-parent edges for the renderer)
+    p_ms = subparsers.add_parser('mark-shortcuts',
+        help='Flag GLEIF ultimate-parent OWNS edges that duplicate an existing path')
+    p_ms.add_argument('--limit', type=int, help='Max parents to process (default: all)')
+    p_ms.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_ms.set_defaults(func=cmd_mark_shortcuts)
+
+
 def cmd_gleif_update(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -454,6 +731,31 @@ def cmd_gleif_update(args):
         skip_ok=True)   # the cron rides on top of full-import → skip, don't error
     if result is not None:
         print(result)
+
+
+def _args_gleif_update(subparsers):
+    """The arguments of `manage.py gleif-update`."""
+    # gleif-update command (retirement-aware daily delta on top of the full load)
+    p_gu = subparsers.add_parser('gleif-update',
+                                 help='Apply a GLEIF delta update (daily refresh: new/changed entities, merges, and closed relationships)')
+    p_gu.add_argument('--interval', default='auto',
+                      choices=['auto', 'IntraDay', 'LastDay', 'LastWeek', 'LastMonth'],
+                      help='Delta window to fetch. Default "auto" = gap-aware: pick the '
+                           'smallest window covering any missed runs since the last one')
+    p_gu.add_argument('--lei-file', help='Use a local LEI-CDF delta .json/.zip instead of fetching')
+    p_gu.add_argument('--rr-file', help='Use a local RR-CDF delta .json/.zip instead of fetching')
+    p_gu.add_argument('--repex-file', help='Use a local reporting-exceptions delta .json/.zip instead of fetching')
+    p_gu.add_argument('--limit', type=int, help='Max records to scan (per file)')
+    p_gu.add_argument('--only-existing', dest='only_existing', default=None,
+                      action=argparse.BooleanOptionalAction,
+                      help='Refresh only companies already in this database, ignoring '
+                           'records for the rest of the world. Defaults to ON when the '
+                           'GLEIF baseline here is a curated subset (a whole delta would '
+                           'bury it rather than refresh it) and OFF after a full load')
+    p_gu.add_argument('--db-url',
+                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_gu.set_defaults(func=cmd_gleif_update)
+
 
 def cmd_import_lock(args):
     _apply_direct_db_url(args)
@@ -471,11 +773,32 @@ def cmd_import_lock(args):
             sys.exit(1)
         print(f"import lock acquired: {import_lock.status()}")
 
+
+def _args_import_lock(subparsers):
+    """The arguments of `manage.py import-lock`."""
+    # import-lock command (inspect/manage the cross-process import lock)
+    p_lock = subparsers.add_parser('import-lock',
+                                   help='Cross-process import lock: status / acquire / release (manual recovery)')
+    p_lock.add_argument('action', choices=['status', 'acquire', 'release'])
+    p_lock.add_argument('--holder', help='Holder label for acquire (default: manual)')
+    p_lock.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_lock.set_defaults(func=cmd_import_lock)
+
+
 def cmd_flag_nominees(args):
     from app.scraper.maintenance import flag_nominee_entities
     result = flag_nominee_entities()
     print(f"Flagged {result['flagged']} nominee/custodian entities "
           f"(of {result['candidates']} name candidates)")
+
+
+def _args_flag_nominees(subparsers):
+    """The arguments of `manage.py flag-nominees`."""
+    # flag-nominees command
+    p_nom = subparsers.add_parser('flag-nominees',
+                                  help='Flag nominee/custodian entities (holders of record) by name')
+    p_nom.set_defaults(func=cmd_flag_nominees)
+
 
 def cmd_mark_stale(args):
     """Mark community-tier OWNS edges nothing has confirmed in --days as stale."""
@@ -487,6 +810,19 @@ def cmd_mark_stale(args):
     res = mark_not_restated()
     print(f"Schedule 13D/G not restated: marked {res['marked']}, cleared {res['cleared']} "
           f"(of {res['judged']} open 13D/G holdings; windows {res['windows']} days from the filing date)")
+
+
+def _args_mark_stale(subparsers):
+    """The arguments of `manage.py mark-stale`."""
+    # mark-stale command
+    p_ms = subparsers.add_parser('mark-stale',
+                                 help='Mark community-tier OWNS edges unconfirmed for --days as stale (dimmed, never deleted); register-tier and register-vouched edges are exempt. Also dims a Schedule 13D/G holding whose last statement is older than its restatement window (13G filed before 2024: 15 months; 13D and a 13G filed since 2024: 5 years)')
+    p_ms.add_argument('--days', type=int, default=180,
+                      help='Confirmation age that counts as stale (default 180)')
+    p_ms.add_argument('--db-url',
+                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_ms.set_defaults(func=cmd_mark_stale)
+
 
 def cmd_close_ended_classes(args):
     """End every 13D/G holding whose shares ceased to exist (findings item 99)."""
@@ -503,6 +839,21 @@ def cmd_close_ended_classes(args):
     print(f"Closed {res['closed']} 13D/G holdings whose class ended "
           f"({res['read']} of {res['companies']} companies read, {res['failed']} failed)")
 
+
+def _args_close_ended_classes(subparsers):
+    """The arguments of `manage.py close-ended-classes`."""
+    # close-ended-classes command (findings item 99)
+    p_cec = subparsers.add_parser(
+        'close-ended-classes',
+        help="End every Schedule 13D/G holding whose shares ceased to exist — a merger's "
+             "Form 25-NSE under Rule 12d2-2(a), a takeover's Form 15 with at most two holders "
+             "of record (until_reason class_ended). Reads EDGAR: needs the scraper flags on")
+    p_cec.add_argument('--limit', type=int, help='Only the first N companies (a trial run)')
+    p_cec.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_cec.set_defaults(func=cmd_close_ended_classes)
+
+
 def cmd_close_held_by_subsidiary(args):
     """End every 13D/G holding whose holder is the issuer's own subsidiary (findings item 99)."""
     _apply_direct_db_url(args)
@@ -511,6 +862,19 @@ def cmd_close_held_by_subsidiary(args):
     for line in lines:
         print(f"  {line}")
     print(f"Closed {len(lines)} 13D/G holdings whose holder is the issuer's own subsidiary")
+
+
+def _args_close_held_by_subsidiary(subparsers):
+    """The arguments of `manage.py close-held-by-subsidiary`."""
+    # close-held-by-subsidiary command (findings item 99 part 3)
+    p_chs = subparsers.add_parser(
+        'close-held-by-subsidiary',
+        help="End every Schedule 13D/G holding whose holder the issuer's own subsidiary list "
+             "(Exhibit 21 / 8.1) or GLEIF's record names as its subsidiary, filed before that "
+             "statement (until_reason holder_is_subsidiary). Graph only, no EDGAR read")
+    p_chs.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_chs.set_defaults(func=cmd_close_held_by_subsidiary)
 
 
 def cmd_close_absent_from_table(args):
@@ -533,6 +897,23 @@ def cmd_close_absent_from_table(args):
           f"since and were not written "
           f"({res['tables']} tables of {res['read']} companies read, {res['failed']} failed)")
 
+
+def _args_close_absent_from_table(subparsers):
+    """The arguments of `manage.py close-absent-from-table`."""
+    # close-absent-from-table command (findings item 99)
+    p_cat = subparsers.add_parser(
+        'close-absent-from-table',
+        help="End every Schedule 13D/G holding of 5 %% or more that the issuer's newest ownership "
+             "table (DEF 14A / 10-K/A, at most 18 months old) no longer names "
+             "(until_reason not_in_issuer_table), write the 13D/G statements filed since the table, "
+             "and the table's 5 %% holders no 13D/G covers and that reported no exit since. "
+             "Reads EDGAR: needs the scraper flags on")
+    p_cat.add_argument('--limit', type=int, help='Only the first N companies (a trial run)')
+    p_cat.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_cat.set_defaults(func=cmd_close_absent_from_table)
+
+
 def cmd_close_reported_by_parent(args):
     """End every subsidiary 13D/G holding its parent's newer statement replaces
     (findings item 34) — the whole graph, for a rebuild where a parent link
@@ -541,12 +922,34 @@ def cmd_close_reported_by_parent(args):
     from app.scraper.sec_writer import close_reported_by_parent
     print(f"Closed {close_reported_by_parent()} subsidiary 13D/G holdings now reported by their parent")
 
+
+def _args_close_reported_by_parent(subparsers):
+    """The arguments of `manage.py close-reported-by-parent`."""
+    p_crp = subparsers.add_parser('close-reported-by-parent',
+                                  help="End a subsidiary's Schedule 13D/G holding once its parent (an open controlling edge) reports the same company in a newer 13D/G; until_reason reported_by_parent")
+    p_crp.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_crp.set_defaults(func=cmd_close_reported_by_parent)
+
+
 def cmd_quality_report(args):
     """Data quality as numbers — run before and after any change to the source mix."""
     _apply_direct_db_url(args)
     from app.quality import format_report, quality_report
     report = quality_report()
     print(format_report(report) if not args.json else __import__("json").dumps(report, indent=2))
+
+
+def _args_quality_report(subparsers):
+    """The arguments of `manage.py quality-report`."""
+    # quality-report command
+    p_qr = subparsers.add_parser('quality-report',
+                                 help='Data quality as numbers: stakes, corroboration, official ids, freshness, contradiction gauges')
+    p_qr.add_argument('--json', action='store_true', help='Machine-readable output')
+    p_qr.add_argument('--db-url',
+                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_qr.set_defaults(func=cmd_quality_report)
+
 
 def cmd_weekly_report(args):
     """The weekly activity digest: searches, scrapes (first vs refreshed),
@@ -576,6 +979,20 @@ def cmd_weekly_report(args):
         print(f"sent to {to}")
 
 
+def _args_weekly_report(subparsers):
+    """The arguments of `manage.py weekly-report`."""
+    # prune-analytics command
+    p_wr = subparsers.add_parser('weekly-report',
+        help='The weekly activity digest (last completed week by default)')
+    p_wr.add_argument('--week', help='ISO week id, e.g. 2026-W38')
+    p_wr.add_argument('--email', action='store_true',
+                      help='Send it to REPORT_EMAIL (or ADMIN_EMAIL)')
+    p_wr.add_argument('--json', action='store_true', help='Print the report as JSON')
+    p_wr.add_argument('--db-url', dest='db_url', default=None,
+                      help='Talk to ArcadeDB directly (bypasses the proxy timeout)')
+    p_wr.set_defaults(func=cmd_weekly_report)
+
+
 def cmd_source_calls(args):
     """Calls to each outside source and to the bucket, from the `SourceCall`
     rows (app/source_calls.py), for the UTC days FROM <= day < TO."""
@@ -586,6 +1003,18 @@ def cmd_source_calls(args):
     since = getattr(args, "from") or (date.fromisoformat(to) - timedelta(days=args.days)).isoformat()
     print(f"source calls {since} to {to} (UTC days, end exclusive)")
     print(format_totals(totals(since, to), totals_by_type(since, to)), end="")
+
+
+def _args_source_calls(subparsers):
+    """The arguments of `manage.py source-calls`."""
+    p_sc = subparsers.add_parser('source-calls',
+        help='Calls to each outside source and to the bucket, per kind (app/source_calls.py)')
+    p_sc.add_argument('--from', help='First UTC day, YYYY-MM-DD (default: TO minus --days)')
+    p_sc.add_argument('--to', help='Day after the last, YYYY-MM-DD (default: tomorrow)')
+    p_sc.add_argument('--days', type=int, default=7, help='Days back from TO when --from is not given')
+    p_sc.add_argument('--db-url', dest='db_url', default=None,
+                      help='Talk to ArcadeDB directly (bypasses the proxy timeout)')
+    p_sc.set_defaults(func=cmd_source_calls)
 
 
 def cmd_alerts(args):
@@ -617,6 +1046,16 @@ def cmd_alerts(args):
         print(f"sent to {to}")
 
 
+def _args_alerts(subparsers):
+    """The arguments of `manage.py alerts`."""
+    p_al = subparsers.add_parser('alerts', help='What is wrong right now: failed/stale imports, stale backup, '
+                                         'disk nearly full, /health down (see docs/operations.md)')
+    p_al.add_argument('--only', help='Comma-separated subset of checks: imports,backup,disk,health,refused,probes')
+    p_al.add_argument('--email', action='store_true', help='Mail the alerts (only when there are any)')
+    p_al.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_al.set_defaults(func=cmd_alerts)
+
+
 def cmd_prune_analytics(args):
     """Drop usage counters nothing has touched inside the retention window."""
     _apply_direct_db_url(args)
@@ -626,6 +1065,18 @@ def cmd_prune_analytics(args):
     print(f"{verb} rows older than {result.pop('cutoff')}:")
     for vtype, n in result.items():
         print(f"  {vtype:14} {n}")
+
+
+def _args_prune_analytics(subparsers):
+    """The arguments of `manage.py prune-analytics`."""
+    p_prune = subparsers.add_parser('prune-analytics',
+                                    help='Delete usage counters untouched within the retention window')
+    p_prune.add_argument('--days', type=int, default=365,
+                         help='Retention window in days (default 365)')
+    p_prune.add_argument('--dry-run', action='store_true', help='Report without deleting')
+    p_prune.add_argument('--db-url',
+                         help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_prune.set_defaults(func=cmd_prune_analytics)
 
 
 def cmd_set_password(args):
@@ -667,6 +1118,18 @@ def cmd_set_password(args):
     print(f"Password updated for {email}.")
 
 
+def _args_set_password(subparsers):
+    """The arguments of `manage.py set-password`."""
+    # set-password: operator reset when neither in-app route is usable (the email
+    # reset flow needs SMTP; /auth/change-password needs the current password).
+    p_sp = subparsers.add_parser('set-password',
+                                 help="Set a user's password (prompts; ADMIN_PASSWORD only seeds new accounts)")
+    p_sp.add_argument('email', help='Email address of the account to update')
+    p_sp.add_argument('--password',
+                      help='Non-interactive password (avoid — lands in shell history and ps)')
+    p_sp.set_defaults(func=cmd_set_password)
+
+
 def cmd_backfill_former_registers(args):
     """Recover former register identities from historical GLEIF snapshots.
 
@@ -690,6 +1153,19 @@ def cmd_backfill_former_registers(args):
     if counts["backfilled"]:
         print("Now run the entity dedup so the recovered pairs can merge:")
         print("  POST /scraper/deduplicate-entities  (or the scraper panel)")
+
+
+def _args_backfill_former_registers(subparsers):
+    """The arguments of `manage.py backfill-former-registers`."""
+    # ensure-user: put a service account back after a rebuild. Idempotent, so the
+    # import scripts can call it unconditionally.
+    p_bfr = subparsers.add_parser('backfill-former-registers',
+        help='Recover former register ids from historical GLEIF snapshot files')
+    p_bfr.add_argument('snapshots', nargs='+',
+                       help='Golden-copy lei2 CSV files (zip or csv), downloaded beforehand')
+    p_bfr.add_argument('--confirm-database', required=True,
+                       help='Must equal the configured ARCADEDB_DATABASE')
+    p_bfr.set_defaults(func=cmd_backfill_former_registers)
 
 
 def cmd_ensure_user(args):
@@ -750,6 +1226,21 @@ def cmd_ensure_user(args):
     print(f"{email}: created with role {role}, email verified.")
 
 
+def _args_ensure_user(subparsers):
+    """The arguments of `manage.py ensure-user`."""
+    p_eu = subparsers.add_parser('ensure-user',
+        help='Create or correct a service account (password from an env var, not argv)')
+    p_eu.add_argument('--email', required=True, help='Account to create or correct')
+    p_eu.add_argument('--role', default='contributor',
+                      choices=['viewer', 'contributor', 'moderator', 'admin'],
+                      help='Role to set (default: contributor)')
+    p_eu.add_argument('--password-env', default='ENSURE_USER_PASSWORD',
+                      help='Environment variable holding the password for a NEW account')
+    p_eu.add_argument('--confirm-database', required=True,
+                      help='Must match the configured database — this mints a privileged account')
+    p_eu.set_defaults(func=cmd_ensure_user)
+
+
 def _now_iso_manage() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
@@ -765,6 +1256,16 @@ def cmd_geocache_forget(args):
     r = geo_cache.forget(args.address)
     print(f"removed {r['rows']} row(s); bucket object "
           f"{'removed' if r['object'] else 'absent or store off'}")
+
+
+def _args_geocache_forget(subparsers):
+    """The arguments of `manage.py geocache-forget`."""
+    # sec-holdings: read what an institutional filer OWNS (its own 13D/13G
+    # filings), as opposed to a normal scrape which reads filings about a company.
+    p_gf = subparsers.add_parser('geocache-forget',
+        help='Erase one address from the geocode cache (table + shared bucket) — the erasure runbook step')
+    p_gf.add_argument('address', help='The address text exactly as stored (see GeoCache.query)')
+    p_gf.set_defaults(func=cmd_geocache_forget)
 
 
 def cmd_sec_cache(args):
@@ -788,6 +1289,14 @@ def cmd_sec_cache(args):
     ses = info["session"]
     print(f"this process: local {ses['hits']} hit / {ses['misses']} miss / {ses['writes']} written; "
           f"shared {ses['s3_hits']} hit / {ses['s3_writes']} written")
+
+
+def _args_sec_cache(subparsers):
+    """The arguments of `manage.py sec-cache`."""
+    p_sc = subparsers.add_parser('sec-cache',
+        help='On-disk EDGAR filing cache: stats')
+    p_sc.add_argument('action', choices=['stats'])
+    p_sc.set_defaults(func=cmd_sec_cache)
 
 
 def cmd_sec_formd(args):
@@ -818,6 +1327,16 @@ def cmd_sec_formd(args):
               f"(GP vehicles are entities, not people).")
 
 
+def _args_sec_formd(subparsers):
+    """The arguments of `manage.py sec-formd`."""
+    p_formd = subparsers.add_parser('sec-formd',
+        help="One issuer's board/officers from its newest SEC Form D (private companies)")
+    p_formd.add_argument('company', help='Company name as known to the graph')
+    p_formd.add_argument('--force', action='store_true',
+                         help='Re-read even if this filing is already ingested')
+    p_formd.set_defaults(func=cmd_sec_formd)
+
+
 def cmd_sec_ex21_history(args):
     """Date an issuer's Exhibit 21 subsidiaries by their oldest unbroken listing
     in earlier annual filings: a lower bound, marked as such."""
@@ -833,6 +1352,17 @@ def cmd_sec_ex21_history(args):
           f"'owned since at least' (earliest {r['earliest_dated'] or '—'}), from "
           f"{r['readable']} readable of {r['filings']} annual filings back to "
           f"{r['oldest_filing']}; {r['unmatched']} named differently in the exhibit.")
+
+
+def _args_sec_ex21_history(subparsers):
+    """The arguments of `manage.py sec-ex21-history`."""
+    p_ex21h = subparsers.add_parser('sec-ex21-history',
+        help="Date an issuer's subsidiaries by their oldest listing in earlier 10-K Exhibit 21s "
+             "(\"owned since at least\")")
+    p_ex21h.add_argument('company', help='Company name as known to the graph')
+    p_ex21h.add_argument('--max-filings', type=int, default=None,
+                         help='Annual filings to read, newest first (default 25; ~2 requests each)')
+    p_ex21h.set_defaults(func=cmd_sec_ex21_history)
 
 
 def cmd_sec_ex21(args):
@@ -867,6 +1397,16 @@ def cmd_sec_ex21(args):
     print("Note: filers list only SIGNIFICANT subsidiaries; absence proves nothing.")
 
 
+def _args_sec_ex21(subparsers):
+    """The arguments of `manage.py sec-ex21`."""
+    p_ex21 = subparsers.add_parser('sec-ex21',
+        help="One issuer's statutory subsidiary list from its 10-K Exhibit 21")
+    p_ex21.add_argument('company', help='Company name as known to the graph')
+    p_ex21.add_argument('--force', action='store_true',
+                        help='Re-read even if this annual filing is already ingested')
+    p_ex21.set_defaults(func=cmd_sec_ex21)
+
+
 def cmd_sec_acquisitions(args):
     """Ingest the acquisitions one filer's own 10-K / 10-Q XBRL facts state:
     acquirer → acquired company, the closing date as a stated start, the price
@@ -898,6 +1438,19 @@ def cmd_sec_acquisitions(args):
         print(f"  {s['name']}: closed {s['since'] or 'date not stated'}, {price} "
               f"({s['form']} filed {s['filing_date']}, {s['outcome']})")
     print("Note: filers tag only MATERIAL acquisitions; absence proves nothing.")
+
+
+def _args_sec_acquisitions(subparsers):
+    """The arguments of `manage.py sec-acquisitions`."""
+    p_acq = subparsers.add_parser('sec-acquisitions',
+        help="One filer's acquisitions from its own 10-K / 10-Q XBRL facts "
+             "(acquirer → acquired company, closing date, price)")
+    p_acq.add_argument('company', help='Acquirer name as known to the graph')
+    p_acq.add_argument('--force', action='store_true',
+                       help='Re-read even if the newest 10-K / 10-Q is already ingested')
+    p_acq.add_argument('--max-filings', type=int, default=None,
+                       help='10-K / 10-Q filings to read, newest first (default 8; ~2 requests each)')
+    p_acq.set_defaults(func=cmd_sec_acquisitions)
 
 
 def cmd_sec_13f(args):
@@ -938,6 +1491,21 @@ def cmd_sec_13f(args):
           + (f"{out:,.0f}" if out else "UNKNOWN (no XBRL) — counts only, no percentages."))
 
 
+def _args_sec_13f(subparsers):
+    """The arguments of `manage.py sec-13f`."""
+    p_13f = subparsers.add_parser('sec-13f',
+        help="Institutional holders of one company from Form 13F (the sub-5%% view)")
+    p_13f.add_argument('company', help='Company name as known to the graph')
+    p_13f.add_argument('--limit', type=int, default=100,
+                       help='Max 13F filings to read (relevance-ordered; default 100)')
+    p_13f.add_argument('--force', action='store_true',
+                       help='Ignore the quarterly deadline gate and re-read now')
+    p_13f.add_argument('--window-days', type=int, default=None,
+                       help='Only filings from the last N days — one quarter plus the '
+                            '45-day deadline, so only CURRENT positions come in. 0 = all time')
+    p_13f.set_defaults(func=cmd_sec_13f)
+
+
 def cmd_sec_holdings(args):
     """Ingest the >5% stakes one SEC filer discloses in other companies.
 
@@ -961,12 +1529,36 @@ def cmd_sec_holdings(args):
               f"{result['succession']['successor']}")
 
 
+def _args_sec_holdings(subparsers):
+    """The arguments of `manage.py sec-holdings`."""
+    p_sh = subparsers.add_parser('sec-holdings',
+                                 help="Ingest the >5%% stakes a SEC filer discloses in others")
+    p_sh.add_argument('cik', help='CIK of the filer (e.g. 0002100119 for Vanguard Capital Management)')
+    p_sh.add_argument('--limit', type=int, default=100, help='Max subject companies (default 100)')
+    p_sh.add_argument('--succeeds', help='CIK this filer took over from → SUCCEEDED_BY edge')
+    p_sh.set_defaults(func=cmd_sec_holdings)
+
+
 def cmd_seed(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_WIKIDATA_ENABLED = True
     import seed
     seed.main(region=args.region)
+
+
+def _args_seed(subparsers):
+    """The arguments of `manage.py seed`."""
+    # seed command
+    p_seed = subparsers.add_parser('seed')
+    p_seed.add_argument(
+        '--region',
+        default='all',
+        choices=['europe','americas','asia','middleeast',
+                 'africa','oceania','all']
+    )
+    p_seed.set_defaults(func=cmd_seed)
+
 
 def cmd_list_mixed_generations(args):
     """Name every Person whose own names carry two different generational
@@ -979,6 +1571,14 @@ def cmd_list_mixed_generations(args):
     for r in rows:
         print(f"  {r['full_name']} ({r['id']}; wikidata {r['wikidata_id'] or '-'}, cik {r['sec_cik'] or '-'}): "
               f"{'/'.join(r['marks'])} — aliases: {', '.join(r['alias'])}")
+
+
+def _args_list_mixed_generations(subparsers):
+    """The arguments of `manage.py list-mixed-generations`."""
+    p_lmg = subparsers.add_parser('list-mixed-generations',
+        help="Persons whose names carry both Sr. and Jr. (or II and III) — a relative folded in by a merge; "
+             "report only, split by hand")
+    p_lmg.set_defaults(func=cmd_list_mixed_generations)
 
 
 def cmd_finish(args):
@@ -997,6 +1597,29 @@ def cmd_finish(args):
     sys.exit(code)
 
 
+def _args_finish(subparsers):
+    """The arguments of `manage.py finish`."""
+    # finish: the one list of finishing steps (app/finishing.py) — what the import
+    # scripts, the nightly delta and the rebuild each run after their load.
+    p_fin = subparsers.add_parser('finish',
+        help="Run the finishing steps a load needs, in order: --profile import (after a bulk import), "
+             "nightly (after the GLEIF delta) or after-scrapes (after a batch of scrapes)")
+    p_fin.add_argument('--profile', required=True, choices=['import', 'nightly', 'after-scrapes'])
+    p_fin.add_argument('--list', action='store_true',
+                       help='Print the steps (name<TAB>label) and run nothing')
+    p_fin.add_argument('--dry-run', dest='dry_run', action='store_true',
+                       help='Print each manage.py command the run would make and run nothing')
+    p_fin.add_argument('--only', help='Run this one step and exit with its exit code')
+    p_fin.add_argument('--skip', action='append',
+                       help='Leave a step out (repeat, or separate with commas)')
+    p_fin.add_argument('--db-url', dest='db_url', help='Direct database URL, for the steps that take one')
+    p_fin.add_argument('--isin-dir', dest='isin_dir',
+                       help="Where GLEIF's LEI-ISIN file is kept (the securities bridge)")
+    p_fin.add_argument('--geocode-limit', dest='geocode_limit', type=int,
+                       help='Max entities the geocode step takes this run')
+    p_fin.set_defaults(func=cmd_finish)
+
+
 def cmd_heal_ends_at_dissolution(args):
     """Close every open holding and seat of a dissolved company on its
     `dissolved_on` (app.dissolution.heal_ends_at_dissolution): the rule the
@@ -1011,6 +1634,15 @@ def cmd_heal_ends_at_dissolution(args):
           f"{res['after_dissolution']} edges dated after the dissolution left open")
     for line in res["lines"]:
         print("  " + line)
+
+
+def _args_heal_ends_at_dissolution(subparsers):
+    """The arguments of `manage.py heal-ends-at-dissolution`."""
+    p_hed = subparsers.add_parser('heal-ends-at-dissolution',
+        help="Close every open holding and seat of a dissolved company on its dissolved_on "
+             "(until_reason = dissolution); founders stay open. Dry run unless --apply")
+    p_hed.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_hed.set_defaults(func=cmd_heal_ends_at_dissolution)
 
 
 def cmd_wikidata_suggestions(args):
@@ -1032,6 +1664,16 @@ def cmd_wikidata_suggestions(args):
     print(f"QuickStatements: {paths['quickstatements']} ({paths['statements']} statements)")
 
 
+def _args_wikidata_suggestions(subparsers):
+    """The arguments of `manage.py wikidata-suggestions`."""
+    p_wds = subparsers.add_parser('wikidata-suggestions',
+        help="What GLEIF and EDGAR would correct on Wikidata (LEI P1278, CIK P5531): a CSV of "
+             "findings + a QuickStatements batch of the confident additions. Read-only; a person submits")
+    p_wds.add_argument('--out', default='.', help='Directory for the two files (default: the current one)')
+    p_wds.add_argument('--limit', type=int, help='Only the first N nodes (by item id)')
+    p_wds.set_defaults(func=cmd_wikidata_suggestions)
+
+
 def cmd_schema_audit(args):
     """Name every property the stored rows carry that the schema does not
     declare (app.db.schema.undeclared_properties) — a typo'd writer, a field
@@ -1051,6 +1693,15 @@ def cmd_schema_audit(args):
     sys.exit(1)
 
 
+def _args_schema_audit(subparsers):
+    """The arguments of `manage.py schema-audit`."""
+    p_sa = subparsers.add_parser('schema-audit',
+        help="Name every stored property the schema does not declare (a typo'd writer, an "
+             "undeclared field, a leftover). Samples --sample rows per type; exit 1 on drift")
+    p_sa.add_argument('--sample', type=int, default=5000, help='Rows read per type (default 5000)')
+    p_sa.set_defaults(func=cmd_schema_audit)
+
+
 def cmd_init_schema(args):
     from app.db.schema import ensure_indexes
     result = ensure_indexes()
@@ -1060,6 +1711,13 @@ def cmd_init_schema(args):
     print(f"Schema bootstrap: {len(result['ok'])} applied, {len(result['failed'])} failed")
     for f in result["failed"]:
         print(f"  FAILED: {f['stmt']}\n          -> {f['error']}")
+
+
+def _args_init_schema(subparsers):
+    """The arguments of `manage.py init-schema`."""
+    p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
+    p_schema.set_defaults(func=cmd_init_schema)
+
 
 def cmd_duplicate_names(args):
     """List same-name entity duplicates (same company under different LEIs/ids)
@@ -1075,6 +1733,17 @@ def cmd_duplicate_names(args):
             print(f"    {m.get('id'):<28} {m.get('name')!r:40} "
                   f"country={m.get('country')} lei={m.get('lei_id')} "
                   f"wd={m.get('wikidata_id')} addr={m.get('registered_address')}")
+
+
+def _args_duplicate_names(subparsers):
+    """The arguments of `manage.py duplicate-names`."""
+    # duplicate-names command
+    p_dn = subparsers.add_parser('duplicate-names',
+        help='List same-name entity duplicates (same company under different LEIs) for review')
+    p_dn.add_argument('--limit', type=int, default=50, help='Max groups to list (default 50)')
+    p_dn.add_argument('--min-confidence', choices=['definitive', 'high', 'medium', 'low'],
+                      help='Only show groups at least this confident they are the same company')
+    p_dn.set_defaults(func=cmd_duplicate_names)
 
 
 def cmd_backfill_search(args):
@@ -1113,6 +1782,16 @@ def cmd_backfill_search(args):
     print("Backfill complete. Ensure the FULL_TEXT index exists: python manage.py init-schema")
 
 
+def _args_backfill_search(subparsers):
+    """The arguments of `manage.py backfill-search`."""
+    # backfill-search command
+    p_bfs = subparsers.add_parser('backfill-search',
+        help='Populate the FULL_TEXT search_text column for existing rows (run after a bulk import)')
+    p_bfs.add_argument('--batch', type=int, default=20000,
+                       help='Rows updated per request — keep under the DB proxy timeout (default 20000)')
+    p_bfs.set_defaults(func=cmd_backfill_search)
+
+
 def cmd_rebuild_search(args):
     """REBUILD the FULL_TEXT search indexes so /search (CONTAINSTEXT) finds every row.
     Needed after a non-bulk import (e.g. the --only test subset): entities are written
@@ -1124,6 +1803,19 @@ def cmd_rebuild_search(args):
     res = rebuild_fulltext_indexes(hard=getattr(args, "hard", False))
     print(f"FULL_TEXT rebuilt (hard={getattr(args, 'hard', False)}): "
           f"ok={res.get('ok')} failed={res.get('failed')}")
+
+
+def _args_rebuild_search(subparsers):
+    """The arguments of `manage.py rebuild-search`."""
+    # rebuild-search command (make freshly non-bulk-imported rows findable via /search)
+    p_rbs = subparsers.add_parser('rebuild-search',
+        help='REBUILD the FULL_TEXT search indexes (run after a non-bulk / --only import)')
+    p_rbs.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_rbs.add_argument('--hard', action='store_true',
+        help='DROP + re-CREATE the FULL_TEXT indexes before rebuilding — recovers a '
+             'stuck/corrupted index a plain REBUILD reports "ok" on but never repopulates. '
+             'Run against --db-url http://localhost:2480 to avoid a proxy read-timeout.')
+    p_rbs.set_defaults(func=cmd_rebuild_search)
 
 
 def cmd_wipe_source(args):
@@ -1188,189 +1880,9 @@ def cmd_wipe_source(args):
         print(f"  rebuilt indexes (cleared stale entries from the deletes): {result.get('reindexed')}")
     print("Done.")
 
-def cmd_geocode(args):
-    from app.config import settings
-    settings.GEOCODING_ENABLED = True
-    from app.scraper.geocode_backfill import backfill
-    result = backfill(limit=args.limit, target=args.target)
-    for name, p in result["passes"].items():
-        print(f"  {name:10} geocoded {p['geocoded']} of {p['total']} candidates")
-    print(f"Geocoded {result['geocoded']} of {result['entities_total']} candidates")
 
-def cmd_backfill_industry(args):
-    """Give every company a sector its sources already know (app.industry):
-    EDGAR's SIC code for SEC filers, the register's SIC codes for UK companies."""
-    from app.industry import backfill
-    res = backfill(limit=args.limit)
-    for c in res["sec_changes"][:20]:
-        print(f"  {c['name'][:40]:42} SIC {c['code']}  → NACE {c['nace'] or '—'}")
-    print(f"SEC: {res['sec_filled']} of {res['sec_candidates']} filers given a code; "
-          f"UK: {res['uk_statements']} statements for {res['uk_companies']} companies")
-
-
-def cmd_gen_federation_key(args):
-    from app.federation_keys import generate_keypair, fingerprint
-    priv, pub = generate_keypair()
-    print("Ed25519 federation signing keypair generated.\n")
-    print("Set this SECRET on your instance (env var, never commit):")
-    print(f"  FEDERATION_SIGNING_KEY={priv}\n")
-    print("Share this PUBLIC key with peers so they can verify your exports:")
-    print(f"  public_key={pub}")
-    print(f"  key_id={fingerprint(pub)}")
-
-def cmd_backup_database(args):
-    """Take a consistent online backup of the connected database.
-
-    The file is written by the SERVER, into its own backup directory — the
-    command cannot choose a path — so all this prints is the filename. On a
-    production box, where the database is local, ~/scripts/backup-database.sh
-    wraps this to verify, rotate and copy the archive off the machine.
-    """
-    _apply_direct_db_url(args)
-    from app.db.backup import backup_database, BackupError
-    try:
-        res = backup_database()
-    except BackupError as exc:
-        print(f"BACKUP FAILED: {exc}")
-        raise SystemExit(1)
-    print(f"Backed up '{res['database']}' on the server.")
-    # Machine-readable last line: the wrapper script reads the filename from it.
-    print(f"backup_file={res['file']}")
-
-
-def _build_parser():
-    parser = argparse.ArgumentParser(description='Owlgraph management')
-    subparsers = parser.add_subparsers()
-
-    p_fedkey = subparsers.add_parser('gen-federation-key',
-        help='Generate an Ed25519 signing keypair for federation')
-    p_fedkey.set_defaults(func=cmd_gen_federation_key)
-
-    # seed command
-    p_seed = subparsers.add_parser('seed')
-    p_seed.add_argument(
-        '--region',
-        default='all',
-        choices=['europe','americas','asia','middleeast',
-                 'africa','oceania','all']
-    )
-    p_seed.set_defaults(func=cmd_seed)
-
-    p_lmg = subparsers.add_parser('list-mixed-generations',
-        help="Persons whose names carry both Sr. and Jr. (or II and III) — a relative folded in by a merge; "
-             "report only, split by hand")
-    p_lmg.set_defaults(func=cmd_list_mixed_generations)
-
-    p_hed = subparsers.add_parser('heal-ends-at-dissolution',
-        help="Close every open holding and seat of a dissolved company on its dissolved_on "
-             "(until_reason = dissolution); founders stay open. Dry run unless --apply")
-    p_hed.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_hed.set_defaults(func=cmd_heal_ends_at_dissolution)
-
-    p_wds = subparsers.add_parser('wikidata-suggestions',
-        help="What GLEIF and EDGAR would correct on Wikidata (LEI P1278, CIK P5531): a CSV of "
-             "findings + a QuickStatements batch of the confident additions. Read-only; a person submits")
-    p_wds.add_argument('--out', default='.', help='Directory for the two files (default: the current one)')
-    p_wds.add_argument('--limit', type=int, help='Only the first N nodes (by item id)')
-    p_wds.set_defaults(func=cmd_wikidata_suggestions)
-
-    p_sa = subparsers.add_parser('schema-audit',
-        help="Name every stored property the schema does not declare (a typo'd writer, an "
-             "undeclared field, a leftover). Samples --sample rows per type; exit 1 on drift")
-    p_sa.add_argument('--sample', type=int, default=5000, help='Rows read per type (default 5000)')
-    p_sa.set_defaults(func=cmd_schema_audit)
-
-    p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
-    p_schema.set_defaults(func=cmd_init_schema)
-
-    # duplicate-names command
-    p_dn = subparsers.add_parser('duplicate-names',
-        help='List same-name entity duplicates (same company under different LEIs) for review')
-    p_dn.add_argument('--limit', type=int, default=50, help='Max groups to list (default 50)')
-    p_dn.add_argument('--min-confidence', choices=['definitive', 'high', 'medium', 'low'],
-                      help='Only show groups at least this confident they are the same company')
-    p_dn.set_defaults(func=cmd_duplicate_names)
-
-    # backfill-search command
-    p_bfs = subparsers.add_parser('backfill-search',
-        help='Populate the FULL_TEXT search_text column for existing rows (run after a bulk import)')
-    p_bfs.add_argument('--batch', type=int, default=20000,
-                       help='Rows updated per request — keep under the DB proxy timeout (default 20000)')
-    p_bfs.set_defaults(func=cmd_backfill_search)
-
-    # rebuild-search command (make freshly non-bulk-imported rows findable via /search)
-    p_rbs = subparsers.add_parser('rebuild-search',
-        help='REBUILD the FULL_TEXT search indexes (run after a non-bulk / --only import)')
-    p_rbs.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
-    p_rbs.add_argument('--hard', action='store_true',
-        help='DROP + re-CREATE the FULL_TEXT indexes before rebuilding — recovers a '
-             'stuck/corrupted index a plain REBUILD reports "ok" on but never repopulates. '
-             'Run against --db-url http://localhost:2480 to avoid a proxy read-timeout.')
-    p_rbs.set_defaults(func=cmd_rebuild_search)
-
-    # dedupe-entities command (cross-source merge by shared external id)
-    p_me = subparsers.add_parser('merge-entities',
-        help="Fold one entity into another by hand — a pair with no shared hard id that a human judged "
-             "one company (2026-10-25). Refused on a keep-separate mark. Dry run unless --apply")
-    p_me.add_argument('--keep', required=True, help='Id of the entity that survives')
-    p_me.add_argument('--dead', required=True, help='Id of the entity folded into it and deleted')
-    p_me.add_argument('--apply', action='store_true', help='Merge (default: show what would move)')
-    p_me.set_defaults(func=cmd_merge_entities)
-
-    p_de = subparsers.add_parser('dedupe-entities',
-        help='Merge entities sharing a hard external id (LEI / CH number / SEC CIK / Wikidata); '
-             'first joins an LEI-only node to a CIK-only filer of its name when the filer\'s own '
-             'filings state the LEI (needs SEC scraping enabled)')
-    p_de.add_argument('--limit', type=int, help='Max shared-id groups to process (default: all)')
-    p_de.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
-    p_de.set_defaults(func=cmd_dedupe_entities)
-
-    p_dp = subparsers.add_parser('dedupe-persons',
-        help='Merge the persons two sources wrote as two nodes — same name, a shared company or '
-             'birth date, high confidence only; the rest is reported for review. The net under the '
-             'post-scrape dedup, which sees only what one scrape touched')
-    p_dp.add_argument('--scraped-only', action='store_true',
-                      help='Seed from the persons with a SEC CIK or Wikidata item instead of scanning '
-                           'everyone — bounded on a graph with millions of register persons')
-    p_dp.add_argument('--dry-run', action='store_true', help='Report what would merge; change nothing')
-    p_dp.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
-    p_dp.set_defaults(func=cmd_dedupe_persons)
-
-    p_um = subparsers.add_parser('undo-person-merge',
-        help='Split a merged person back into two from the pictures the merge stored; '
-             'without an id, list the merges that can be undone')
-    p_um.add_argument('snapshot_id', nargs='?', help="The merge's snapshot id (see the list)")
-    p_um.add_argument('--limit', type=int, default=50, help='How many merges to list')
-    p_um.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
-    p_um.set_defaults(func=cmd_undo_person_merge)
-
-    # audit-registers command (the general-register map, from the LEI-CDF golden copy)
-    p_ar = subparsers.add_parser('audit-registers',
-        help='Measure which register each country\'s companies sit on (GLEIF LEI-CDF) '
-             'and write the general-register map the PSC importer keys foreign controllers by')
-    p_ar.add_argument('--file', required=True, help='LEI-CDF golden copy (.json or .zip)')
-    p_ar.add_argument('--out', default='app/scraper/data/general_registers.json',
-                      help='Output JSON (default: the shipped map)')
-    p_ar.add_argument('--min-share', type=float, default=0.90,
-                      help='Dominant register\'s minimum share of a country\'s GENERAL entities')
-    p_ar.add_argument('--min-records', type=int, default=200,
-                      help='Minimum GENERAL entities a country needs to be mapped')
-    p_ar.set_defaults(func=cmd_audit_registers)
-
-    p_apr = subparsers.add_parser('audit-psc-registers',
-        help='Measure, on a Companies House PSC snapshot, which register rule keys each '
-             'foreign corporate controller — and the phrasings the unkeyed ones used')
-    p_apr.add_argument('--file', required=True, help='PSC snapshot (.zip)')
-    p_apr.add_argument('--top', type=int, default=40, help='Countries to list')
-    p_apr.set_defaults(func=cmd_audit_psc_registers)
-
-    # mark-shortcuts command (flag redundant ultimate-parent edges for the renderer)
-    p_ms = subparsers.add_parser('mark-shortcuts',
-        help='Flag GLEIF ultimate-parent OWNS edges that duplicate an existing path')
-    p_ms.add_argument('--limit', type=int, help='Max parents to process (default: all)')
-    p_ms.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
-    p_ms.set_defaults(func=cmd_mark_shortcuts)
-
+def _args_wipe_source(subparsers):
+    """The arguments of `manage.py wipe-source`."""
     # wipe-source command (replaces the removed whole-DB wipe-data; drop the
     # database for a fresh start instead)
     p_wipe = subparsers.add_parser('wipe-source',
@@ -1392,6 +1904,19 @@ def _build_parser():
                              'host; localhost here is the test container) so the reindex is not cut off by a proxy timeout')
     p_wipe.set_defaults(func=cmd_wipe_source)
 
+
+def cmd_geocode(args):
+    from app.config import settings
+    settings.GEOCODING_ENABLED = True
+    from app.scraper.geocode_backfill import backfill
+    result = backfill(limit=args.limit, target=args.target)
+    for name, p in result["passes"].items():
+        print(f"  {name:10} geocoded {p['geocoded']} of {p['total']} candidates")
+    print(f"Geocoded {result['geocoded']} of {result['entities_total']} candidates")
+
+
+def _args_geocode(subparsers):
+    """The arguments of `manage.py geocode`."""
     # geocode command
     p_geo = subparsers.add_parser('geocode',
         help='Backfill entity coordinates via Nominatim (headquarters AND registered office)')
@@ -1400,6 +1925,20 @@ def _build_parser():
                        help="Which address to geocode (default both — a company has two places)")
     p_geo.set_defaults(func=cmd_geocode)
 
+
+def cmd_backfill_industry(args):
+    """Give every company a sector its sources already know (app.industry):
+    EDGAR's SIC code for SEC filers, the register's SIC codes for UK companies."""
+    from app.industry import backfill
+    res = backfill(limit=args.limit)
+    for c in res["sec_changes"][:20]:
+        print(f"  {c['name'][:40]:42} SIC {c['code']}  → NACE {c['nace'] or '—'}")
+    print(f"SEC: {res['sec_filled']} of {res['sec_candidates']} filers given a code; "
+          f"UK: {res['uk_statements']} statements for {res['uk_companies']} companies")
+
+
+def _args_backfill_industry(subparsers):
+    """The arguments of `manage.py backfill-industry`."""
     # backfill-industry: EDGAR's SIC + the UK register's SIC codes -> IndustryCode statements + nace_code
     p_ind = subparsers.add_parser('backfill-industry',
         help="Give every company a sector its sources already know: SEC filers' SIC from EDGAR, "
@@ -1407,398 +1946,47 @@ def _build_parser():
     p_ind.add_argument('--limit', type=int, help='Max SEC filers to fetch this run')
     p_ind.set_defaults(func=cmd_backfill_industry)
 
-    # gleif-succession command
-    p_succ = subparsers.add_parser('gleif-succession',
-                                   help='Import GLEIF LEI-CDF succession (MERGED/DUPLICATE → SuccessorLEI) as SUCCEEDED_BY edges')
-    p_succ.add_argument('--file', required=True, help='Path to a local LEI-CDF golden-copy .json/.zip')
-    p_succ.add_argument('--limit', type=int, help='Max records to scan')
-    p_succ.add_argument('--only-file', help='File of LEIs (one per line, # comments): only the successions touching them — the curated subset')
-    p_succ.add_argument('--emit-leis', help='With --only-file: write the endpoints the subset lacked here (feed to gleif-lei-cdf --only-file to name them)')
-    p_succ.set_defaults(func=cmd_gleif_succession)
 
-    # gleif-rr command
-    p_rr = subparsers.add_parser('gleif-rr',
-                                 help='Import GLEIF RR-CDF direct/ultimate parents as direct/indirect OWNS edges')
-    p_rr.add_argument('--file', required=True, help='Path to a local RR-CDF golden-copy .json/.zip')
-    p_rr.add_argument('--limit', type=int, help='Max records to scan')
-    p_rr.add_argument('--only', help='Comma-separated seed LEIs — import their whole corporate family')
-    p_rr.add_argument('--only-file', help='File of seed LEIs (one per line, # comments) — their corporate family')
-    p_rr.add_argument('--emit-leis', help='With --only: write the family LEIs here (feed to gleif-lei-cdf --only-file to name them)')
-
-    p_rr.set_defaults(func=cmd_gleif_rr)
-
-    p_rh = subparsers.add_parser('gleif-rr-history',
-        help='GLEIF relationship history from the archive (once, after the first full import): '
-             'ended relationships since 2018 and "at least since" starts')
-    p_rh.add_argument('--intervals', default='~/data/gleif-rr-history.jsonl.gz',
-                      help='The intervals file: built here if missing (or with --rebuild), '
-                           'reused otherwise — so a re-apply after a rebuild downloads nothing')
-    p_rh.add_argument('--rebuild', action='store_true', help='Download the archive again')
-    p_rh.add_argument('--from', dest='start', metavar='YYYY-MM',
-                      help='First month (default: the archive start, 2018-02)')
-    p_rh.add_argument('--download-only', action='store_true', help='Build the intervals file, write nothing')
-    p_rh.add_argument('--dry-run', action='store_true', help='Report what applying would write, write nothing')
-    p_rh.set_defaults(func=cmd_gleif_rr_history)
-
-    # gleif-repex command (why a company reports no parent)
-    p_rx = subparsers.add_parser('gleif-repex',
-                                 help='Import GLEIF reporting exceptions — the published reasons companies give for naming no parent')
-    p_rx.add_argument('--file', required=True, help='Path to a local repex golden-copy .json/.zip')
-    p_rx.add_argument('--limit', type=int, help='Max records to scan')
-    p_rx.add_argument('--db-url',
-                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_rx.set_defaults(func=cmd_gleif_repex)
-
-    # ch-psc command (Companies House PSC snapshot — replaces UK PSC BODS)
-    p_chp = subparsers.add_parser('ch-psc',
-                                  help='Import a Companies House PSC snapshot (current UK beneficial ownership)')
-    p_chp.add_argument('--file', required=True, help='Path to a local PSC snapshot .zip/.txt')
-    p_chp.add_argument('--limit', type=int, help='Max records to scan')
-    p_chp.add_argument('--bulk-load', action='store_true',
-                       help='Drop secondary indexes during the load and rebuild after')
-    p_chp.add_argument('--batch-size', type=int,
-                       help='Records per flush (default 400). Lower it behind a short proxy timeout; raise it on a direct connection')
-    p_chp.add_argument('--db-url',
-                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_chp.add_argument('--only', help='Comma-separated company numbers to import (curated test subset)')
-    p_chp.add_argument('--only-file', help='File of company numbers (one per line, # comments) to import')
-    p_chp.add_argument('--digest-out',
-                       help='Also write a digest of this snapshot here — the baseline the incremental `ch-psc-update` diffs against')
-    p_chp.set_defaults(func=cmd_ch_psc)
-
-    # ch-psc-update command (incremental refresh by snapshot diff)
-    p_pu = subparsers.add_parser('ch-psc-update',
-                                 help='Refresh UK PSC incrementally by diffing today\'s snapshot against the last one applied')
-    p_pu.add_argument('--file', default='/home/administrator/data/companies-house-psc/psc-snapshot.zip',
-                      help='PSC snapshot .zip/.txt (default: the standard data path)')
-    p_pu.add_argument('--digest', help='Baseline digest (default: psc-digest.tsv.gz beside --file)')
-    p_pu.add_argument('--limit', type=int, help='Max records to scan (a spot check; never advances the checkpoint fully)')
-    p_pu.add_argument('--batch-size', type=int, help='Records per probe/flush (default 1000)')
-    p_pu.add_argument('--only-existing', dest='only_existing', default=None,
-                      action=argparse.BooleanOptionalAction,
-                      help='Refresh only companies already in this database. Defaults ON when '
-                           'the PSC baseline here is a subset (refreshing it whole would drag '
-                           'in the rest of the register) and OFF after a full load')
-    p_pu.add_argument('--max-churn-pct', type=float, default=5.0,
-                      help='Refuse if more than this %% of records moved, scaled by the gap in '
-                           'days (default 5.0). A snapshot diff can rewrite the whole graph if '
-                           'something upstream shifts')
-    p_pu.add_argument('--force', action='store_true', help='Override the churn and staleness guards')
-    p_pu.add_argument('--dry-run', action='store_true', help='Report the diff, write nothing')
-    p_pu.add_argument('--rebuild-digest', action='store_true',
-                      help='Rewrite the baseline digest from this snapshot and exit — FORFEITS any changes since the last applied one')
-    p_pu.add_argument('--db-url',
-                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_pu.set_defaults(func=cmd_ch_psc_update)
-
-    # ch-company-data command (Companies House register — names/addresses for PSC companies)
-    p_chc = subparsers.add_parser('ch-company-data',
-                                  help='Enrich UK companies with names/addresses from a Companies House BasicCompanyData snapshot')
-    p_chc.add_argument('--file', required=True, help='Path to a local BasicCompanyData .zip')
-    p_chc.add_argument('--limit', type=int, help='Max rows to scan')
-    p_chc.add_argument('--bulk-load', action='store_true',
-                       help='Drop secondary indexes during the load and rebuild after')
-    p_chc.add_argument('--batch-size', type=int,
-                       help='Rows per flush (default 400). Lower it behind a short proxy timeout; raise it on a direct connection')
-    p_chc.add_argument('--db-url',
-                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_chc.add_argument('--only', help='Comma-separated company numbers to import (curated test subset)')
-    p_chc.add_argument('--only-file', help='File of company numbers (one per line, # comments) to import')
-    p_chc.set_defaults(func=cmd_ch_company_data)
-
-    # gleif-lei-cdf command (entities from the golden copy — replaces GLEIF BODS)
-    p_lei = subparsers.add_parser('gleif-lei-cdf',
-                                  help='Import GLEIF entities from the LEI-CDF golden copy (name/country/address)')
-    p_lei.add_argument('--file', required=True, help='Path to a local LEI-CDF golden-copy .json/.zip')
-    p_lei.add_argument('--limit', type=int, help='Max records to scan')
-    p_lei.add_argument('--jurisdiction', help='Country code filter, e.g. AT')
-    p_lei.add_argument('--bulk-load', action='store_true',
-                       help='Drop secondary indexes during the load and rebuild after (faster on the full 3.4M)')
-    p_lei.add_argument('--only', help='Comma-separated LEIs to import (curated test subset)')
-    p_lei.add_argument('--only-file', help='File of LEIs (one per line, # comments) to import')
-    p_lei.set_defaults(func=cmd_gleif_lei_cdf)
-
-    # import-lock command (inspect/manage the cross-process import lock)
-    p_lock = subparsers.add_parser('import-lock',
-                                   help='Cross-process import lock: status / acquire / release (manual recovery)')
-    p_lock.add_argument('action', choices=['status', 'acquire', 'release'])
-    p_lock.add_argument('--holder', help='Holder label for acquire (default: manual)')
-    p_lock.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
-    p_lock.set_defaults(func=cmd_import_lock)
-
-    # gleif-isin-bridge command (the securities bridge, findings item 71)
-    p_gi = subparsers.add_parser('gleif-isin-bridge',
-                                 help="Join EDGAR issuers to their LEI through GLEIF's LEI-ISIN file "
-                                      "(CUSIP -> US ISIN -> LEI). Dry run unless --apply")
-    p_gi.add_argument('--apply', action='store_true', help='Write the joins (default: report what would be written)')
-    p_gi.add_argument('--file', help="A local isin-lei-YYYYMMDDTHHMMSS.zip instead of downloading GLEIF's newest")
-    p_gi.add_argument('--allow-stale', dest='allow_stale', action='store_true',
-                      help='Use a file older than three days')
-    p_gi.add_argument('--dir', help='Where GLEIF\'s file is kept (default ~/.cache/gleif-isin; '
-                      'the production container passes /data/gleif-isin, its home is gone with the container)')
-    p_gi.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
-    p_gi.set_defaults(func=cmd_gleif_isin_bridge)
-
-    # gleif-update command (retirement-aware daily delta on top of the full load)
-    p_gu = subparsers.add_parser('gleif-update',
-                                 help='Apply a GLEIF delta update (daily refresh: new/changed entities, merges, and closed relationships)')
-    p_gu.add_argument('--interval', default='auto',
-                      choices=['auto', 'IntraDay', 'LastDay', 'LastWeek', 'LastMonth'],
-                      help='Delta window to fetch. Default "auto" = gap-aware: pick the '
-                           'smallest window covering any missed runs since the last one')
-    p_gu.add_argument('--lei-file', help='Use a local LEI-CDF delta .json/.zip instead of fetching')
-    p_gu.add_argument('--rr-file', help='Use a local RR-CDF delta .json/.zip instead of fetching')
-    p_gu.add_argument('--repex-file', help='Use a local reporting-exceptions delta .json/.zip instead of fetching')
-    p_gu.add_argument('--limit', type=int, help='Max records to scan (per file)')
-    p_gu.add_argument('--only-existing', dest='only_existing', default=None,
-                      action=argparse.BooleanOptionalAction,
-                      help='Refresh only companies already in this database, ignoring '
-                           'records for the rest of the world. Defaults to ON when the '
-                           'GLEIF baseline here is a curated subset (a whole delta would '
-                           'bury it rather than refresh it) and OFF after a full load')
-    p_gu.add_argument('--db-url',
-                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_gu.set_defaults(func=cmd_gleif_update)
-
-    # flag-nominees command
-    p_nom = subparsers.add_parser('flag-nominees',
-                                  help='Flag nominee/custodian entities (holders of record) by name')
-    p_nom.set_defaults(func=cmd_flag_nominees)
-
-    p_crp = subparsers.add_parser('close-reported-by-parent',
-                                  help="End a subsidiary's Schedule 13D/G holding once its parent (an open controlling edge) reports the same company in a newer 13D/G; until_reason reported_by_parent")
-    p_crp.add_argument('--db-url',
-                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_crp.set_defaults(func=cmd_close_reported_by_parent)
-
-    # close-ended-classes command (findings item 99)
-    p_cec = subparsers.add_parser(
-        'close-ended-classes',
-        help="End every Schedule 13D/G holding whose shares ceased to exist — a merger's "
-             "Form 25-NSE under Rule 12d2-2(a), a takeover's Form 15 with at most two holders "
-             "of record (until_reason class_ended). Reads EDGAR: needs the scraper flags on")
-    p_cec.add_argument('--limit', type=int, help='Only the first N companies (a trial run)')
-    p_cec.add_argument('--db-url',
-                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_cec.set_defaults(func=cmd_close_ended_classes)
-
-    # sec-name-list command (EDGAR's bulk name list → the local index)
-    p_snl = subparsers.add_parser(
-        'sec-name-list',
-        help="Download EDGAR's bulk name list (every filer name with its CIK, ~40 MB) and build the "
-             "local index a person's name search reads; needs SEC_NAME_LIST_DIR. Skips a list less "
-             "than a day old")
-    p_snl.add_argument('--force', action='store_true', help='Download even if the index is less than a day old')
-    p_snl.set_defaults(func=cmd_sec_name_list)
-
-    # ch-officers command (Companies House register of officers)
-    p_cho = subparsers.add_parser(
-        'ch-officers',
-        help="Read the serving officers (directors and LLP members; no secretaries) of the UK companies "
-             "in the graph from the Companies House API and write them as seats; a seat whose "
-             "holder has resigned since is ended on the register's date. Manual; needs "
-             "COMPANIES_HOUSE_API_KEY")
-    p_cho.add_argument('--company', help='Only these company numbers (comma-separated)')
-    p_cho.add_argument('--limit', type=int, help='Only the first N companies (a trial run)')
-    p_cho.add_argument('--dry-run', action='store_true', help='Read and count, write nothing')
-    p_cho.add_argument('--history', action='store_true',
-                       help='Also write every resigned person as a closed seat (appointed on to resigned on); '
-                            'off by default — the serving officers only')
-    p_cho.add_argument('--db-url',
-                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_cho.set_defaults(func=cmd_ch_officers)
-
-    # close-absent-from-table command (findings item 99)
-    p_cat = subparsers.add_parser(
-        'close-absent-from-table',
-        help="End every Schedule 13D/G holding of 5 %% or more that the issuer's newest ownership "
-             "table (DEF 14A / 10-K/A, at most 18 months old) no longer names "
-             "(until_reason not_in_issuer_table), write the 13D/G statements filed since the table, "
-             "and the table's 5 %% holders no 13D/G covers and that reported no exit since. "
-             "Reads EDGAR: needs the scraper flags on")
-    p_cat.add_argument('--limit', type=int, help='Only the first N companies (a trial run)')
-    p_cat.add_argument('--db-url',
-                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_cat.set_defaults(func=cmd_close_absent_from_table)
-
-    # close-held-by-subsidiary command (findings item 99 part 3)
-    p_chs = subparsers.add_parser(
-        'close-held-by-subsidiary',
-        help="End every Schedule 13D/G holding whose holder the issuer's own subsidiary list "
-             "(Exhibit 21 / 8.1) or GLEIF's record names as its subsidiary, filed before that "
-             "statement (until_reason holder_is_subsidiary). Graph only, no EDGAR read")
-    p_chs.add_argument('--db-url',
-                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_chs.set_defaults(func=cmd_close_held_by_subsidiary)
-
-    # mark-stale command
-    p_ms = subparsers.add_parser('mark-stale',
-                                 help='Mark community-tier OWNS edges unconfirmed for --days as stale (dimmed, never deleted); register-tier and register-vouched edges are exempt. Also dims a Schedule 13D/G holding whose last statement is older than its restatement window (13G filed before 2024: 15 months; 13D and a 13G filed since 2024: 5 years)')
-    p_ms.add_argument('--days', type=int, default=180,
-                      help='Confirmation age that counts as stale (default 180)')
-    p_ms.add_argument('--db-url',
-                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_ms.set_defaults(func=cmd_mark_stale)
-
-    # quality-report command
-    p_qr = subparsers.add_parser('quality-report',
-                                 help='Data quality as numbers: stakes, corroboration, official ids, freshness, contradiction gauges')
-    p_qr.add_argument('--json', action='store_true', help='Machine-readable output')
-    p_qr.add_argument('--db-url',
-                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_qr.set_defaults(func=cmd_quality_report)
-
-    # prune-analytics command
-    p_wr = subparsers.add_parser('weekly-report',
-        help='The weekly activity digest (last completed week by default)')
-    p_wr.add_argument('--week', help='ISO week id, e.g. 2026-W38')
-    p_wr.add_argument('--email', action='store_true',
-                      help='Send it to REPORT_EMAIL (or ADMIN_EMAIL)')
-    p_wr.add_argument('--json', action='store_true', help='Print the report as JSON')
-    p_wr.add_argument('--db-url', dest='db_url', default=None,
-                      help='Talk to ArcadeDB directly (bypasses the proxy timeout)')
-    p_wr.set_defaults(func=cmd_weekly_report)
-
-    p_sc = subparsers.add_parser('source-calls',
-        help='Calls to each outside source and to the bucket, per kind (app/source_calls.py)')
-    p_sc.add_argument('--from', help='First UTC day, YYYY-MM-DD (default: TO minus --days)')
-    p_sc.add_argument('--to', help='Day after the last, YYYY-MM-DD (default: tomorrow)')
-    p_sc.add_argument('--days', type=int, default=7, help='Days back from TO when --from is not given')
-    p_sc.add_argument('--db-url', dest='db_url', default=None,
-                      help='Talk to ArcadeDB directly (bypasses the proxy timeout)')
-    p_sc.set_defaults(func=cmd_source_calls)
-
-    p_al = subparsers.add_parser('alerts', help='What is wrong right now: failed/stale imports, stale backup, '
-                                         'disk nearly full, /health down (see docs/operations.md)')
-    p_al.add_argument('--only', help='Comma-separated subset of checks: imports,backup,disk,health,refused,probes')
-    p_al.add_argument('--email', action='store_true', help='Mail the alerts (only when there are any)')
-    p_al.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
-    p_al.set_defaults(func=cmd_alerts)
-
-    p_prune = subparsers.add_parser('prune-analytics',
-                                    help='Delete usage counters untouched within the retention window')
-    p_prune.add_argument('--days', type=int, default=365,
-                         help='Retention window in days (default 365)')
-    p_prune.add_argument('--dry-run', action='store_true', help='Report without deleting')
-    p_prune.add_argument('--db-url',
-                         help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_prune.set_defaults(func=cmd_prune_analytics)
-
-    # sec-holdings: read what an institutional filer OWNS (its own 13D/13G
-    # filings), as opposed to a normal scrape which reads filings about a company.
-    p_gf = subparsers.add_parser('geocache-forget',
-        help='Erase one address from the geocode cache (table + shared bucket) — the erasure runbook step')
-    p_gf.add_argument('address', help='The address text exactly as stored (see GeoCache.query)')
-    p_gf.set_defaults(func=cmd_geocache_forget)
-
-    p_sc = subparsers.add_parser('sec-cache',
-        help='On-disk EDGAR filing cache: stats')
-    p_sc.add_argument('action', choices=['stats'])
-    p_sc.set_defaults(func=cmd_sec_cache)
-
-    p_formd = subparsers.add_parser('sec-formd',
-        help="One issuer's board/officers from its newest SEC Form D (private companies)")
-    p_formd.add_argument('company', help='Company name as known to the graph')
-    p_formd.add_argument('--force', action='store_true',
-                         help='Re-read even if this filing is already ingested')
-    p_formd.set_defaults(func=cmd_sec_formd)
-
-    p_ex21 = subparsers.add_parser('sec-ex21',
-        help="One issuer's statutory subsidiary list from its 10-K Exhibit 21")
-    p_ex21.add_argument('company', help='Company name as known to the graph')
-    p_ex21.add_argument('--force', action='store_true',
-                        help='Re-read even if this annual filing is already ingested')
-    p_ex21.set_defaults(func=cmd_sec_ex21)
-
-    p_ex21h = subparsers.add_parser('sec-ex21-history',
-        help="Date an issuer's subsidiaries by their oldest listing in earlier 10-K Exhibit 21s "
-             "(\"owned since at least\")")
-    p_ex21h.add_argument('company', help='Company name as known to the graph')
-    p_ex21h.add_argument('--max-filings', type=int, default=None,
-                         help='Annual filings to read, newest first (default 25; ~2 requests each)')
-    p_ex21h.set_defaults(func=cmd_sec_ex21_history)
-
-    p_acq = subparsers.add_parser('sec-acquisitions',
-        help="One filer's acquisitions from its own 10-K / 10-Q XBRL facts "
-             "(acquirer → acquired company, closing date, price)")
-    p_acq.add_argument('company', help='Acquirer name as known to the graph')
-    p_acq.add_argument('--force', action='store_true',
-                       help='Re-read even if the newest 10-K / 10-Q is already ingested')
-    p_acq.add_argument('--max-filings', type=int, default=None,
-                       help='10-K / 10-Q filings to read, newest first (default 8; ~2 requests each)')
-    p_acq.set_defaults(func=cmd_sec_acquisitions)
-
-    p_13f = subparsers.add_parser('sec-13f',
-        help="Institutional holders of one company from Form 13F (the sub-5%% view)")
-    p_13f.add_argument('company', help='Company name as known to the graph')
-    p_13f.add_argument('--limit', type=int, default=100,
-                       help='Max 13F filings to read (relevance-ordered; default 100)')
-    p_13f.add_argument('--force', action='store_true',
-                       help='Ignore the quarterly deadline gate and re-read now')
-    p_13f.add_argument('--window-days', type=int, default=None,
-                       help='Only filings from the last N days — one quarter plus the '
-                            '45-day deadline, so only CURRENT positions come in. 0 = all time')
-    p_13f.set_defaults(func=cmd_sec_13f)
-
-    p_sh = subparsers.add_parser('sec-holdings',
-                                 help="Ingest the >5%% stakes a SEC filer discloses in others")
-    p_sh.add_argument('cik', help='CIK of the filer (e.g. 0002100119 for Vanguard Capital Management)')
-    p_sh.add_argument('--limit', type=int, default=100, help='Max subject companies (default 100)')
-    p_sh.add_argument('--succeeds', help='CIK this filer took over from → SUCCEEDED_BY edge')
-    p_sh.set_defaults(func=cmd_sec_holdings)
+def cmd_gen_federation_key(args):
+    from app.federation_keys import generate_keypair, fingerprint
+    priv, pub = generate_keypair()
+    print("Ed25519 federation signing keypair generated.\n")
+    print("Set this SECRET on your instance (env var, never commit):")
+    print(f"  FEDERATION_SIGNING_KEY={priv}\n")
+    print("Share this PUBLIC key with peers so they can verify your exports:")
+    print(f"  public_key={pub}")
+    print(f"  key_id={fingerprint(pub)}")
 
 
-    # set-password: operator reset when neither in-app route is usable (the email
-    # reset flow needs SMTP; /auth/change-password needs the current password).
-    p_sp = subparsers.add_parser('set-password',
-                                 help="Set a user's password (prompts; ADMIN_PASSWORD only seeds new accounts)")
-    p_sp.add_argument('email', help='Email address of the account to update')
-    p_sp.add_argument('--password',
-                      help='Non-interactive password (avoid — lands in shell history and ps)')
-    p_sp.set_defaults(func=cmd_set_password)
+def _args_gen_federation_key(subparsers):
+    """The arguments of `manage.py gen-federation-key`."""
+    p_fedkey = subparsers.add_parser('gen-federation-key',
+        help='Generate an Ed25519 signing keypair for federation')
+    p_fedkey.set_defaults(func=cmd_gen_federation_key)
 
-    # ensure-user: put a service account back after a rebuild. Idempotent, so the
-    # import scripts can call it unconditionally.
-    p_bfr = subparsers.add_parser('backfill-former-registers',
-        help='Recover former register ids from historical GLEIF snapshot files')
-    p_bfr.add_argument('snapshots', nargs='+',
-                       help='Golden-copy lei2 CSV files (zip or csv), downloaded beforehand')
-    p_bfr.add_argument('--confirm-database', required=True,
-                       help='Must equal the configured ARCADEDB_DATABASE')
-    p_bfr.set_defaults(func=cmd_backfill_former_registers)
 
-    p_eu = subparsers.add_parser('ensure-user',
-        help='Create or correct a service account (password from an env var, not argv)')
-    p_eu.add_argument('--email', required=True, help='Account to create or correct')
-    p_eu.add_argument('--role', default='contributor',
-                      choices=['viewer', 'contributor', 'moderator', 'admin'],
-                      help='Role to set (default: contributor)')
-    p_eu.add_argument('--password-env', default='ENSURE_USER_PASSWORD',
-                      help='Environment variable holding the password for a NEW account')
-    p_eu.add_argument('--confirm-database', required=True,
-                      help='Must match the configured database — this mints a privileged account')
-    p_eu.set_defaults(func=cmd_ensure_user)
+def cmd_backup_database(args):
+    """Take a consistent online backup of the connected database.
 
-    # finish: the one list of finishing steps (app/finishing.py) — what the import
-    # scripts, the nightly delta and the rebuild each run after their load.
-    p_fin = subparsers.add_parser('finish',
-        help="Run the finishing steps a load needs, in order: --profile import (after a bulk import), "
-             "nightly (after the GLEIF delta) or after-scrapes (after a batch of scrapes)")
-    p_fin.add_argument('--profile', required=True, choices=['import', 'nightly', 'after-scrapes'])
-    p_fin.add_argument('--list', action='store_true',
-                       help='Print the steps (name<TAB>label) and run nothing')
-    p_fin.add_argument('--dry-run', dest='dry_run', action='store_true',
-                       help='Print each manage.py command the run would make and run nothing')
-    p_fin.add_argument('--only', help='Run this one step and exit with its exit code')
-    p_fin.add_argument('--skip', action='append',
-                       help='Leave a step out (repeat, or separate with commas)')
-    p_fin.add_argument('--db-url', dest='db_url', help='Direct database URL, for the steps that take one')
-    p_fin.add_argument('--isin-dir', dest='isin_dir',
-                       help="Where GLEIF's LEI-ISIN file is kept (the securities bridge)")
-    p_fin.add_argument('--geocode-limit', dest='geocode_limit', type=int,
-                       help='Max entities the geocode step takes this run')
-    p_fin.set_defaults(func=cmd_finish)
+    The file is written by the SERVER, into its own backup directory — the
+    command cannot choose a path — so all this prints is the filename. On a
+    production box, where the database is local, ~/scripts/backup-database.sh
+    wraps this to verify, rotate and copy the archive off the machine.
+    """
+    _apply_direct_db_url(args)
+    from app.db.backup import backup_database, BackupError
+    try:
+        res = backup_database()
+    except BackupError as exc:
+        print(f"BACKUP FAILED: {exc}")
+        raise SystemExit(1)
+    print(f"Backed up '{res['database']}' on the server.")
+    # Machine-readable last line: the wrapper script reads the filename from it.
+    print(f"backup_file={res['file']}")
 
+
+def _args_backup_database(subparsers):
+    """The arguments of `manage.py backup-database`."""
     # backup-database: server-side online backup (app/db/backup.py explains why a
     # disk snapshot is not a substitute).
     p_bk = subparsers.add_parser('backup-database',
@@ -1806,6 +1994,75 @@ def _build_parser():
     p_bk.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
     p_bk.set_defaults(func=cmd_backup_database)
 
+
+#: Every command's arguments, in the order `manage.py --help` lists the commands. A new
+#: command is a `cmd_…` function, an `_args_…` function below it, and a line here.
+COMMANDS = (
+    _args_gen_federation_key,
+    _args_seed,
+    _args_list_mixed_generations,
+    _args_heal_ends_at_dissolution,
+    _args_wikidata_suggestions,
+    _args_schema_audit,
+    _args_init_schema,
+    _args_duplicate_names,
+    _args_backfill_search,
+    _args_rebuild_search,
+    _args_merge_entities,
+    _args_dedupe_entities,
+    _args_dedupe_persons,
+    _args_undo_person_merge,
+    _args_audit_registers,
+    _args_audit_psc_registers,
+    _args_mark_shortcuts,
+    _args_wipe_source,
+    _args_geocode,
+    _args_backfill_industry,
+    _args_gleif_succession,
+    _args_gleif_rr,
+    _args_gleif_rr_history,
+    _args_gleif_repex,
+    _args_ch_psc,
+    _args_ch_psc_update,
+    _args_ch_company_data,
+    _args_gleif_lei_cdf,
+    _args_import_lock,
+    _args_gleif_isin_bridge,
+    _args_gleif_update,
+    _args_flag_nominees,
+    _args_close_reported_by_parent,
+    _args_close_ended_classes,
+    _args_sec_name_list,
+    _args_ch_officers,
+    _args_close_absent_from_table,
+    _args_close_held_by_subsidiary,
+    _args_mark_stale,
+    _args_quality_report,
+    _args_weekly_report,
+    _args_source_calls,
+    _args_alerts,
+    _args_prune_analytics,
+    _args_geocache_forget,
+    _args_sec_cache,
+    _args_sec_formd,
+    _args_sec_ex21,
+    _args_sec_ex21_history,
+    _args_sec_acquisitions,
+    _args_sec_13f,
+    _args_sec_holdings,
+    _args_set_password,
+    _args_backfill_former_registers,
+    _args_ensure_user,
+    _args_finish,
+    _args_backup_database,
+)
+
+
+def _build_parser():
+    parser = argparse.ArgumentParser(description='Owlgraph management')
+    subparsers = parser.add_subparsers()
+    for add_arguments in COMMANDS:
+        add_arguments(subparsers)
     return parser
 
 
