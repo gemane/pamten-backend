@@ -140,7 +140,7 @@ class TestWhatEachExhibit21ReaderStamps:
 
 class TestWhatTheOtherTextReadersStamp:
     def test_a_legacy_cover_page_is_a_form_reading(self):
-        # pinned in test_sec_edgar (the regex path of fetch_ownership_filings);
+        # pinned in test_sec_13dg (the regex path of fetch_ownership_filings);
         # here only that the constant the writer imports is the right grade
         from app.scraper import sec_13dg
         assert sec_13dg.READ_FORM == "form"
