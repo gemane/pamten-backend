@@ -1831,6 +1831,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       source is silent, open the source; and before paying for a full read (an
       issuer's 13D/G feed: 80 requests), look for the index that lists the answer in
       one (`efts search-index?ciks=…&forms=…`).
+- [ ] **A reader that drops an answer it did not want must say so to the step
+      after it.** The older-statements pass read a holder's newest 13D/G, found it
+      reported no position, wrote nothing — and told nobody, so the table step wrote
+      the holder from the proxy that quoted an older statement: The Vanguard Group at
+      17 issuers after its exits of March 2026 (findings item 159). An exit is a
+      result, not an empty read; hand it on, with its date — an exit of 2021 against
+      a proxy of 2026 is a missed newer statement, not the holder's last word. And a
+      count of "holders with a statement of their own" (item 157's 501 of 525)
+      proves nothing until it says what those statements state: the rebuild found
+      168 left, 145 of them with no statement on that issuer in EDGAR's index.
 - [ ] **A handler that classifies a failure must survive the failure it did not
       expect.** `objectstore.get` absorbs every error and tells a missing key from an
       outage by reading `exc.response["Error"]["Code"]` — `getattr(exc, "response",

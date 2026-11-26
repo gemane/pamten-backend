@@ -2214,6 +2214,31 @@ An index that does not answer is not "nobody filed": the rows are held back
 search. Cost, measured: 409 index requests for the 336 companies and about two
 per statement read — roughly 1,500 requests a rebuild.
 
+**A holder whose newest statement is an exit is not written from the table
+(findings item 159).** A proxy's 5 % row quotes the holder's own statement. The
+Vanguard Group's 13G/As of 2026-03-26 and -27 report 0 % — its holdings went to
+Vanguard Capital Management and Vanguard Portfolio Management — yet Lexeo's proxy
+of 2026-04-15 still lists it at 5 % "based on … a Schedule 13G filed … on January
+30, 2026", Dave's quotes one of July 2025, QuantumScape's one of February 2024.
+The exit was filed before the table, so the statements since never read it, and
+`write_older_statements` read it and dropped it: 17 tables in the rebuild of
+2026-11-26b wrote Vanguard from the proxy. The issuer's own scrape did the same
+(Sirius XM: its scrape closed Vanguard's 13G/A at the exit, then the DEF 14A
+wrote "VANGUARD GROUP INC 5.4 %"). Now the reporting persons of the exits read —
+by `write_older_statements`, and by the issuer's own scrape (`ownership_exits`,
+with their filing dates) — are not written from the table, as those of the
+statements since are not (item 116). An exit counts for a year and some weeks
+before the table (`EXIT_WEIGHT_DAYS`, 410): a 5 % holder amends within 45 days of
+each year's end, so an older exit is not its last word — Anson Funds' exit of
+2021 is the newest statement EDGAR's index lists on Genius Brands, whose proxy of
+2026 quotes Anson's 13G of 2026-02-17. A holder with an open statement is covered
+before any of this is asked.
+
+The other table-written holders the rebuild left (about 145 of 168) filed no
+statement on that issuer at all, by EDGAR's index: Vanguard Capital Management
+and Vanguard Portfolio Management (new in 2026), BlackRock, Inc. under its new
+CIK 2012383, State Street, Dimensional — the table is all there is.
+
 **A holder nobody looked up is not a holder EDGAR does not know (findings item
 155).** A table holder with no node is looked up among EDGAR's registrants by
 its exact name; a name the bulk list does not answer goes to the live index.

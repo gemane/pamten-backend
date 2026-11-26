@@ -65,6 +65,16 @@ class TestScrapeCompanyReportsLostSections:
     def test_a_complete_scrape_lost_nothing(self):
         assert self._scrape()["failed_sections"] == []
 
+    def test_the_scrape_hands_on_who_reported_no_position(self):
+        # the ownership table step leaves those holders out (findings item 159)
+        from app.scraper import sec_13dg
+
+        def owners(name, company_cik=None, exit_days=None, **_):
+            exit_days.extend([("The Vanguard Group", "2026-03-27"), ("The Vanguard Group", "2026-03-27")])
+            return []
+        with patch.object(sec_13dg, "fetch_ownership_filings", side_effect=owners):
+            assert self._scrape()["ownership_exits"] == [("The Vanguard Group", "2026-03-27")]
+
     def test_a_timed_out_browse_loses_the_owners(self):
         def browse(*a, **k):
             raise httpx.ReadTimeout("stalled")

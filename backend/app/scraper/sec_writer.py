@@ -1117,7 +1117,7 @@ def close_absent_from_table(owned_id: str, filing: dict, rows: list[dict]) -> in
 
 def read_table_and_close(owned_id: str, cik: str, submissions: dict | None = None,
                          write: bool = False, source_id: str | None = None,
-                         statements_for: str | None = None) -> dict:
+                         statements_for: str | None = None, exited: list[str] | None = None) -> dict:
     """The issuer's newest ownership table (DEF 14A / 10-K/A within
     `proxy_statement.TABLE_MAX_AGE_DAYS`) read and applied: {"filing", "rows",
     "closed", "written", "statements"}; no table filing → {"filing": None,
@@ -1134,7 +1134,12 @@ def read_table_and_close(owned_id: str, cik: str, submissions: dict | None = Non
     holder it names (`write_older_statements`, findings item 157). The whole-graph pass asks for it: it reads the tables of
     companies nobody scraped, whose statements the graph does not hold. The
     issuer's own scrape has just read them all. Not for a registered fund,
-    whose table is not written either."""
+    whose table is not written either.
+
+    ``exited``: the statements the caller read that report no position, as
+    (reporting person, filing date) — the issuer's own scrape, findings item
+    159; those of the year before the table (`recent_exits`) are not written
+    from it, as those of the statements read here are not."""
     from app.scraper import sec_client
     from app.scraper.proxy_statement import latest_table_filing, read_holder_rows, read_holder_table
     subs = submissions if submissions is not None else sec_client._submissions(cik)
@@ -1146,15 +1151,16 @@ def read_table_and_close(owned_id: str, cik: str, submissions: dict | None = Non
     written = since = older = None
     if write and source_id:
         table = read_holder_table(html)
+        day = str(filing["date"])[:10]
         if statements_for and not is_registered_fund(subs):
-            day = str(filing["date"])[:10]
             since = write_statements_since(owned_id, statements_for, cik, min(day, table.get("as_of") or day),
                                            source_id, subs)
             # … and the newest statement of each holder the table names, filed
             # before it (findings item 157)
             older = write_older_statements(owned_id, statements_for, cik, filing, table, source_id)
+        left = [*recent_exits(exited, day), *((since or {}).get("exited") or []), *((older or {}).get("exited") or [])]
         written = write_table_holders(owned_id, filing, table, source_id, subs,
-                                      exited=(since or {}).get("exited"),
+                                      exited=list(dict.fromkeys(left)),
                                       unasked=bool((older or {}).get("lost")))
     return {"filing": filing, "rows": len(rows), "written": written, "statements": since, "older": older,
             "closed": close_absent_from_table(owned_id, filing, rows)}
@@ -1355,6 +1361,29 @@ def _statement_filers(cik: str) -> list[dict] | None:
     return sorted(newest.values(), key=lambda f: f["file_date"], reverse=True)
 
 
+#: how long before a table an exit is still its holder's last word: a holder
+#: of 5 % amends its statement within 45 days after each calendar year's end
+#: (Rule 13d-2(b)), so a holder a table rightly names has a statement of the
+#: last year and some weeks
+EXIT_WEIGHT_DAYS = 410
+
+
+def recent_exits(exits, table_day: str) -> list[str]:
+    """The reporting persons of the statements reporting no position, as
+    (name, filing date), filed in the `EXIT_WEIGHT_DAYS` before the table's
+    `table_day` — or after it (findings item 159). The Vanguard Group's exits
+    of 2026-03-26 stand against tables of April; Anson Funds' exit of
+    2021-02-10 on Genius Brands does not against its proxy of 2026, which
+    quotes Anson's 13G of 2026-02-17 that EDGAR's index of the issuer's filers
+    does not list."""
+    from datetime import date, timedelta
+    try:
+        since = (date.fromisoformat(table_day) - timedelta(days=EXIT_WEIGHT_DAYS)).isoformat()
+    except ValueError:
+        return []
+    return list(dict.fromkeys(n for n, day in exits or [] if n and str(day)[:10] >= since))
+
+
 def write_older_statements(owned_id: str, name: str, cik: str, filing: dict, table: dict,
                            source_id: str) -> dict:
     """Read and write the newest Schedule 13D/G of every holder the issuer's
@@ -1375,13 +1404,27 @@ def write_older_statements(owned_id: str, name: str, cik: str, filing: dict, tab
     holds — then one or two per holder found there. A holder is matched by its
     whole name (`_same_holder`), a statement filed after the table is
     `write_statements_since`'s, and one the graph holds (by the filer's CIK)
-    is not read again. An exit among them says nothing: the table is newer.
+    is not read again.
 
-    Returns {"written", "asked", "lost"} — the holders written, whether the
-    index was asked, and whether it did not answer."""
+    An exit among them is the holder's last word, though filed before the
+    table (findings item 159): a proxy's 5 % row quotes the holder's own
+    statement, so a table that names a holder whose newest statement reports
+    no position quotes an older one. The Vanguard Group's 13G/As of 2026-03-26
+    and -27 report 0 % (its holdings went to Vanguard Capital Management and
+    Vanguard Portfolio Management); Lexeo's proxy of 2026-04-15 still lists it
+    at 5 % "based on … a Schedule 13G filed … on January 30, 2026", Dave's
+    from one of July 2025, QuantumScape's from one of February 2024 — 24
+    tables in the rebuild of 2026-11-26. Their reporting persons are returned
+    (``exited``) and not written from the table — an exit of the year before
+    the table only (`recent_exits`): an older one is not the holder's last
+    word, the index missed a newer statement.
+
+    Returns {"written", "asked", "lost", "exited"} — the holders written,
+    whether the index was asked, whether it did not answer, and the reporting
+    persons of the statements read that report no position."""
     from app.scraper import sec_13dg, sec_client
     from app.scraper.runner_sec import _write_ownership_filings
-    out = {"written": 0, "asked": False, "lost": False}
+    out = {"written": 0, "asked": False, "lost": False, "exited": []}
     rows = [r for r in table.get("rows") or [] if (r.get("stake_pct") or 0) >= TABLE_HOLDER_MIN_PCT]
     table_day = str(filing["date"])[:10]
     day = min(table_day, table.get("as_of") or table_day)
@@ -1401,9 +1444,11 @@ def write_older_statements(owned_id: str, name: str, cik: str, filing: dict, tab
                and any(_same_holder(f["name"], n) for r in open_rows for n in r["names"])]
     if not entries:
         return out
-    filings = sec_13dg.fetch_ownership_filings(name, cik, entries=entries)
+    exits: list[tuple[str, str]] = []
+    filings = sec_13dg.fetch_ownership_filings(name, cik, entries=entries, exit_days=exits)
     _write_ownership_filings(owned_id, name, filings, source_id, [])
     out["written"] = len(filings)
+    out["exited"] = recent_exits(exits, table_day)
     for f in filings:
         log.info("SEC: %r's %s of %s on %s written — named in its %s of %s, filed before it",
                  f.get("investor_name"), f.get("filing_type"), f.get("file_date"), owned_id,
@@ -1432,10 +1477,12 @@ def write_table_holders(owned_id: str, filing: dict, table: dict, source_id: str
     count the table wins — beneficial, not of record (user, 2026-11-10); the
     Form 4 reader then yields to it (`stated_by_13dg`).
 
-    A holder that left AFTER the table is not written either (``exited``,
-    findings item 116): the reporting persons of the statements filed since
-    that report no position, as the whole-graph pass reads them for a company
-    nobody scraped (`write_statements_since`). MiniMed's proxy of 2026-08-21
+    A holder that left is not written either (``exited``, findings items 116
+    and 159): the reporting persons of the statements that report no position
+    — filed since the table, as the whole-graph pass reads them for a company
+    nobody scraped (`write_statements_since`), or the holder's newest one
+    filed before it (`write_older_statements`; the issuer's own scrape gives
+    those it read): the table then quotes an older statement. MiniMed's proxy of 2026-08-21
     names Medtronic with 89.86 %; the split-off closed on 2026-10-15 and
     Medtronic's 13G/A of 2026-10-16 states 0 % — a statement no scrape had
     read, so the table's row was written beside FMR's 13.5 % and Capital

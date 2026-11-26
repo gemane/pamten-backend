@@ -83,3 +83,32 @@ def test_a_hit_without_a_date_or_an_accession_is_passed_over():
     bad = {"_source": {"form": "SC 13G", "ciks": [NEWMARK, "0000000007"], "display_names": ["x", "y"]}}
     got, _ = _filers(_page([bad, _hit("2025-10-06", "SC 13G", "0000000008", "Good", "a-8")]))
     assert [f["name"] for f in got] == ["Good"]
+
+
+class TestRecentExits:
+    """Findings item 159: an exit is a holder's last word against a table of
+    the year after it, not years later (Anson Funds on Genius Brands)."""
+
+    def test_an_exit_of_the_last_13g_year_counts(self):
+        from app.scraper.sec_writer import recent_exits
+        assert recent_exits([("The Vanguard Group", "2026-03-26")], "2026-04-15") == ["The Vanguard Group"]
+
+    def test_an_exit_after_the_table_counts(self):
+        from app.scraper.sec_writer import recent_exits
+        assert recent_exits([("Medtronic plc", "2026-10-16")], "2026-08-21") == ["Medtronic plc"]
+
+    def test_an_exit_years_before_does_not(self):
+        from app.scraper.sec_writer import recent_exits
+        assert recent_exits([("Anson Funds Management LP", "2021-02-10")], "2026-09-15") == []
+
+    def test_the_edge_of_the_window(self):
+        from app.scraper.sec_writer import EXIT_WEIGHT_DAYS, recent_exits
+        from datetime import date, timedelta
+        edge = (date(2026, 4, 15) - timedelta(days=EXIT_WEIGHT_DAYS)).isoformat()
+        before = (date(2026, 4, 15) - timedelta(days=EXIT_WEIGHT_DAYS + 1)).isoformat()
+        assert recent_exits([("A", edge), ("B", before)], "2026-04-15") == ["A"]
+
+    def test_names_once_and_no_table_date(self):
+        from app.scraper.sec_writer import recent_exits
+        assert recent_exits([("A", "2026-03-01"), ("A", "2026-03-02")], "2026-04-01") == ["A"]
+        assert recent_exits([("A", "2026-03-01")], "") == []
