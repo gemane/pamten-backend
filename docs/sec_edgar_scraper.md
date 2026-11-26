@@ -2185,6 +2185,35 @@ owners (`runner_sec._owners_were_lost`); the class ends, which do not depend on
 them, are applied either way. The retry of a partial company applies the table,
 and so does the whole-graph pass, which reads the statements itself.
 
+**A table holder's own statement comes first (findings item 157).** For a company
+nobody scraped, the whole-graph pass used to know only the statements filed
+*since* the table (item 116). But a holder's yearly 13G/A is due in February and
+the proxy follows in March or April, so its newest statement is as a rule a few
+weeks **older** than the table — and was never read. Measured on dev
+(2026-11-26): of 525 holdings the pass had written "named in its DEF 14A, in no
+13D/G" at 336 never-scraped companies, **501 were of a holder with a statement
+of its own on that company** (BlackRock on Assurant: table 6.4 %, 13G/A 6.3 %;
+Intel on Mobileye; Endeavor on TKO). The table row is the weaker reading — no
+statement date, often no class, no co-filers — and where a controller reports
+its vehicle's block the rows overlap: Newmark's table lists Cantor Fitzgerald,
+L.P. (99.1 % of Class B) and CF Group Management (100 %), 199 % of the class,
+while Cantor's 13D/A of 2025-10-06 names CF Group Management as its co-filer.
+
+So before the table's rows are written, `write_older_statements` asks **who has
+filed a 13D/G about the issuer** — one request to EDGAR's full-text index
+(`_statement_filers`: `efts search-index?ciks=<issuer>&forms=SC 13D,…`), which
+lists each filing with every party's CIK and name; the 13D/G feed names no
+filer, and reading an issuer's whole feed costs about 80 requests. Each holder
+the table names that is found there (by its whole name, `_same_holder`) has its
+newest statement read and written as a scrape of the issuer would; the row is
+then covered, and a co-filer's row with it. Not asked when statements the graph
+holds cover every row, and not by the issuer's own scrape, which has read its
+statements. A statement filed after the table stays `write_statements_since`'s.
+An index that does not answer is not "nobody filed": the rows are held back
+(`lost`) and the pass reads the table again at its end, as for a lost name
+search. Cost, measured: 409 index requests for the 336 companies and about two
+per statement read — roughly 1,500 requests a rebuild.
+
 **A holder nobody looked up is not a holder EDGAR does not know (findings item
 155).** A table holder with no node is looked up among EDGAR's registrants by
 its exact name; a name the bulk list does not answer goes to the live index.

@@ -892,8 +892,9 @@ def cmd_close_absent_from_table(args):
     for line in res["lines"]:
         print(f"  {line}")
     print(f"Closed {res['closed']} 13D/G holdings their issuer's table no longer names, wrote "
-          f"{res['written']} holders it names and no 13D/G covers and {res['statements']} holders of "
-          f"13D/G statements filed since the tables; {res['exited']} table holders reported no position "
+          f"{res['written']} holders it names and no 13D/G covers, {res['statements']} holders of "
+          f"13D/G statements filed since the tables and {res.get('older', 0)} of statements filed before "
+          f"them by holders they name; {res['exited']} table holders reported no position "
           f"since and were not written "
           f"({res['tables']} tables of {res['read']} companies read, {res['failed']} failed)")
     if res.get("lost"):
