@@ -10,6 +10,7 @@ Source, rate limits and licence: see `sec_edgar`.
 
 import re
 import logging
+from dataclasses import dataclass, field
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -130,6 +131,211 @@ def _ownership_feed_entries(company_cik: str):
              OWNERSHIP_FEED_MAX_PAGES)
 
 
+@dataclass
+class _Statement:
+    """What one 13D/G statement says, as far as it was read. Every field starts
+    empty: a cover whose document could not be fetched stays as it is, and the
+    loop tells "nothing read" from "nothing held"."""
+    pct: float | None = None
+    voting: float | None = None
+    reported: float | None = None  # row 13 as the filer stated it, before the split
+    is_individual: bool | None = None
+    share_class: str | None = None
+    shares: int | None = None
+    shares_total: int | None = None
+    voting_shares: int | None = None
+    event_date: str | None = None
+    final: str | bool | None = None  # the filer's last report (Item 5), findings item 35
+    group_members: list[dict] = field(default_factory=list)
+    # How the numbers below were read: a structured schedule's named XML
+    # fields, or an older cover page's numbered rows found in its text
+    # (`form`: the labels are the SEC's, only the figure is read). The two
+    # paths could not be told apart afterwards (both cite the index page),
+    # and the text path is where every misread 13D/G came from.
+    read_from: str | None = None
+    cover_cusip: str | None = None  # the issuer's CUSIP as the cover states it
+    names: list[str] = field(default_factory=list)  # every reporting person of this statement
+    passive: bool = False  # co-filers who report the same shares (no bloc)
+    voting_pact: bool = False  # co-filers who vote each other's shares (item 103)
+
+
+def _filer_of(raw: dict, company_cik: str) -> dict | None:
+    """Who filed one statement of the feed: {investor_name, investor_cik,
+    index_url, primary_url, xml, person}; None when the filing names nobody.
+    A structured schedule is read here (its XML names the filer), an older one
+    only as far as its index page."""
+    xml = None
+    if sec_13dg_xml._is_structured(raw["form_type"]) and raw.get("accession"):
+        xml = sec_13dg_xml._fetch_13dg_xml(company_cik, raw["accession"])
+
+    if xml:
+        # The XML names the filer, so the index page is not needed at all —
+        # one request instead of two — and `_filing_index_url` still gives a
+        # readable link for provenance without fetching it.
+        person = sec_13dg_xml._select_person(xml, xml.get("filer_cik"), sec_filer.fetch_filer_name)
+        if person is None:
+            return None
+        investor_name = person["name"]
+        # `_select_person` gave the block the filer's CIK only where the
+        # block IS the filer — never the filer's CIK on another party's name
+        investor_cik = sec_client._cik_int(person["cik"]).zfill(10) if person.get("cik") else ""
+
+        index_url = sec_client._filing_index_url(company_cik, raw["accession"])
+        primary_url = None
+    else:
+        investor_name, investor_cik, primary_url = sec_13dg_text._fetch_filing_index(raw["index_url"])
+        index_url = raw["index_url"]
+        if not investor_name or not investor_cik:
+            return None
+    return {"investor_name": investor_name, "investor_cik": investor_cik, "index_url": index_url,
+            "primary_url": primary_url, "xml": xml, "person": person if xml else None}
+
+
+def _read_structured(inv: dict, company_name: str, company_cik: str, known_names: list[str]) -> "_Statement | None":
+    """A structured schedule (the XML filed since December 2024) read from its
+    named fields; None when it is about another issuer."""
+    st = _Statement()
+    xml, person = inv["xml"], inv["person"]
+    st.read_from = READ_FIELD
+    if not sec_13dg_xml._xml_issuer_matches(xml, company_cik, known_names):
+        log.info("SEC EDGAR: dropping filing by %r — its issuer is %r (CIK %s), not %r",
+                 inv["investor_name"], xml.get("issuer_name"),
+                 xml.get("issuer_cik"), company_name)
+        return None
+    st.reported = person.get("percent")
+    st.cover_cusip = xml.get("issuer_cusip")
+    st.pct, st.voting = sec_13dg_xml._stake_from_person(xml, person)
+    st.share_class = xml.get("class_title")
+    st.event_date = xml.get("event_date")
+    st.final = xml.get("final_report")
+    rows = {k: person[k] for k in
+                     ("sole_voting", "shared_voting",
+                      "sole_dispositive", "shared_dispositive")
+                     if person.get(k) is not None}
+    # alone or in a bloc decides what the shared rows are (see _shares_held)
+    alone = not sec_13dg_text._co_filers_form_a_bloc(xml.get("schedule") or "13D",
+                                               len(xml.get("persons") or []))
+    st.names = [o["name"] for o in xml.get("persons") or [] if o.get("name")]
+    st.passive = alone
+    st.shares = sec_13dg_xml._shares_held(rows, person.get("aggregate"), in_group=not alone)
+    st.shares_total = (sec_13dg_text._shares_outstanding(xml.get("comment_text") or "")
+                     or sec_13dg_xml._derive_total(person.get("aggregate"), person.get("percent")))
+    st.voting_shares = sec_13dg_xml._shares_voted(person.get("aggregate"), st.voting)
+    st.is_individual = sec_13dg_text._individual_by_code(person.get("type_code"))
+    st.group_members = [{"name": o["name"], "cik": o["cik"], "source": "xml",
+                      # Item 8's code: IN means a human being. Stated by
+                      # the filer, so the writer need not guess from the
+                      # shape of the name.
+                      "type_code": o.get("type_code")}
+                     for o in xml["persons"] if o is not person]
+    # a group of co-filers is a voting pact only when the statement
+    # names an agreement over the votes (findings item 103)
+    st.voting_pact = sec_13dg_text._is_voting_pact(xml.get("schedule") or "13D", len(xml.get("persons") or []),
+                                    xml.get("raw_text"))
+    return st
+
+
+def _read_cover(inv: dict, company_name: str, company_cik: str, known_names: list[str]) -> "_Statement | None":
+    """An older schedule read from its cover page (`form`: the labels are the
+    SEC's, only the figure is read); None when it is about another issuer. A
+    document that cannot be fetched leaves the statement as far as it was
+    read — empty, when the document itself was lost."""
+    st = _Statement()
+    try:
+        text = sec_client._get_text(inv["primary_url"])
+        issuer = sec_13dg_text._parse_issuer_from_text(text)
+        if not sec_13dg_text._issuer_matches(known_names, issuer):
+            log.info(
+                "SEC EDGAR: dropping filing by %r — its issuer is %r, not %r",
+                inv["investor_name"], issuer, company_name)
+            return None
+        # Per-reporter fields come from THIS filer's cover page — a
+        # joint filing has one per reporting person, and the first
+        # page's numbers belong to someone else.
+        cover = sec_13dg_text._cover_page_for(text, inv["investor_name"])
+        st.read_from = READ_FORM
+        st.pct = sec_13dg_text._parse_percent_from_text(cover)
+        st.reported = st.pct
+        bloc = sec_13dg_text._co_filers_form_a_bloc(inv["form_type"], sec_13dg_text._cover_page_count(text))
+        st.names = sec_13dg_text._cover_page_names(text) or [inv["investor_name"]]
+        st.passive = not bloc
+        st.voting_pact = sec_13dg_text._is_voting_pact(inv["form_type"], sec_13dg_text._cover_page_count(text), text)
+        st.pct, st.voting = sec_13dg_text._own_stake_and_voting(cover, st.pct, document=text, in_group=bloc)
+        st.is_individual = sec_13dg_text._parse_reporter_type_from_text(cover)
+        st.share_class = sec_13dg_text._parse_class_title_from_text(text)
+        st.event_date = sec_13dg_text._parse_event_date_from_text(text)
+        st.final = sec_13dg_text._parse_final_report_from_text(text)
+        st.cover_cusip = sec_13dg_text._parse_cusip_from_text(text)
+        aggregate = sec_13dg_text._parse_aggregate_from_text(cover)
+        st.shares = sec_13dg_xml._shares_held(sec_13dg_text._parse_power_rows(cover), aggregate, in_group=bloc)
+        st.shares_total = sec_13dg_text._shares_outstanding(text)
+        st.voting_shares = sec_13dg_xml._shares_voted(aggregate, st.voting)
+        if st.voting and inv.get("accession"):
+            # A bloc without an XML membership list: the SGML header
+            # names the co-filers. Only fetched for the few filings that
+            # actually report one — 3 of AB InBev's 40, not all 40.
+            st.group_members = sec_13dg_xml._sgml_group_members(company_cik, inv["accession"])
+    except httpx.HTTPError:
+        pass
+    return st
+
+
+def _holding(inv: dict, st: "_Statement", since: str | None, since_basis: str | None, until: str | None) -> dict:
+    """One holder of the issuer, as `fetch_ownership_filings` returns it."""
+    return {
+        "investor_name":    inv["investor_name"].title(),
+        "investor_cik":     inv["investor_cik"],
+        "form_type":        inv["form_type"],
+        "file_date":        inv["file_date"],
+        "period_of_report": None,
+        # The issuer's security id from the schedule cover — the key 13F
+        # info tables match on, so a 13D/G scrape leaves the company ready
+        # for an exact `sec-13f` run.
+        "issuer_cusip":     st.cover_cusip,
+        "filing_type":      sec_client._short_form(inv["form_type"]),
+        # which reader the numbers came through (edge_schema.READ_GRADES)
+        "read_from":        st.read_from,
+        "stake_percent":    st.pct,
+        # The bloc a group member votes within — see _own_stake_and_voting.
+        # None for a lone filer, whose stake already is its whole position.
+        "voting_power_pct": st.voting,
+        "ownership_type":   derive_ownership_type(st.pct, inv["form_type"]),
+        # The security this percentage is a percentage OF.
+        "share_class":      st.share_class,
+        # The counts behind the percentage, so the arithmetic can be seen
+        # and redone: a stake is `shares / shares_outstanding`.
+        "shares":           st.shares,
+        "shares_outstanding": st.shares_total,
+        # The day the count and the percentage were as stated (the
+        # cover's date of event) — what they are "as of".
+        "event_date":       st.event_date,
+        # When the holding began, as far as this filing can say: an
+        # original schedule states it, an amendment only bounds it.
+        "since":            since,
+        "since_basis":      since_basis,
+        # The bloc's own count. Belongs to the group, repeated by every
+        # member — never summed, exactly like voting_power_pct.
+        "voting_shares":    st.voting_shares,
+        "is_individual":    st.is_individual,   # None = unknown (use name heuristic)
+        # Set when a NEWER filing by this investor reported nothing: the
+        # position is history, and the writer closes the edge with it.
+        "until":            until,
+        # The filer's last report — Item 5 ticked, "5 percent or less": the
+        # holding stays, dimmed from this day, never closed (findings item 35)
+        "final_report":     sec_13dg_text._final_since(st.final, st.event_date, inv["file_date"]),
+        # Provenance: the filing index page (readable), with the primary doc
+        # as a fallback. file_date is the filing's date.
+        "source_url":       inv.get("index_url") or inv.get("primary_url"),
+        # Co-filers on this schedule — the filing group. Returned for the
+        # caller to use; deliberately NOT written to the graph (see the
+        # module docstring), because membership is not ownership.
+        "group_members":    st.group_members,
+        # whether they form a voting pact — the only joint schedule the
+        # issuer side draws as a group (findings item 103)
+        "voting_pact":      st.voting_pact,
+    }
+
+
 def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                             limit: int = 20, entries=None, exits: list | None = None) -> list:
     """
@@ -208,29 +414,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             break
         opened += 1
 
-        xml = None
-        if sec_13dg_xml._is_structured(raw["form_type"]) and raw.get("accession"):
-            xml = sec_13dg_xml._fetch_13dg_xml(company_cik, raw["accession"])
-
-        if xml:
-            # The XML names the filer, so the index page is not needed at all —
-            # one request instead of two — and `_filing_index_url` still gives a
-            # readable link for provenance without fetching it.
-            person = sec_13dg_xml._select_person(xml, xml.get("filer_cik"), sec_filer.fetch_filer_name)
-            if person is None:
-                continue
-            investor_name = person["name"]
-            # `_select_person` gave the block the filer's CIK only where the
-            # block IS the filer — never the filer's CIK on another party's name
-            investor_cik  = sec_client._cik_int(person["cik"]).zfill(10) if person.get("cik") else ""
-
-            index_url     = sec_client._filing_index_url(company_cik, raw["accession"])
-            primary_url   = None
-        else:
-            investor_name, investor_cik, primary_url = sec_13dg_text._fetch_filing_index(raw["index_url"])
-            index_url = raw["index_url"]
-            if not investor_name or not investor_cik:
-                continue
+        inv = _filer_of(raw, company_cik)
+        if inv is None:
+            continue
+        investor_name, investor_cik = inv["investor_name"], inv["investor_cik"]
 
         if not investor_cik or investor_cik in seen_investor_ciks:
             continue
@@ -243,115 +430,17 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         if known_names is None:
             known_names = [company_name] + former_names.names(sec_filer.fetch_former_names(company_cik))
 
-        inv = {
-            "investor_name": investor_name,
-            "investor_cik":  investor_cik,
-            "form_type":     raw["form_type"],
-            "file_date":     raw["file_date"],
-            "primary_url":   primary_url,
-            "index_url":     index_url,
-            "accession":     raw.get("accession"),
-            "xml":           xml,
-            "person":        person if xml else None,
-        }
+        inv.update(form_type=raw["form_type"], file_date=raw["file_date"], accession=raw.get("accession"))
 
-        pct           = None
-        voting        = None
-        reported      = None      # row 13 as the filer stated it, before the split
-        is_individual = None
-        share_class   = None
-        shares        = None
-        shares_total  = None
-        voting_shares = None
-        event_date    = None
-        final         = None      # the filer's last report (Item 5), findings item 35
-        group_members: list[dict] = []
-        # How the numbers below were read: a structured schedule's named XML
-        # fields, or an older cover page's numbered rows found in its text
-        # (`form`: the labels are the SEC's, only the figure is read). The two
-        # paths could not be told apart afterwards (both cite the index page),
-        # and the text path is where every misread 13D/G came from.
-        read_from     = None
-        cover_cusip   = None      # the issuer's CUSIP as the cover states it
-        names: list[str] = []     # every reporting person of this statement
-        passive       = False     # co-filers who report the same shares (no bloc)
-        voting_pact   = False     # co-filers who vote each other's shares (item 103)
-
+        # How the numbers were read — a structured schedule's named XML fields, or
+        # an older cover page's numbered rows found in its text — is the reader's
+        # to say (`read_from`): the two paths could not be told apart afterwards
+        # (both cite the index page), and the text path is where every misread
+        # 13D/G came from.
         if inv.get("xml"):
-            xml, person = inv["xml"], inv["person"]
-            read_from     = READ_FIELD
-            if not sec_13dg_xml._xml_issuer_matches(xml, company_cik, known_names):
-                log.info("SEC EDGAR: dropping filing by %r — its issuer is %r (CIK %s), not %r",
-                         inv["investor_name"], xml.get("issuer_name"),
-                         xml.get("issuer_cik"), company_name)
-                continue
-            reported      = person.get("percent")
-            cover_cusip   = xml.get("issuer_cusip")
-            pct, voting   = sec_13dg_xml._stake_from_person(xml, person)
-            share_class   = xml.get("class_title")
-            event_date    = xml.get("event_date")
-            final         = xml.get("final_report")
-            rows          = {k: person[k] for k in
-                             ("sole_voting", "shared_voting",
-                              "sole_dispositive", "shared_dispositive")
-                             if person.get(k) is not None}
-            # alone or in a bloc decides what the shared rows are (see _shares_held)
-            alone         = not sec_13dg_text._co_filers_form_a_bloc(xml.get("schedule") or "13D",
-                                                       len(xml.get("persons") or []))
-            names         = [o["name"] for o in xml.get("persons") or [] if o.get("name")]
-            passive       = alone
-            shares        = sec_13dg_xml._shares_held(rows, person.get("aggregate"), in_group=not alone)
-            shares_total  = (sec_13dg_text._shares_outstanding(xml.get("comment_text") or "")
-                             or sec_13dg_xml._derive_total(person.get("aggregate"), person.get("percent")))
-            voting_shares = sec_13dg_xml._shares_voted(person.get("aggregate"), voting)
-            is_individual = sec_13dg_text._individual_by_code(person.get("type_code"))
-            group_members = [{"name": o["name"], "cik": o["cik"], "source": "xml",
-                              # Item 8's code: IN means a human being. Stated by
-                              # the filer, so the writer need not guess from the
-                              # shape of the name.
-                              "type_code": o.get("type_code")}
-                             for o in xml["persons"] if o is not person]
-            # a group of co-filers is a voting pact only when the statement
-            # names an agreement over the votes (findings item 103)
-            voting_pact   = sec_13dg_text._is_voting_pact(xml.get("schedule") or "13D", len(xml.get("persons") or []),
-                                            xml.get("raw_text"))
+            st = _read_structured(inv, company_name, company_cik, known_names)
         elif inv.get("primary_url"):
-            try:
-                text          = sec_client._get_text(inv["primary_url"])
-                issuer        = sec_13dg_text._parse_issuer_from_text(text)
-                if not sec_13dg_text._issuer_matches(known_names, issuer):
-                    log.info(
-                        "SEC EDGAR: dropping filing by %r — its issuer is %r, not %r",
-                        inv["investor_name"], issuer, company_name)
-                    continue
-                # Per-reporter fields come from THIS filer's cover page — a
-                # joint filing has one per reporting person, and the first
-                # page's numbers belong to someone else.
-                cover         = sec_13dg_text._cover_page_for(text, inv["investor_name"])
-                read_from     = READ_FORM
-                pct           = sec_13dg_text._parse_percent_from_text(cover)
-                reported      = pct
-                bloc          = sec_13dg_text._co_filers_form_a_bloc(inv["form_type"], sec_13dg_text._cover_page_count(text))
-                names         = sec_13dg_text._cover_page_names(text) or [inv["investor_name"]]
-                passive       = not bloc
-                voting_pact   = sec_13dg_text._is_voting_pact(inv["form_type"], sec_13dg_text._cover_page_count(text), text)
-                pct, voting    = sec_13dg_text._own_stake_and_voting(cover, pct, document=text, in_group=bloc)
-                is_individual = sec_13dg_text._parse_reporter_type_from_text(cover)
-                share_class   = sec_13dg_text._parse_class_title_from_text(text)
-                event_date    = sec_13dg_text._parse_event_date_from_text(text)
-                final         = sec_13dg_text._parse_final_report_from_text(text)
-                cover_cusip   = sec_13dg_text._parse_cusip_from_text(text)
-                aggregate     = sec_13dg_text._parse_aggregate_from_text(cover)
-                shares        = sec_13dg_xml._shares_held(sec_13dg_text._parse_power_rows(cover), aggregate, in_group=bloc)
-                shares_total  = sec_13dg_text._shares_outstanding(text)
-                voting_shares = sec_13dg_xml._shares_voted(aggregate, voting)
-                if voting and inv.get("accession"):
-                    # A bloc without an XML membership list: the SGML header
-                    # names the co-filers. Only fetched for the few filings that
-                    # actually report one — 3 of AB InBev's 40, not all 40.
-                    group_members = sec_13dg_xml._sgml_group_members(company_cik, inv["accession"])
-            except httpx.HTTPError:
-                pass
+            st = _read_cover(inv, company_name, company_cik, known_names)
         else:
             # Neither a parsed XML nor a cover page to check: admitting this
             # would be an unverified filing, which is how the Eve Holding rows
@@ -362,7 +451,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                      inv["investor_name"])
             continue
 
-        if reported is None and pct is None and not voting:
+        if st is None:
+            continue
+
+        if st.reported is None and st.pct is None and not st.voting:
             # Nothing READ — not "nothing held". This used to count as an exit
             # and closed a live holding whenever a cover defeated the parser.
             # The investor is not marked seen, so its older, readable filing
@@ -371,7 +463,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                      inv["investor_name"], inv["file_date"])
             continue
 
-        if not pct and not voting:
+        if not st.pct and not st.voting:
             # Nothing held and no bloc voted: an exit, not a holding. `voting`
             # is what separates this from a group member who can dispose of
             # nothing alone — BRC reports a null stake beside a real 52.3% bloc
@@ -383,21 +475,21 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # is read before it, so the last one assigned is the oldest: the
             # day the position actually ended (the cover's date of event when
             # it states one), not a later repetition of the exit.
-            closed_since[inv["investor_cik"]] = event_date or inv["file_date"]
+            closed_since[inv["investor_cik"]] = st.event_date or inv["file_date"]
             if exits is not None:
-                exits.extend(names or [inv["investor_name"]])
-            if passive:
-                group_closed.append((sec_13dg_text._co_filer_names(names, inv["investor_name"]),
-                                     event_date or inv["file_date"]))
+                exits.extend(st.names or [inv["investor_name"]])
+            if st.passive:
+                group_closed.append((sec_13dg_text._co_filer_names(st.names, inv["investor_name"]),
+                                     st.event_date or inv["file_date"]))
             log.info("SEC EDGAR: %r reported no position on %s — closing, not writing 0%%",
                      inv["investor_name"], inv["file_date"])
             continue
 
-        since, since_basis = sec_13dg_text._stake_start(inv["form_type"], event_date, inv["file_date"])
+        since, since_basis = sec_13dg_text._stake_start(inv["form_type"], st.event_date, inv["file_date"])
 
         seen_investor_ciks.add(inv["investor_cik"])
-        if passive:
-            stated_by.extend(sec_13dg_text._co_filer_names(names, inv["investor_name"]))
+        if st.passive:
+            stated_by.extend(sec_13dg_text._co_filer_names(st.names, inv["investor_name"]))
         # A newer exit of the same statement filed under another member's CIK
         # closes this one; the oldest such exit is the last one recorded.
         until = closed_since.get(inv["investor_cik"])
@@ -406,60 +498,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                           if sec_13dg_text._named_in(inv["investor_name"], n)), None)
         log.info(
             "SEC EDGAR: investor %r (CIK=%s) stake=%s is_individual=%s",
-            inv["investor_name"], inv["investor_cik"], pct, is_individual,
+            inv["investor_name"], inv["investor_cik"], st.pct, st.is_individual,
         )
-        results.append({
-            "investor_name":    inv["investor_name"].title(),
-            "investor_cik":     inv["investor_cik"],
-            "form_type":        inv["form_type"],
-            "file_date":        inv["file_date"],
-            "period_of_report": None,
-            # The issuer's security id from the schedule cover — the key 13F
-            # info tables match on, so a 13D/G scrape leaves the company ready
-            # for an exact `sec-13f` run.
-            "issuer_cusip":     cover_cusip,
-            "filing_type":      sec_client._short_form(inv["form_type"]),
-            # which reader the numbers came through (edge_schema.READ_GRADES)
-            "read_from":        read_from,
-            "stake_percent":    pct,
-            # The bloc a group member votes within — see _own_stake_and_voting.
-            # None for a lone filer, whose stake already is its whole position.
-            "voting_power_pct": voting,
-            "ownership_type":   derive_ownership_type(pct, inv["form_type"]),
-            # The security this percentage is a percentage OF.
-            "share_class":      share_class,
-            # The counts behind the percentage, so the arithmetic can be seen
-            # and redone: a stake is `shares / shares_outstanding`.
-            "shares":           shares,
-            "shares_outstanding": shares_total,
-            # The day the count and the percentage were as stated (the
-            # cover's date of event) — what they are "as of".
-            "event_date":       event_date,
-            # When the holding began, as far as this filing can say: an
-            # original schedule states it, an amendment only bounds it.
-            "since":            since,
-            "since_basis":      since_basis,
-            # The bloc's own count. Belongs to the group, repeated by every
-            # member — never summed, exactly like voting_power_pct.
-            "voting_shares":    voting_shares,
-            "is_individual":    is_individual,   # None = unknown (use name heuristic)
-            # Set when a NEWER filing by this investor reported nothing: the
-            # position is history, and the writer closes the edge with it.
-            "until":            until,
-            # The filer's last report — Item 5 ticked, "5 percent or less": the
-            # holding stays, dimmed from this day, never closed (findings item 35)
-            "final_report":     sec_13dg_text._final_since(final, event_date, inv["file_date"]),
-            # Provenance: the filing index page (readable), with the primary doc
-            # as a fallback. file_date is the filing's date.
-            "source_url":       inv.get("index_url") or inv.get("primary_url"),
-            # Co-filers on this schedule — the filing group. Returned for the
-            # caller to use; deliberately NOT written to the graph (see the
-            # module docstring), because membership is not ownership.
-            "group_members":    group_members,
-            # whether they form a voting pact — the only joint schedule the
-            # issuer side draws as a group (findings item 103)
-            "voting_pact":      voting_pact,
-        })
+        results.append(_holding(inv, st, since, since_basis, until))
 
     _restate_against_newest_denominator(results)
     log.info("SEC EDGAR: found %d investors for CIK=%s", len(results), company_cik)
