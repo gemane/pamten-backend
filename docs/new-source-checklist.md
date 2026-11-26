@@ -1818,6 +1818,19 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       class-less, Mobileye at 101.4 %). When a field is added to one reader, grep the
       other for it; when a field is missing on an edge, open the filing before
       concluding the source does not state it.
+- [ ] **"Since the document" is not "everything the document does not say" — check the
+      filing calendar.** A rule that completes one document with what was filed after
+      it assumes the other documents come later. The ownership-table pass read the
+      13D/G statements filed since an issuer's proxy and wrote the table's other
+      holders as "in no 13D/G"; but the yearly 13G/A is due in February and the proxy
+      comes in March or April, so a holder's newest statement is nearly always a few
+      weeks older than the table: 501 of 525 such holders had one (findings item 157,
+      measured 2026-11-26). Twice in that analysis "the source does not say" was
+      concluded from our own data — the filing "names no class", "only the footnotes
+      tell who controls whom" — and twice the filing said it. Before writing that a
+      source is silent, open the source; and before paying for a full read (an
+      issuer's 13D/G feed: 80 requests), look for the index that lists the answer in
+      one (`efts search-index?ciks=…&forms=…`).
 - [ ] **A step after a load goes into the one list, `app/finishing.py`.** What the
       finished graph needs (merge across sources, close what a dissolution ended, mark
       shortcuts, search index, geocode, the passes after a batch of scrapes) is a

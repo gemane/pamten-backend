@@ -850,7 +850,9 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
     a stall of EDGAR's is usually over. What is still lost then is counted
     (`lost`) and said in a line — a holder nobody looked up is not a holder
     EDGAR does not know.
-    Returns {companies, tables, read, failed, closed, written, statements, exited, lost, lines}."""
+    So is the newest statement, filed BEFORE the table, of each holder it
+    names (findings item 157, `write_older_statements`): counted `older`.
+    Returns {companies, tables, read, failed, closed, written, statements, older, exited, lost, lines}."""
     from app.db.arcadedb import run_sql
     from app.scraper.graph_writer import _ensure_source
     from app.scraper.maintenance import restatement_family
@@ -863,7 +865,7 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
     if limit:
         issuers = issuers[:limit]
     out: dict = {"companies": len(issuers), "tables": 0, "read": 0, "failed": 0, "closed": 0, "written": 0,
-                 "statements": 0, "exited": 0, "lost": 0, "lines": []}
+                 "statements": 0, "older": 0, "exited": 0, "lost": 0, "lines": []}
     again: list[tuple] = []          # (issuer, its first result): a holder's name search was lost
     # the same holders stand at company after company: their records stay at
     # hand for the run (`filer_records_for_a_pass`, findings item 135)
@@ -884,6 +886,11 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
                 out["statements"] += since["written"]
                 out["lines"].append(f"{name}: {since['written']} statement holders written — 13D/G filed since its "
                                     f"{res['filing']['form']} of {res['filing']['date']}")
+            before = (res.get("older") or {}).get("written") or 0
+            if before:
+                out["older"] += before
+                out["lines"].append(f"{name}: {before} statement holders written — their newest 13D/G, filed before "
+                                    f"its {res['filing']['form']} of {res['filing']['date']}, which names them")
             left = (res.get("written") or {}).get("exited") or 0
             if left:
                 out["exited"] += left
@@ -913,10 +920,14 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
             added = max(0, ((res.get("written") or {}).get("written") or 0) - (first["written"].get("written") or 0))
             out["written"] += added
             out["lost"] += still
+            # … and the statements it could read now that the index answered (item 157)
+            before = (res.get("older") or {}).get("written") or 0
+            out["older"] += before
             form, day = first["filing"]["form"], first["filing"]["date"]
             out["lines"].append(
                 f"{name}: {lost} holder(s) of its {form} of {day} not looked up — the name search was lost to "
-                f"the network; read again: {added} written, " + (f"{still} STILL NOT LOOKED UP" if still else "none lost"))
+                f"the network; read again: {added} written, " + (f"{still} STILL NOT LOOKED UP" if still else "none lost")
+                + (f"; {before} statement holders written" if before else ""))
     return out
 
 
@@ -1119,7 +1130,8 @@ def read_table_and_close(owned_id: str, cik: str, submissions: dict | None = Non
     ``statements_for``: the issuer's name — first read and write the 13D/G
     statements filed since the table (`write_statements_since`, findings item
     116), and keep a holder that reported no position since out of the
-    table's rows. The whole-graph pass asks for it: it reads the tables of
+    table's rows; then the newest statement, filed before the table, of each
+    holder it names (`write_older_statements`, findings item 157). The whole-graph pass asks for it: it reads the tables of
     companies nobody scraped, whose statements the graph does not hold. The
     issuer's own scrape has just read them all. Not for a registered fund,
     whose table is not written either."""
@@ -1128,19 +1140,23 @@ def read_table_and_close(owned_id: str, cik: str, submissions: dict | None = Non
     subs = submissions if submissions is not None else sec_client._submissions(cik)
     filing = latest_table_filing(subs)
     if not filing:
-        return {"filing": None, "rows": 0, "closed": 0, "written": None, "statements": None}
+        return {"filing": None, "rows": 0, "closed": 0, "written": None, "statements": None, "older": None}
     html = sec_client._get_text(filing["url"])
     rows = read_holder_rows(html)
-    written = since = None
+    written = since = older = None
     if write and source_id:
         table = read_holder_table(html)
         if statements_for and not is_registered_fund(subs):
             day = str(filing["date"])[:10]
             since = write_statements_since(owned_id, statements_for, cik, min(day, table.get("as_of") or day),
                                            source_id, subs)
+            # … and the newest statement of each holder the table names, filed
+            # before it (findings item 157)
+            older = write_older_statements(owned_id, statements_for, cik, filing, table, source_id)
         written = write_table_holders(owned_id, filing, table, source_id, subs,
-                                      exited=(since or {}).get("exited"))
-    return {"filing": filing, "rows": len(rows), "written": written, "statements": since,
+                                      exited=(since or {}).get("exited"),
+                                      unasked=bool((older or {}).get("lost")))
+    return {"filing": filing, "rows": len(rows), "written": written, "statements": since, "older": older,
             "closed": close_absent_from_table(owned_id, filing, rows)}
 
 
@@ -1280,8 +1296,124 @@ def write_statements_since(owned_id: str, name: str, cik: str, day: str, source_
     return {"written": len(filings), "exited": list(dict.fromkeys(exits))}
 
 
+def _statements_held(owned_id: str, day: str) -> list[dict]:
+    """The Schedule 13D/G statements the graph holds about the issuer that
+    speak for a holder as of `day`: the open ones, and those that ended on or
+    after it — Berkshire's 13G/A on Pool closed 2026-03-31, after the table's
+    2026-03-26 filing. One that ended before says nothing about the table's
+    holders. [{owner, olabel, ocik, filing_type, source_url, until}]."""
+    from app.db.arcadedb import run_sql
+    return [e for e in run_sql(
+        "SELECT @out.id AS owner, @out.@type AS olabel, @out.sec_cik AS ocik, filing_type, source_url, until "
+        "FROM OWNS WHERE source_id = 'sec-edgar' AND @in.id = :id", {"id": owned_id}) or []
+        if is_beneficial_ownership_filing(e.get("filing_type"))
+        and (not e.get("until") or str(e["until"])[:10] >= day)]
+
+
+#: Schedule 13D/G under both of its names (the December-2024 rename), as
+#: EDGAR's full-text index filters by form
+_STATEMENT_FORMS = "SC 13D,SC 13D/A,SC 13G,SC 13G/A,SCHEDULE 13D,SCHEDULE 13D/A,SCHEDULE 13G,SCHEDULE 13G/A"
+#: filings of one issuer the index is read for, at most (100 a page)
+STATEMENT_INDEX_MAX = 300
+
+
+def _statement_filers(cik: str) -> list[dict] | None:
+    """Who filed a Schedule 13D/G about the issuer, each with its newest one:
+    [{cik, name, file_date, form_type, accession, index_url}], newest first —
+    from EDGAR's full-text index, which lists a filing with every party's CIK
+    and name: one request for an issuer's whole list (a page per 100 filings),
+    where the 13D/G feed names no filer and each filing would have to be
+    opened. None when the index did not answer — not "nobody filed"."""
+    import httpx
+    from app.scraper import sec_client
+    own = sec_client._cik10(cik)
+    newest: dict[str, dict] = {}
+    start = 0
+    try:
+        while start < STATEMENT_INDEX_MAX:
+            res = sec_client._get(sec_client.SEARCH_URL, {"ciks": own, "forms": _STATEMENT_FORMS, "from": start})
+            hits = (res.get("hits") or {}).get("hits") or []
+            for hit in hits:
+                src = hit.get("_source") or {}
+                accession, day = src.get("adsh"), str(src.get("file_date") or "")[:10]
+                if not accession or not day:
+                    continue
+                for party, shown in zip(src.get("ciks") or [], src.get("display_names") or []):
+                    party = sec_client._cik10(party)
+                    if party == own or (party in newest and newest[party]["file_date"] >= day):
+                        continue
+                    newest[party] = {"cik": party, "name": str(shown).split("  (")[0].strip(), "file_date": day,
+                                     "form_type": src.get("form") or src.get("file_type") or "",
+                                     "accession": accession,
+                                     "index_url": sec_client._filing_index_url(cik, accession)}
+            start += len(hits)
+            if not hits or start >= (((res.get("hits") or {}).get("total") or {}).get("value") or 0):
+                break
+    except httpx.HTTPError as exc:
+        log.warning("SEC: the index of 13D/G filers of CIK %s did not answer: %s", cik, exc)
+        return None
+    return sorted(newest.values(), key=lambda f: f["file_date"], reverse=True)
+
+
+def write_older_statements(owned_id: str, name: str, cik: str, filing: dict, table: dict,
+                           source_id: str) -> dict:
+    """Read and write the newest Schedule 13D/G of every holder the issuer's
+    table names that has one the graph does not hold (findings item 157) — for
+    a company nobody scraped. `write_statements_since` reads what was filed
+    AFTER the table; but a holder's yearly 13G/A is due in February and the
+    proxy follows in March or April, so its newest statement is as a rule a
+    few weeks OLDER than the table: of 521 holdings the pass had written from
+    tables on dev (2026-11-26), 372 were of a holder with a statement of its
+    own on that issuer. They were written "named in its DEF 14A, in no 13D/G"
+    — the weaker reading, without the statement's date, class and co-filers:
+    Newmark's table rows for Cantor Fitzgerald, L.P. (99.1 % of Class B) and CF
+    Group Management (100 %) stood side by side, 199 % of the class, where
+    Cantor's 13D/A names CF Group Management as its co-filer.
+
+    One request to the index of the issuer's 13D/G filers (`_statement_filers`)
+    — not made when every row of the table is covered by a statement the graph
+    holds — then one or two per holder found there. A holder is matched by its
+    whole name (`_same_holder`), a statement filed after the table is
+    `write_statements_since`'s, and one the graph holds (by the filer's CIK)
+    is not read again. An exit among them says nothing: the table is newer.
+
+    Returns {"written", "asked", "lost"} — the holders written, whether the
+    index was asked, and whether it did not answer."""
+    from app.scraper import sec_13dg, sec_client
+    from app.scraper.runner_sec import _write_ownership_filings
+    out = {"written": 0, "asked": False, "lost": False}
+    rows = [r for r in table.get("rows") or [] if (r.get("stake_pct") or 0) >= TABLE_HOLDER_MIN_PCT]
+    table_day = str(filing["date"])[:10]
+    day = min(table_day, table.get("as_of") or table_day)
+    held = _statements_held(owned_id, day)
+    aliases = [a for e in {e["owner"]: e for e in held}.values() for a in _holder_aliases(e["owner"], e.get("olabel"))]
+    open_rows = [r for r in rows if not named_in_table(aliases, r["names"])]
+    if not open_rows:
+        return out
+    out["asked"] = True
+    filers = _statement_filers(cik)
+    if filers is None:
+        out["lost"] = True
+        return out
+    known = {sec_client._cik10(e["ocik"]) for e in held if e.get("ocik")}
+    entries = [f for f in filers
+               if f["file_date"] <= table_day and f["cik"] not in known
+               and any(_same_holder(f["name"], n) for r in open_rows for n in r["names"])]
+    if not entries:
+        return out
+    filings = sec_13dg.fetch_ownership_filings(name, cik, entries=entries)
+    _write_ownership_filings(owned_id, name, filings, source_id, [])
+    out["written"] = len(filings)
+    for f in filings:
+        log.info("SEC: %r's %s of %s on %s written — named in its %s of %s, filed before it",
+                 f.get("investor_name"), f.get("filing_type"), f.get("file_date"), owned_id,
+                 filing["form"], filing["date"])
+    return out
+
+
 def write_table_holders(owned_id: str, filing: dict, table: dict, source_id: str,
-                        submissions: dict | None = None, exited: list[str] | None = None) -> dict:
+                        submissions: dict | None = None, exited: list[str] | None = None,
+                        unasked: bool = False) -> dict:
     """Write the issuer's 5 % holders its own ownership table states and no
     Schedule 13D/G covers (findings item 86): an SEC OWNS edge per holder —
     `filing_type` the table's form (DEF 14A / 10-K/A), `read_from` table, the
@@ -1310,12 +1442,15 @@ def write_table_holders(owned_id: str, filing: dict, table: dict, source_id: str
     Ventures' 7.8 %, 111 % together. Matched by the whole name
     (`_same_holder`).
 
+    ``unasked``: the index of the issuer's 13D/G filers did not answer
+    (`write_older_statements`), so a holder no statement in the graph covers
+    may still have one — counted ``lost`` and not written.
+
     A holder whose name search EDGAR did not answer is counted apart
     (``lost``, findings item 155): "no registrant of that name" is an answer,
     a read timeout is not, and the caller reads the table again.
 
     Returns {"written", "covered", "unresolved", "lost", "shared", "exited", "fund"}."""
-    from app.db.arcadedb import run_sql
     from app.scraper import sec_client
     from app.scraper.edge_schema import READ_TABLE
     from app.scraper.mapper import derive_ownership_type
@@ -1333,11 +1468,7 @@ def write_table_holders(owned_id: str, filing: dict, table: dict, source_id: str
     # closed 2026-03-31, after the table's 2026-03-26 filing. One that ended
     # before it says nothing about the table's holders.
     table_day = str(filing["date"])[:10]
-    statements = [e for e in run_sql(
-        "SELECT @out.id AS owner, @out.@type AS olabel, filing_type, source_url, until FROM OWNS "
-        "WHERE source_id = 'sec-edgar' AND @in.id = :id", {"id": owned_id}) or []
-        if is_beneficial_ownership_filing(e.get("filing_type"))
-        and (not e.get("until") or str(e["until"])[:10] >= min(table_day, as_of or table_day))]
+    statements = _statements_held(owned_id, min(table_day, as_of or table_day))
     stated_owners = {e["owner"] for e in statements}
     aliases = [a for e in {e["owner"]: e for e in statements}.values()
                for a in _holder_aliases(e["owner"], e.get("olabel"))]
@@ -1382,6 +1513,14 @@ def write_table_holders(owned_id: str, filing: dict, table: dict, source_id: str
             out["exited"] += 1
             log.info("SEC: %r (%s %% of %s in its %s of %s) reported no position since — not written",
                      r["name"], r["stake_pct"], owned_id, filing["form"], filing["date"])
+            continue
+        if unasked:
+            # nobody could say whether this holder has a statement of its own
+            # (the index of the issuer's 13D/G filers did not answer): not
+            # "in no 13D/G" — the caller reads the table again (items 155, 157)
+            out["lost"] += 1
+            log.warning("SEC: %r (%s %% of %s) in %s's table — not written, the index of the issuer's "
+                        "13D/G filers was lost to the network", r["name"], r["stake_pct"], owned_id, filing["form"])
             continue
         _upsert_owns_sec(
             owner_id, owned_id, source_id, owner_label=owner_label,

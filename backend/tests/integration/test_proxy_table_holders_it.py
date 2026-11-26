@@ -18,6 +18,14 @@ FILING = {"form": "10-K/A", "date": "2026-04-24",
 LATER = {"form": "DEF 14A", "date": "2027-04-20", "url": "https://www.sec.gov/later-def14a.htm"}
 
 
+@pytest.fixture(autouse=True)
+def filer_index():
+    """EDGAR's index of an issuer's 13D/G filers (`_statement_filers`, findings
+    item 157): nobody has filed, unless a test says who."""
+    with patch("app.scraper.sec_writer._statement_filers", return_value=[]) as index:
+        yield index
+
+
 def _row(name, pct, cls=None, group=False, names=None):
     return {"name": name, "names": names or [name], "stake_pct": pct, "share_class": cls,
             "voting_power_pct": None, "group": group}
@@ -517,3 +525,194 @@ def test_the_issuers_own_scrape_is_partial_when_its_table_lost_a_holder(it_db):
     assert out["status"] == "partial" and out["failed_sections"] == ["ownership table"]
     assert _edges(it_db) == {}
 
+
+# ── A table holder's older statement (findings item 157) ─────────────────────
+
+NEWMARK = "0001690680"
+CANTOR_13D = "0001024896-25-000010"
+
+
+def _newmark(it_db):
+    it_db.run_command(f"CREATE (:Source {{id: '{SID}', name: 'SEC EDGAR'}})")
+    it_db.run_command("CREATE (:Entity {id: 'sec:0001690680', name: 'Newmark Group Inc', type: 'company', "
+                      f"name_normalized: 'newmark group', sec_cik: '{NEWMARK}'}})")
+    # the three holders stand in the graph already (another company's scrape wrote them)
+    from app.scraper.mapper import normalize_entity_name
+    for eid, name, cik in ((BLK, "BlackRock, Inc.", None), ("sec:0001024896", "Cantor Fitzgerald, L.P.", "0001024896"),
+                           ("sec:0001097856", "CF Group Management, Inc.", "0001097856")):
+        it_db.run_command("CREATE (:Entity {id: $id, name: $n, type: 'company', name_normalized: $k, sec_cik: $c})",
+                          {"id": eid, "n": name, "k": normalize_entity_name(name), "c": cik})
+    table = {"as_of": "2026-03-20", "rows": [_row("Cantor Fitzgerald, L.P.", 99.1, "Class B"),
+                                             _row("CF Group Management, Inc.", 100.0, "Class B"),
+                                             _row("BlackRock, Inc.", 6.6, "Class A")]}
+    subs = {"cik": NEWMARK, "filings": {"recent": {
+        "form": ["DEF 14A", "10-K"], "filingDate": ["2026-04-10", "2026-02-20"],
+        "accessionNumber": ["0001690680-26-000020", "0001690680-26-000005"],
+        "primaryDocument": ["def14a.htm", "10k.htm"]}}}
+    return table, subs
+
+
+def _cantor_statement():
+    """Cantor's 13D/A as its XML reads: three reporting persons, the filer first."""
+    person = lambda name, cik, code: {"name": name, "cik": cik, "percent": 19.9, "aggregate": 4.0e7, "sole_voting": 0.0,
+                                      "shared_voting": 4.0e7, "sole_dispositive": 0.0, "shared_dispositive": 4.0e7,
+                                      "type_code": code}
+    return {"schedule": "13D", "issuer_cik": NEWMARK, "issuer_name": "Newmark Group, Inc.", "issuer_cusip": "65158N102",
+            "class_title": "Class A Common Stock, par value $0.01 per share", "event_date": "2025-10-01",
+            "final_report": None, "filer_cik": "0001024896", "comment_text": "", "raw_text": "",
+            "persons": [person("Cantor Fitzgerald, L.P.", "0001024896", "PN"),
+                        person("CF Group Management, Inc.", "0001097856", "CO"),
+                        person("Brandon G. Lutnick", None, "IN")]}
+
+
+def _index_entry(day="2025-10-06", name="CANTOR FITZGERALD, L. P.", cik="0001024896", accession=CANTOR_13D):
+    from app.scraper import sec_client
+    return {"cik": cik, "name": name, "file_date": day, "form_type": "SCHEDULE 13D/A", "accession": accession,
+            "index_url": sec_client._filing_index_url(NEWMARK, accession)}
+
+
+def _read_newmark(table, subs, persons=("CF Group Management, Inc.", "Brandon G. Lutnick"), statements_for="Newmark Group Inc"):
+    from app.scraper import sec_13dg_xml, sec_client, sec_filer, sec_lookup
+    from app.scraper.sec_writer import read_table_and_close
+    opened = []
+
+    def xml(cik, accession):
+        opened.append(accession)
+        return _cantor_statement()
+    with patch.object(sec_client, "_submissions", return_value=subs), \
+         patch.object(sec_client, "_get_text", return_value="<html></html>"), \
+         patch.object(sec_13dg_xml, "_fetch_13dg_xml", side_effect=xml), \
+         patch.object(sec_filer, "fetch_former_names", return_value=[]), \
+         patch.object(sec_filer, "fetch_filer_name", return_value="CANTOR FITZGERALD, L. P."), \
+         patch.object(sec_filer, "fetch_filer_sic", return_value=None), \
+         patch.object(sec_lookup, "_browse_index", return_value=[]), \
+         patch("app.scraper.proxy_statement.read_holder_table", return_value=table), \
+         patch("app.scraper.proxy_statement.read_holder_rows", return_value=[]), \
+         patch("app.scraper.sec_writer.statement_persons", return_value=list(persons)):
+        res = read_table_and_close("sec:0001690680", NEWMARK, write=True, source_id=SID, statements_for=statements_for)
+    return res, opened
+
+
+def _newmark_edges(it_db):
+    return sorted((r["n"], r["ft"], r["cls"]) for r in it_db.run_command(
+        "MATCH (a)-[r:OWNS]->(b:Entity {id: 'sec:0001690680'}) WHERE r.until IS NULL "
+        "RETURN coalesce(a.name, a.full_name) AS n, r.filing_type AS ft, r.share_class AS cls"))
+
+
+def test_a_table_holder_is_written_from_its_own_older_statement(it_db, filer_index):
+    """Newmark, never scraped itself: its proxy names Cantor Fitzgerald, L.P.
+    (99.1 % of Class B) and CF Group Management (100 %). Cantor's 13D/A of
+    2025-10-06 — older than the proxy, so 'the statements since the table' never
+    read it — names CF Group Management as its co-filer. The two table rows were
+    written side by side, 199 % of the class."""
+    table, subs = _newmark(it_db)
+    filer_index.return_value = [_index_entry(),
+                                _index_entry(name="VANGUARD GROUP INC", cik="0000102909", accession="0000102909-25-000077")]
+    res, opened = _read_newmark(table, subs)
+    assert opened == [CANTOR_13D]                              # the holder the table names — not Vanguard's
+    assert res["older"] == {"written": 1, "asked": True, "lost": False}
+    edges = _newmark_edges(it_db)
+    assert ("BlackRock, Inc.", "DEF 14A", "Class A") in edges  # no statement of its own: from the table, as before
+    assert not [e for e in edges if e[1] == "DEF 14A" and e[0] != "BlackRock, Inc."], edges
+    assert [e[1] for e in edges if e[0] != "BlackRock, Inc."] == ["13D/A"]
+    assert (res["written"]["written"], res["written"]["covered"]) == (1, 2)
+
+
+def test_without_the_statement_the_rows_are_written_from_the_table(it_db, filer_index):
+    # the index knows no statement of these holders: the table is all there is (item 86)
+    table, subs = _newmark(it_db)
+    res, opened = _read_newmark(table, subs, persons=())
+    assert opened == [] and res["older"] == {"written": 0, "asked": True, "lost": False}
+    assert _newmark_edges(it_db) == [("BlackRock, Inc.", "DEF 14A", "Class A"), ("CF Group Management, Inc.", "DEF 14A", "Class B"),
+                                     ("Cantor Fitzgerald, L.P.", "DEF 14A", "Class B")]
+
+
+def test_a_statement_filed_after_the_table_is_not_read_here(it_db, filer_index):
+    # that one is `write_statements_since`'s (findings item 116)
+    table, subs = _newmark(it_db)
+    filer_index.return_value = [_index_entry(day="2026-06-01")]
+    _, opened = _read_newmark(table, subs, persons=())
+    assert opened == []
+
+
+def test_a_filer_of_another_name_is_not_read(it_db, filer_index):
+    table, subs = _newmark(it_db)
+    filer_index.return_value = [_index_entry(name="CANTOR FITZGERALD SECURITIES", cik="0000017018")]
+    _, opened = _read_newmark(table, subs, persons=())
+    assert opened == []
+
+
+def test_the_index_is_not_asked_when_statements_cover_every_row(it_db, filer_index):
+    from app.scraper.sec_writer import _upsert_owns_sec
+    table, subs = _newmark(it_db)
+    table["rows"] = [_row("BlackRock, Inc.", 6.6, "Class A")]
+    _upsert_owns_sec(BLK, "sec:0001690680", SID, ownership_type="minority", file_date="2026-02-01", stake_percent=6.6,
+                     filing_type="13G/A", source_url="https://www.sec.gov/blk-index.htm")
+    res, _ = _read_newmark(table, subs, persons=())
+    filer_index.assert_not_called()
+    assert res["older"] == {"written": 0, "asked": False, "lost": False}
+
+
+def test_the_issuers_own_scrape_does_not_ask_the_index(it_db, filer_index):
+    table, subs = _newmark(it_db)
+    res, _ = _read_newmark(table, subs, persons=(), statements_for=None)
+    filer_index.assert_not_called()
+    assert res["older"] is None
+
+
+def test_an_index_that_did_not_answer_holds_the_table_rows_back(it_db, filer_index):
+    # "in no 13D/G" cannot be said when nobody could ask (items 155, 157): the rows
+    # are counted lost, so the pass reads the table again at its end
+    table, subs = _newmark(it_db)
+    filer_index.return_value = None
+    res, _ = _read_newmark(table, subs, persons=())
+    assert res["older"] == {"written": 0, "asked": True, "lost": True}
+    assert (res["written"]["written"], res["written"]["lost"]) == (0, 3)
+    assert _newmark_edges(it_db) == []
+
+
+def _newmark_pass(it_db):
+    """The whole-graph pass over a graph in which somebody's open 13G brings
+    Newmark in; its table names Cantor and CF Group Management."""
+    from app.scraper import sec_13dg_xml, sec_client, sec_filer, sec_lookup
+    from app.scraper.sec_writer import _upsert_owns_sec, close_absent_from_tables
+    table, subs = _newmark(it_db)
+    table["rows"] = table["rows"][:2]
+    it_db.run_command("CREATE (:Entity {id: 'lei:vg', name: 'VANGUARD GROUP INC', type: 'company', "
+                      "name_normalized: 'vanguard group', sec_cik: '0000102909'})")
+    _upsert_owns_sec("lei:vg", "sec:0001690680", SID, ownership_type="minority", file_date="2026-02-10",
+                     stake_percent=10.0, filing_type="13G/A", source_url="https://www.sec.gov/vg-index.htm")
+    with patch.object(sec_client, "_submissions", return_value=subs), \
+         patch.object(sec_client, "_get_text", return_value="<html></html>"), \
+         patch.object(sec_13dg_xml, "_fetch_13dg_xml", return_value=_cantor_statement()), \
+         patch.object(sec_filer, "fetch_former_names", return_value=[]), \
+         patch.object(sec_filer, "fetch_filer_name", return_value="CANTOR FITZGERALD, L. P."), \
+         patch.object(sec_filer, "fetch_filer_sic", return_value=None), \
+         patch.object(sec_lookup, "_browse_index", return_value=[]), \
+         patch("app.scraper.proxy_statement.read_holder_table", return_value=table), \
+         patch("app.scraper.proxy_statement.read_holder_rows",
+               return_value=[{"name": r["name"], "percents": [r["stake_pct"]]} for r in table["rows"]] +
+                            [{"name": "The Vanguard Group", "percents": [10.0]}]), \
+         patch("app.scraper.sec_writer.statement_persons", return_value=["CF Group Management, Inc."]):
+        res = close_absent_from_tables()
+    edges = _newmark_edges(it_db)
+    assert sorted(e[1] for e in edges) == ["13D/A", "13G/A"] and not [e for e in edges if e[1] == "DEF 14A"]
+    return res
+
+
+def test_the_pass_counts_and_says_the_older_statements_it_wrote(it_db, filer_index):
+    filer_index.return_value = [_index_entry()]
+    res = _newmark_pass(it_db)
+    assert (res["older"], res["lost"], res["written"], res["statements"]) == (1, 0, 0, 0)
+    assert res["lines"] == ["Newmark Group Inc: 1 statement holders written — their newest 13D/G, filed before its "
+                            "DEF 14A of 2026-04-10, which names them"]
+
+
+def test_the_pass_reads_the_table_again_when_the_index_answers_later(it_db, filer_index):
+    # the index is lost at the first reading and the rows are held back; read
+    # again at the end of the pass, Cantor's statement is written
+    filer_index.side_effect = [None, [_index_entry()]]
+    res = _newmark_pass(it_db)
+    assert filer_index.call_count == 2
+    assert (res["older"], res["lost"], res["written"]) == (1, 0, 0)
+    assert res["lines"][-1].endswith("read again: 0 written, none lost; 1 statement holders written")
