@@ -110,3 +110,24 @@ def test_a_13ga_that_reported_an_exit_lets_the_form_4_write(graph):
     _scrape([exited], [MUSK_FORM4])
     rows = _owner_rows(graph)
     assert [(r["pct"], r["ft"]) for r in rows] == [(28.4188, "Form 4")]
+
+
+def test_a_holding_read_from_an_older_filing_carries_its_date_and_link(graph):
+    # findings item 160: the newest Form 4 grants units only; the edge points at
+    # the filing that states the shares, not at the grant
+    cfo = {**CFO_FORM4, "source_date": "2026-11-25", "source_url": "https://sec.gov/f4-grant-index.htm",
+           "holding_date": "2026-06-03", "holding_url": "https://sec.gov/f4-shares-index.htm"}
+    _scrape([], [cfo])
+    row = graph.run_command("MATCH (p:Person)-[r:OWNS]->(e:Entity {id:'tsla'}) "
+                            "RETURN r.source_url AS url, r.source_date AS day, r.shares AS sh")
+    assert [(r["url"], r["day"], r["sh"]) for r in row] == [("https://sec.gov/f4-shares-index.htm", "2026-06-03", 100000)]
+
+
+def test_a_company_insiders_older_holding_carries_its_date_and_link(graph):
+    holder = {"name": "Musk Holdings LLC", "role": "Director", "person_cik": "0009999999", "shares_owned": 5000,
+              "stake_percent": None, "share_class": "Common Stock", "source_date": "2026-11-25",
+              "source_url": "https://sec.gov/f4-grant-index.htm", "holding_date": "2026-06-03",
+              "holding_url": "https://sec.gov/f4-shares-index.htm"}
+    _scrape([], [holder])
+    row = graph.run_command("MATCH (a:Entity)-[r:OWNS]->(e:Entity {id:'tsla'}) RETURN r.source_url AS url, r.source_date AS day")
+    assert [(r["url"], r["day"]) for r in row] == [("https://sec.gov/f4-shares-index.htm", "2026-06-03")]

@@ -1831,6 +1831,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       source is silent, open the source; and before paying for a full read (an
       issuer's 13D/G feed: 80 requests), look for the index that lists the answer in
       one (`efts search-index?ciks=…&forms=…`).
+- [ ] **"The newest filing" is the newest one that answers the question.** The
+      insider reader took each person's newest Form 3/4/5 as their position; a Form 4
+      that only grants units (Table II, no share) answers "what was granted", not
+      "what is held", and seven Valvoline officers lost their holdings the day after
+      their grants (findings item 160). When a reader keeps one document per key,
+      check that the document it keeps can answer every field it is kept for — and
+      tell "no rows" from "a row of zero".
 - [ ] **A reader that drops an answer it did not want must say so to the step
       after it.** The older-statements pass read a holder's newest 13D/G, found it
       reported no position, wrote nothing — and told nobody, so the table step wrote

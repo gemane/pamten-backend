@@ -195,6 +195,24 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
             "period_of_report": period, "former": former_role is not None}
 
 
+def _take_holding(known: dict, older: dict, url: str | None, day: str | None) -> None:
+    """An insider's holding from an older filing of theirs, when the newest
+    states no position (findings item 160): the positions and the pick, and
+    where they were stated (``holding_url``/``holding_date`` — the role keeps
+    the newest filing's)."""
+    for k in ("holdings", "blocks", "shares_owned", "share_class"):
+        known[k] = older.get(k)
+    known["holding_url"], known["holding_date"] = url, day
+
+
+def holding_source(ex: dict) -> tuple[str | None, str | None]:
+    """Where an insider's holding was stated: the filing it was read from
+    (`_take_holding`), else the newest filing (findings item 160)."""
+    if ex.get("holding_url") or ex.get("holding_date"):
+        return ex.get("holding_url"), ex.get("holding_date")
+    return ex.get("source_url"), ex.get("source_date")
+
+
 def _xml_flag(rel, tag: str) -> bool:
     """A Form 3/4 relationship flag. Older filings write `1`, newer ones
     `true` — Apple's 2026 Form 3 for its new CEO says `<isDirector>true`,
@@ -315,7 +333,17 @@ def fetch_executives(cik: str) -> list:
             executives.append(result)
             by_person[key] = result
             log.debug("SEC EDGAR: insider %s (%s)", result["name"], result["role"])
-        elif is_form3 and not result["former"] and not known.get("since") \
+        else:
+            if not known.get("blocks") and result.get("blocks"):
+                # Their newest filing states no position — a grant of units or
+                # options only, Table II without a share: Valvoline's officers'
+                # Form 4s of 2026-11-25 (FY 2027 restricted stock units) said
+                # nothing about the common stock they hold, and their holdings
+                # were dropped. The newest older filing that states one does,
+                # with its own date and link (findings item 160).
+                _take_holding(known, result, sec_client._filing_index_url(cik, accessions[i]) or None,
+                              filing_dates[i] if i < len(filing_dates) else None)
+        if known is not None and is_form3 and not result["former"] and not known.get("since") \
                 and canonical_role(result["role"]) == canonical_role(known["role"]):
             # Their Form 3, older than the Form 4 we listed them from, and for
             # the same seat: that is when it began. A Form 3 for a different
@@ -701,6 +729,11 @@ def _own_form4_holding(cik: str, issuer_int: str,
             root = ET.fromstring(xml)
         except ET.ParseError:
             return None
+        blocks = _form4_blocks(root)
+        if not blocks:
+            # a grant of units or options only states no position: their
+            # newest older Form 4 about the issuer does (findings item 160)
+            continue
         holdings = _form4_holdings(root)
         pick = stake_for(holdings, shares_outstanding)
         if not pick:
@@ -710,7 +743,7 @@ def _own_form4_holding(cik: str, issuer_int: str,
             # the positions, so a vehicle already written for the issuer can be
             # taken out of this person's (`without_vehicles`, findings item 111)
             "holdings":      holdings,
-            "blocks":        _form4_blocks(root),
+            "blocks":        blocks,
             "cik":           cik,
             "source_url":    sec_client._filing_index_url(cik, accs[i]),
             "source_date":   dates[i] if i < len(dates) else None,
@@ -871,10 +904,11 @@ def split_shared_blocks(executives: list[dict],
     out: list[dict] = []
     for (title, _words, shares), who in shared.items():
         nature = nature_of[(title, _words, shares)]
-        newest = max(who, key=lambda ex: ex.get("source_date") or "")
+        newest = max(who, key=lambda ex: holding_source(ex)[1] or "")
+        url, day = holding_source(newest)
         out.append({"name": vehicle_name(nature), "nature": nature, "title": title or None, "shares": shares,
                     "reporters": [ex.get("name") for ex in who],
-                    "source_url": newest.get("source_url"), "source_date": newest.get("source_date")})
+                    "source_url": url, "source_date": day})
         for ex in who:
             held = dict(ex.get("holdings") or {})
             held[title] = max(0.0, held.get(title, 0.0) - shares)

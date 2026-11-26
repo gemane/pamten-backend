@@ -1416,6 +1416,21 @@ Derivative-table rows count only when they are plainly a class of common stock:
 Berkshire's Class A is convertible into B, so its filers list their Class A in
 Table II; an option, a unit, a right or a note is not a share held.
 
+**A filing that states no position does not end the holding (findings item
+160).** A grant of restricted stock units or options is filed on a Form 4 with
+Table II rows only, and none of them is a share: it says nothing about the
+common stock the insider holds. Valvoline's officers filed such Form 4s on
+2026-11-25 (FY 2027 RSUs); taken as their newest position, seven holdings stated
+on 2026-11-23 and 2026-06-03 were gone. So an insider whose newest filing has no
+position row takes the holding of their newest older filing in the insider window
+that has one (`_take_holding`); the role and its seat stay the newest filing's,
+the OWNS edge carries the filing that states the shares (`holding_url` /
+`holding_date`, `holding_source`), and so does a shared vehicle. A row of 0 —
+sold out — is a position, and ends it. The person-centric lookup
+(`fetch_insider_holding`) passes a grant-only Form 4 the same way. Measured on 14
+issuers (361 insiders): 5 changed, each from no holding to the one an older filing
+states.
+
 **A count of one class is divided only by the count of that class** (`stake_for`).
 The issuer's counts come dated and per class (`SharesOutstanding`,
 `fetch_shares_outstanding_detail`): the plain `dei:EntityCommonStockSharesOutstanding`
