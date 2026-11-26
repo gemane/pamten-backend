@@ -538,6 +538,9 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             # the bloc a group member votes within (item 98) — run_sec_holdings,
             # the other writer of these rows, always passed it
             voting_power_pct=holding.get("voting_power_pct"),
+            # the class the percentage is of (findings item 157) — read on the
+            # filer side since then, and passed by both writers of these rows
+            share_class=holding.get("share_class"),
             source_url=holding.get("source_url"),
             event_date=holding.get("event_date"),
             since_date=holding.get("since"), since_basis=holding.get("since_basis"),

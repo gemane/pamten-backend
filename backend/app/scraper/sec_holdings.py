@@ -81,6 +81,10 @@ def _parse_holding_filing(filer_cik: str, accession: str,
         # the subject's security as the cover states it — the securities
         # bridge's input (findings item 71)
         "subject_cusip": xml.get("issuer_cusip"),
+        # the security the percentage is a percentage OF, as the issuer side
+        # reads it (findings item 157): without it Intel's 100 % of Mobileye's
+        # Class B and General Atlantic's 1.4 % of its Class A were added up
+        "share_class":  xml.get("class_title"),
         "percent":      percent,          # row 13 as stated: None unread, 0 an exit
         "stake":        stake,            # the filer's own holding
         "voting":       voting,           # the bloc it votes within, None alone
@@ -131,7 +135,8 @@ def _parse_holding_filing_text(filer_cik: str, accession: str,
     subject_cik  = m.group(2).zfill(10)
     subject_name = html_lib.unescape(m.group(1).strip())
     row = {"subject_cik": subject_cik, "subject_name": subject_name, "percent": None,
-           "stake": None, "voting": None, "subject_cusip": None, "accession": accession, "event_date": None,
+           "stake": None, "voting": None, "subject_cusip": None, "share_class": None,
+           "accession": accession, "event_date": None,
            "final_report": None, "read_from": READ_FORM}
     if subject_cik == sec_client._cik_int(filer_cik).zfill(10):
         return row                      # inbound: the caller skips it, unread
@@ -163,7 +168,8 @@ def _parse_holding_filing_text(filer_cik: str, accession: str,
     row.update(percent=percent, stake=stake, voting=voting,
                event_date=sec_13dg_text._parse_event_date_from_text(text),
                final_report=sec_13dg_text._parse_final_report_from_text(text),
-               subject_cusip=sec_13dg_text._parse_cusip_from_text(text))
+               subject_cusip=sec_13dg_text._parse_cusip_from_text(text),
+               share_class=sec_13dg_text._parse_class_title_from_text(text))
     return row
 
 
@@ -314,6 +320,9 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
             "subject_cik":   sid,
             "subject_name":  parsed["subject_name"],
             "subject_cusip": parsed.get("subject_cusip"),
+            # the class the percentage is of — the panel adds only percentages
+            # of one security (findings items 110, 157)
+            "share_class":   parsed.get("share_class"),
             # the filer's own holding; a group member's bloc goes to voting
             # (findings item 98: BRC's 52.3 % of AB InBev was written as its stake)
             "stake_percent": parsed.get("stake"),

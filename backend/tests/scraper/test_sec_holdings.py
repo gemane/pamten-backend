@@ -749,3 +749,54 @@ class TestFilerSideBlocOldCover:
             self.FIRST_DISP, "10 Shared Dispositive Power: 5,000,000,000", 1)
         rows = self._rows("SC 13D/A", cover)
         assert [(r["stake_percent"], r["voting_power_pct"]) for r in rows] == [(None, 71.9)]
+
+
+# ── The class a holding's percentage is OF (findings item 157) ────────────────
+
+def _xml_with_class(title: str, **kw) -> str:
+    fields = {"cik": "0001910139", "name": "Mobileye Global Inc.", "pct": "1.4", **kw}
+    return XML.format(**fields).replace(
+        "</issuerName>", f"</issuerName><securitiesClassTitle>{title}</securitiesClassTitle>")
+
+
+class TestTheShareClass:
+    """The issuer side has always read the class a statement's percentage is
+    of; this side dropped it — the word did not occur in the reader. Mobileye:
+    Intel's 100 % of the Class B stock (proxy table) and General Atlantic's
+    1.4 % from a 13G/A read here, whose cover says "Class A common stock",
+    were added to 101.4 %; 946 of 4,193 13D/G edges on dev had no class."""
+
+    def test_an_xml_holding_carries_the_class_its_cover_states(self):
+        with patch("app.scraper.sec_client._get_text",
+                   return_value=_xml_with_class("Class A common stock, par value $0.01 per share")):
+            row = _parse_holding_filing("0001017645", "a-1")
+        assert row["share_class"] == "Class A common stock, par value $0.01 per share"
+
+    def test_an_xml_that_states_none_gives_none(self):
+        with patch("app.scraper.sec_client._get_text",
+                   return_value=XML.format(cik="0001555280", name="Zoetis Inc", pct="7.49")):
+            assert _parse_holding_filing("0002100119", "a-1")["share_class"] is None
+
+    def test_an_old_cover_holding_carries_it_too(self):
+        # Altaba's real 2019 13G/A on Alibaba
+        [holding] = _old_holdings([("SC 13G/A", OLD_OUT, "2019-02-14")])
+        assert holding["share_class"] == "Ordinary shares, par value US $0.000025 per share"
+
+    def test_a_filing_about_the_filer_has_the_key_and_no_class(self):
+        requested = []
+        row = None
+        with patch("app.scraper.sec_client._get_text", side_effect=_old_docs(None, requested)):
+            from app.scraper.sec_holdings import _parse_holding_filing_text
+            row = _parse_holding_filing_text(ALTABA, OLD_IN, "ALTABA INC.")
+        assert row is not None and "share_class" in row and row["share_class"] is None
+
+    def test_the_holdings_list_passes_it_on(self):
+        docs = {"a-1": _xml_with_class("Class A common stock"),
+                "a-2": XML.format(cik="0000859737", name="Hologic Inc", pct="7.49")}
+        with patch("app.scraper.sec_client._get",
+                   return_value=_subs([("SCHEDULE 13G", "a-1", "2026-04-30"), ("SCHEDULE 13G", "a-2", "2026-04-29")])), \
+             patch("app.scraper.sec_client._get_text", side_effect=_doc_for(docs)):
+            rows = fetch_filer_holdings("0001017645")
+        assert {r["subject_name"]: r["share_class"] for r in rows} == {
+            "Mobileye Global Inc.": "Class A common stock", "Hologic Inc": None}
+

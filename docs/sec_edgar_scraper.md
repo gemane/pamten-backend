@@ -648,6 +648,20 @@ the OWNS edge, and `_ownership_summary` groups by it: when the named classes
 disagree, `disclosed_pct` becomes **null** and `by_class` carries a total per
 security, because no single number is true.
 
+**Both sides read it (findings item 157).** Until 2026-11-26 only the issuer
+side did. The filer side (`sec_holdings.py`: what a filer owns, read from the
+filer's own list) dropped the title in both of its paths — the XML's
+`securitiesClassTitle` and the old cover's — and neither of its two writers
+passed a class on. So an edge written by the holder's scrape had no class, the
+same statement written by the issuer's scrape had one, and 946 of 4,193 13D/G
+edges on dev were class-less (286 read from XML fields, 660 from cover pages; in
+a sample of 60 of the XML ones every filing stated its class). Mobileye showed
+it: Intel's 100 % of the **Class B** stock (the proxy table) and General
+Atlantic's 1.4 %, whose 13G/A says "Class A common stock" on its cover, were
+added to **101.4 %** — a class-less stake counts with the one class that is
+named. With the class read, the two are different securities and no total is
+shown.
+
 Titles are compared by their **component set** rather than as strings — filers
 describe one security many ways (`Common Stock` vs `Common Stock, par value
 $0.0001 per share`; `Series A Shares ("A Shares"), Series B Shares` vs

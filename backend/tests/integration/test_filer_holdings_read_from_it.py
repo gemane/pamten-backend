@@ -24,7 +24,9 @@ def _flags():
 def test_the_scrape_grades_a_filer_side_holding(it_db):
     from app.scraper import runner_sec, sec_edgar, sec_filer, sec_holdings, sec_insiders
     subs = _subs([("SCHEDULE 13G", "a-1", "2026-04-30")])
-    docs = {"a-1": XML.format(cik="0000105770", name="West Pharmaceutical", pct="7.48")}
+    # the cover's class title is read and written too (findings item 157)
+    docs = {"a-1": XML.format(cik="0000105770", name="West Pharmaceutical", pct="7.48").replace(
+        "</issuerName>", "</issuerName><securitiesClassTitle>Class A common stock</securitiesClassTitle>")}
     with patch("app.scraper.sec_client._get", return_value=subs), \
          patch("app.scraper.sec_client._get_text", side_effect=_doc_for(docs)):
         holdings = sec_holdings.fetch_filer_holdings("0002100119")
@@ -39,10 +41,10 @@ def test_the_scrape_grades_a_filer_side_holding(it_db):
          patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):
         runner_sec.run_scrape_sec_edgar("Vanguard Capital Management")
     edges = run_query("MATCH (a:Entity)-[r:OWNS]->(b:Entity {name: 'West Pharmaceutical'}) "
-                      "RETURN r.read_from AS rf, r.filing_type AS ft, r.stake_percent AS pct")
-    assert [dict(e) for e in edges] == [{"rf": "field", "ft": "13G", "pct": 7.48}]
-    claims = run_sql("SELECT read_from FROM Claim WHERE kind = 'owns' AND filing_type = '13G'")
-    assert [c["read_from"] for c in claims] == ["field"]
+                      "RETURN r.read_from AS rf, r.filing_type AS ft, r.stake_percent AS pct, r.share_class AS cls")
+    assert [dict(e) for e in edges] == [{"rf": "field", "ft": "13G", "pct": 7.48, "cls": "Class A common stock"}]
+    claims = run_sql("SELECT read_from, share_class FROM Claim WHERE kind = 'owns' AND filing_type = '13G'")
+    assert [(c["read_from"], c["share_class"]) for c in claims] == [("field", "Class A common stock")]
 
 
 def _old_altaba_holdings():
@@ -60,7 +62,11 @@ def _old_altaba_holdings():
 def _alibaba_edges():
     return [dict(e) for e in run_query(
         "MATCH (a:Entity)-[r:OWNS]->(b:Entity {sec_cik: '0001577552'}) "
-        "RETURN r.read_from AS rf, r.filing_type AS ft, r.stake_percent AS pct")]
+        "RETURN r.read_from AS rf, r.filing_type AS ft, r.stake_percent AS pct, r.share_class AS cls")]
+
+
+#: the class Altaba's cover states — written by both writers of a filer's holdings (item 157)
+ORDINARY = "Ordinary shares, par value US $0.000025 per share"
 
 
 def test_the_scrape_grades_an_old_cover_page_holding_form(it_db):
@@ -76,7 +82,7 @@ def test_the_scrape_grades_an_old_cover_page_holding_form(it_db):
          patch.object(sec_insiders, "fetch_departures", return_value=[]), \
          patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):
         runner_sec.run_scrape_sec_edgar("Altaba")
-    assert _alibaba_edges() == [{"rf": "form", "ft": "13G/A", "pct": 11.0}]
+    assert _alibaba_edges() == [{"rf": "form", "ft": "13G/A", "pct": 11.0, "cls": ORDINARY}]
     # findings item 71: the cover's CUSIP (Alibaba's ADS, read from Altaba's real
     # 2019 text cover) lands on the subject, the securities bridge's input
     assert [r["cusip"] for r in run_sql("SELECT cusip FROM Entity WHERE sec_cik = '0001577552'")] == ["01609W102"]
@@ -96,5 +102,5 @@ def test_the_holdings_run_grades_an_old_cover_page_holding_form(it_db):
          patch.object(sec_filer, "fetch_filer_website", return_value=None), \
          patch.object(sec_filer, "fetch_filer_sic", return_value=None):
         runner_sec_filings.run_sec_holdings("0001011006")
-    assert _alibaba_edges() == [{"rf": "form", "ft": "13G/A", "pct": 11.0}]
+    assert _alibaba_edges() == [{"rf": "form", "ft": "13G/A", "pct": 11.0, "cls": ORDINARY}]
     assert [r["cusip"] for r in run_sql("SELECT cusip FROM Entity WHERE sec_cik = '0001577552'")] == ["01609W102"]
