@@ -3271,7 +3271,11 @@ Read order local → shared → sec.gov; a fresh fetch writes every layer that i
 on. Measured on a Form D: 10.6 s from sec.gov, 0.15 s from the bucket, 1 ms
 from local disk. Both are best-effort — a full disk or a bucket outage logs a
 warning and the scrape fetches from the source; an undecodable object is a
-miss and gets overwritten.
+miss and gets overwritten. A read timeout is an outage too: until 2026-11-26
+`objectstore._is_missing` read the store's error code off any exception with a
+`response` attribute, and botocore's `ReadTimeoutError` has one set to `None` —
+so a slow bucket raised inside the handler meant to absorb it, and a rebuild
+died in its import's geocoding (the geocode cache is in the same bucket).
 
 **Only Archives files are cached — never searches or listings.**
 `sec_cache.cacheable()` is the one place that decides, and it is deliberately

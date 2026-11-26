@@ -90,3 +90,33 @@ class TestObjectStore:
             assert objectstore.get("k") is None
             assert objectstore.put("k", b"1") is False
             assert "error" in objectstore.summary("edgar/")
+
+    @pytest.mark.parametrize("raised", [
+        # the rebuild of 2026-11-26: a slow bucket, the exception's `response` is None
+        lambda: __import__("botocore.exceptions", fromlist=["x"]).ReadTimeoutError(endpoint_url="https://e/b/k"),
+        lambda: __import__("botocore.exceptions", fromlist=["x"]).EndpointConnectionError(endpoint_url="https://e"),
+        lambda: __import__("botocore.exceptions", fromlist=["x"]).ClientError({}, "GetObject"),   # no Error block
+        lambda: __import__("botocore.exceptions", fromlist=["x"]).ClientError({"Error": None}, "GetObject"),
+    ])
+    def test_a_timeout_or_an_odd_answer_is_an_outage_not_a_crash(self, raised):
+        class Slow(FakeS3):
+            def get_object(self, Bucket, Key):
+                raise raised()
+        with patch.object(settings, "OBJECT_STORE_BUCKET", "b"), \
+             patch.object(settings, "OBJECT_STORE_ENDPOINT", "e"), \
+             patch.object(objectstore, "_get_client", lambda: Slow()), \
+             patch.object(objectstore.source_calls, "count_bucket") as counted:
+            assert objectstore.get("geocode/abc") is None
+        counted.assert_called_once_with("geocode/abc", "error")       # an outage, not "not there"
+
+    def test_only_the_stores_no_such_key_is_a_miss(self):
+        from botocore.exceptions import ClientError
+        assert objectstore._is_missing(ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject"))
+        assert objectstore._is_missing(ClientError({"Error": {"Code": "404"}}, "HeadObject"))
+        assert not objectstore._is_missing(ClientError({"Error": {"Code": "SlowDown"}}, "GetObject"))
+        assert not objectstore._is_missing(RuntimeError("store down"))
+        # an HTTP error from requests' family carries the HTTP response object itself
+        failed = RuntimeError("read timeout")
+        failed.response = type("Response", (), {"status_code": 504})()
+        assert not objectstore._is_missing(failed)
+
