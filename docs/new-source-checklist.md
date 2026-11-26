@@ -1792,6 +1792,23 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       of that one lookup and still hands them to the scrape's count — and give the
       loss its own counter, a second try at the end of the pass, and a line for what
       is still lost.
+- [ ] **A reader is restructured against a tape of the source's real answers.** Moving
+      code between files can be proved by comparing syntax trees; breaking a long
+      function into smaller ones cannot — the statements change. `fetch_ownership_filings`
+      (334 lines, the 13D/G reader every misread came through) was restructured on
+      2026-11-26 with a record-and-replay guard: the old code read 150 real issuers
+      while every EDGAR answer — text, status, timeout — was kept by URL in the order
+      asked; the new code then ran from that tape with the network closed. Equal
+      results are half the proof; the other half is that it asked for the same
+      documents in the same order and left no recorded answer unused, so a branch that
+      stopped fetching something shows even when the result happens to agree. Record
+      below the cache and the retry (at `sec_client._response`), take issuers from every
+      size, and check first that the old code replayed against its own tape is
+      identical — a reader that depends on the clock or on call order across issuers
+      would fail that, and the guard would prove nothing. (It did fail at first, for
+      24 of 150 issuers: the count of requests lost to the network is kept inside the
+      layer the tape replaces. What is counted below the tape is not compared.) And a
+      change planted on purpose must fail the replay before its silence counts.
 - [ ] **A step after a load goes into the one list, `app/finishing.py`.** What the
       finished graph needs (merge across sources, close what a dissolution ended, mark
       shortcuts, search index, geocode, the passes after a batch of scrapes) is a
