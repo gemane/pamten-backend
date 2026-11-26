@@ -1826,6 +1826,17 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       (`SCRAPER_BODS_GLEIF_ENABLED`) that no setting reads: a list in code can be
       tested against the settings and the commands, a list in a shell script cannot.
       `backend/tests/test_finishing.py` pins the three profiles in full.
+- [ ] **A writer is restructured against the database it leaves behind.** The edge
+      writer `_write_owns_sec` (three outcomes: refresh this source's edge, take over
+      another source's, create) was split on 2026-11-26. Its guard wrote real 13D/G
+      statements — as the reader returned them for 150 issuers — twice into a fresh
+      ArcadeDB, with the old code and with the new, and compared every OWNS edge,
+      claim, voting group and membership. Twice, because the second pass is the
+      re-read, where most of a writer's rules are (close the right spell, keep the
+      earliest start, do not draw a second edge). Ids minted per run (a voting group's
+      uuid) are replaced by names and keys hashed from them left out, or two identical
+      runs differ; and a change planted on purpose must make the comparison fail
+      before its silence means anything.
 - [ ] **`register()` validates against the catalogue** — the `KNOWN_SOURCES` entry must
       exist, the kind must match, and the settings flag must be real (Pydantic rejects
       unknown fields, so a test cannot monkeypatch a flag that was never declared). Patch

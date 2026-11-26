@@ -303,6 +303,122 @@ def is_table_filing(filing_type: str | None) -> bool:
     return (filing_type or "").strip().upper() in TABLE_FILING_TYPES
 
 
+def _own_edge(session, owner_label: str, owner_id: str, owned_id: str, source_id: str,
+              until: str | None, dated: str | None):
+    """This source's edge of the pair that a filing speaks about: (the row, the
+    condition that finds that edge again) — or (None, "") when the source has
+    drawn none the filing could mean. ``until``: the end the filing states;
+    ``dated``: the day it describes, for a spell a rule closed."""
+    # Closing an edge has to match one that is ALREADY closed too, or re-reading
+    # the same filings creates a second historical edge every run — the active-only
+    # match never finds the one written last time.
+    #
+    # But closing must find THE period it closes, not every period of the pair:
+    # matching all of them moved an old spell's end to a new exit (present in
+    # the gap between), and an old exit re-read closed a newer open spell with
+    # an end before its start. So: the closed edge already carrying this end
+    # (a re-read), else the open one — and never one that starts after it.
+    if until is None:
+        candidates = ["r.until IS NULL"]
+    else:
+        candidates = ["r.until = $until AND (r.since IS NULL OR r.since <= $until)",
+                      "r.until IS NULL AND (r.since IS NULL OR r.since <= $until)"]
+    existing, active_only = None, ""
+    for cond in candidates:
+        existing = session.run(
+            f"""
+            MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
+            WHERE r.source_id = $sid AND {cond}
+            RETURN r LIMIT 1
+            """,
+            oid=owner_id, nid=owned_id, sid=source_id, until=until,
+        ).single()
+        if existing:
+            active_only = f"AND {cond}"
+            break
+    if not existing and until is None:
+        # The spell the dissolution rule closed (app.dissolution) is still
+        # the one a filing from before the end describes: re-read, it is
+        # updated, not drawn again beside the closed one — once per scrape,
+        # as the rebuild's Altaba re-reads would have. The update states
+        # the filing's open end; the scrape scope closes it again
+        # (graph_writer._end_dissolved_after_scrape).
+        existing = _dissolution_closed(session, owner_label, owner_id, owned_id,
+                                       dated, source_id=source_id)
+        if existing:
+            active_only = f"AND r.until_reason = '{existing['r'].get('until_reason')}'"
+    return existing, active_only
+
+
+def _refresh_own_edge(session, owner_label: str, owner_id: str, owned_id: str, active_only: str,
+                      held, bag: dict) -> None:
+    """Write a filing onto the edge this source already drew for the pair
+    (``held``, found again by ``active_only``): the values of ``bag`` — the
+    full property bag `_write_owns_sec` built from its arguments — with the
+    start combined with the one the edge has."""
+    # The start: combined with what the edge has, earliest wins (an
+    # amendment's lower bound never replaces an original's stated day).
+    started = combine_since({f: held.get(f) for f in SINCE_FIELDS},
+                            {"since": bag["since"], "since_basis": bag["since_basis"],
+                             "since_source_url": bag["since_source_url"]})
+    # Refresh last_scraped_at and backfill the specific record URL/date
+    # onto edges created before provenance (COALESCE keeps existing
+    # values when this scrape didn't yield a URL). The stake and its
+    # type move together: a re-read that corrects one corrects both
+    # (a 0.0000003% co-holder written as "controlling" stayed so
+    # through every re-read while this only reset the stake).
+    #
+    # ArcadeDB applies SET assignments in order, each seeing the
+    # previous ones: the basis must be written BEFORE the marker, or
+    # its condition sees the marker just set and leaves the basis
+    # empty — an inferred marker that then reads as a stated one. When `until` is given
+    # the same statement closes the edge, so a holding that has since
+    # been exited stops showing as current.
+    session.run(
+        f"""
+        MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
+        WHERE r.source_id = $sid {active_only}
+        SET r.last_scraped_at = $now,
+            r.until       = $until,
+            r.stale       = false, r.stale_since = null,
+            r.stale_reason = null, r.stale_source_url = null,
+            r.stake_percent    = $stake,
+            r.ownership_type   = $otype,
+            r.voting_power_pct = $vote,
+            r.share_class      = $sclass,
+            r.shares           = COALESCE($shares, r.shares),
+            r.shares_outstanding = COALESCE($shtotal, r.shares_outstanding),
+            r.denominator_date   = $ddate,
+            r.event_date         = $edate,
+            r.voting_shares    = COALESCE($vshares, r.voting_shares),
+            r.value_usd        = COALESCE($vusd, r.value_usd),
+            r.filing_type      = COALESCE($ftype, r.filing_type),
+            r.read_from        = $rfrom,
+            r.source_url  = COALESCE($surl,  r.source_url),
+            r.source_date = COALESCE($sdate, r.source_date),
+            r.since            = $csince,
+            r.since_basis      = $cbasis,
+            r.since_source_url = $csurl,
+            r.structure_basis    = CASE WHEN $doi IS NOT NULL AND
+                                             (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)
+                                        THEN $sbasis ELSE r.structure_basis END,
+            r.direct_or_indirect = CASE WHEN $doi IS NOT NULL AND
+                                             (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)
+                                        THEN $doi ELSE r.direct_or_indirect END
+        """,
+        oid=owner_id, nid=owned_id, sid=bag["source_id"], now=bag["last_scraped_at"],
+        surl=bag["source_url"], sdate=bag["source_date"], until=bag["until"],
+        stake=bag["stake_percent"], otype=bag["ownership_type"],
+        vote=bag["voting_power_pct"], sclass=bag["share_class"],
+        shares=bag["shares"], shtotal=bag["shares_outstanding"], vshares=bag["voting_shares"],
+        ddate=bag["denominator_date"], edate=bag["event_date"],
+        vusd=bag["value_usd"], ftype=bag["filing_type"], rfrom=bag["read_from"],
+        doi=bag["direct_or_indirect"], sbasis=bag["structure_basis"],
+        csince=started["since"], cbasis=started["since_basis"],
+        csurl=started["since_source_url"],
+    )
+
+
 def _write_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      ownership_type: str, file_date: str | None,
                      stake_percent: float | None, source_url: str | None = None,
@@ -421,108 +537,11 @@ def _write_owns_sec(owner_id: str, owned_id: str, source_id: str,
         read_from=read_from, stale=False,
     )
     create_clause = edge_create_clause(OWNS_PROPS)
-    # Closing an edge has to match one that is ALREADY closed too, or re-reading
-    # the same filings creates a second historical edge every run — the active-only
-    # match never finds the one written last time.
-    #
-    # But closing must find THE period it closes, not every period of the pair:
-    # matching all of them moved an old spell's end to a new exit (present in
-    # the gap between), and an old exit re-read closed a newer open spell with
-    # an end before its start. So: the closed edge already carrying this end
-    # (a re-read), else the open one — and never one that starts after it.
-    if until is None:
-        candidates = ["r.until IS NULL"]
-    else:
-        candidates = ["r.until = $until AND (r.since IS NULL OR r.since <= $until)",
-                      "r.until IS NULL AND (r.since IS NULL OR r.since <= $until)"]
     with db.get_session() as session:
-        existing, active_only = None, ""
-        for cond in candidates:
-            existing = session.run(
-                f"""
-                MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
-                WHERE r.source_id = $sid AND {cond}
-                RETURN r LIMIT 1
-                """,
-                oid=owner_id, nid=owned_id, sid=source_id, until=until,
-            ).single()
-            if existing:
-                active_only = f"AND {cond}"
-                break
-        if not existing and until is None:
-            # The spell the dissolution rule closed (app.dissolution) is still
-            # the one a filing from before the end describes: re-read, it is
-            # updated, not drawn again beside the closed one — once per scrape,
-            # as the rebuild's Altaba re-reads would have. The update states
-            # the filing's open end; the scrape scope closes it again
-            # (graph_writer._end_dissolved_after_scrape).
-            existing = _dissolution_closed(session, owner_label, owner_id, owned_id,
-                                           since or file_date, source_id=source_id)
-            if existing:
-                active_only = f"AND r.until_reason = '{existing['r'].get('until_reason')}'"
+        existing, active_only = _own_edge(session, owner_label, owner_id, owned_id, source_id,
+                                          until, since or file_date)
         if existing:
-            # The start: combined with what the edge has, earliest wins (an
-            # amendment's lower bound never replaces an original's stated day).
-            held = existing["r"]
-            started = combine_since({f: held.get(f) for f in SINCE_FIELDS},
-                                    {"since": since, "since_basis": basis,
-                                     "since_source_url": since_source_url if since else None})
-            # Refresh last_scraped_at and backfill the specific record URL/date
-            # onto edges created before provenance (COALESCE keeps existing
-            # values when this scrape didn't yield a URL). The stake and its
-            # type move together: a re-read that corrects one corrects both
-            # (a 0.0000003% co-holder written as "controlling" stayed so
-            # through every re-read while this only reset the stake).
-            #
-            # ArcadeDB applies SET assignments in order, each seeing the
-            # previous ones: the basis must be written BEFORE the marker, or
-            # its condition sees the marker just set and leaves the basis
-            # empty — an inferred marker that then reads as a stated one. When `until` is given
-            # the same statement closes the edge, so a holding that has since
-            # been exited stops showing as current.
-            session.run(
-                f"""
-                MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
-                WHERE r.source_id = $sid {active_only}
-                SET r.last_scraped_at = $now,
-                    r.until       = $until,
-                    r.stale       = false, r.stale_since = null,
-                    r.stale_reason = null, r.stale_source_url = null,
-                    r.stake_percent    = $stake,
-                    r.ownership_type   = $otype,
-                    r.voting_power_pct = $vote,
-                    r.share_class      = $sclass,
-                    r.shares           = COALESCE($shares, r.shares),
-                    r.shares_outstanding = COALESCE($shtotal, r.shares_outstanding),
-                    r.denominator_date   = $ddate,
-                    r.event_date         = $edate,
-                    r.voting_shares    = COALESCE($vshares, r.voting_shares),
-                    r.value_usd        = COALESCE($vusd, r.value_usd),
-                    r.filing_type      = COALESCE($ftype, r.filing_type),
-                    r.read_from        = $rfrom,
-                    r.source_url  = COALESCE($surl,  r.source_url),
-                    r.source_date = COALESCE($sdate, r.source_date),
-                    r.since            = $csince,
-                    r.since_basis      = $cbasis,
-                    r.since_source_url = $csurl,
-                    r.structure_basis    = CASE WHEN $doi IS NOT NULL AND
-                                                     (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)
-                                                THEN $sbasis ELSE r.structure_basis END,
-                    r.direct_or_indirect = CASE WHEN $doi IS NOT NULL AND
-                                                     (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)
-                                                THEN $doi ELSE r.direct_or_indirect END
-                """,
-                oid=owner_id, nid=owned_id, sid=source_id, now=now,
-                surl=source_url, sdate=file_date, until=until,
-                stake=stake_percent, otype=ownership_type,
-                vote=voting_power_pct, sclass=share_class,
-                shares=shares, shtotal=shares_outstanding, vshares=voting_shares,
-                ddate=denominator_date, edate=event_date,
-                vusd=value_usd, ftype=filing_type, rfrom=read_from,
-                doi=direct_or_indirect, sbasis=structure_basis,
-                csince=started["since"], cbasis=started["since_basis"],
-                csurl=started["since_source_url"],
-            )
+            _refresh_own_edge(session, owner_label, owner_id, owned_id, active_only, existing["r"], bag)
             return
         # Another source already holds this pair: take over ITS edge rather than
         # drawing a second one beside it (see app.scraper.owns_merge).
