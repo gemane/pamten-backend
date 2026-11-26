@@ -119,3 +119,24 @@ def test_a_small_block_or_one_that_names_nobody_is_no_vehicle():
     assert "trust" not in {v["name"] for v in split_shared_blocks([carlos, patrick], SERIES_B)}
     # no count of the class: no measure, no vehicle
     assert split_shared_blocks([_ex("carlos"), _ex("patrick")], None) == []
+
+
+def test_a_vehicle_is_dated_by_the_filings_that_state_it():
+    # findings item 160: an insider whose newest filing grants units only has
+    # the block from an older one — the vehicle is dated by that filing
+    carlos, patrick = _ex("carlos"), _ex("patrick")
+    carlos.update(source_date="2026-11-25", source_url="https://www.sec.gov/grant-index.htm",
+                  holding_date="2026-03-10", holding_url="https://www.sec.gov/f3-carlos-index.htm")
+    patrick.update(source_date="2026-03-11", source_url="https://www.sec.gov/f3-patrick-index.htm")
+    trust = next(v for v in split_shared_blocks([carlos, patrick], SERIES_B) if v["name"] == "Control Trust")
+    assert (trust["source_date"], trust["source_url"]) == ("2026-03-11", "https://www.sec.gov/f3-patrick-index.htm")
+
+
+
+def test_a_vehicle_points_at_the_filing_that_states_it():
+    carlos, patrick = _ex("carlos"), _ex("patrick")
+    carlos.update(source_date="2026-11-25", source_url="https://www.sec.gov/grant-index.htm",
+                  holding_date="2026-03-12", holding_url="https://www.sec.gov/f3-carlos-index.htm")
+    patrick.update(source_date="2026-03-11", source_url="https://www.sec.gov/f3-patrick-index.htm")
+    trust = next(v for v in split_shared_blocks([carlos, patrick], SERIES_B) if v["name"] == "Control Trust")
+    assert (trust["source_date"], trust["source_url"]) == ("2026-03-12", "https://www.sec.gov/f3-carlos-index.htm")

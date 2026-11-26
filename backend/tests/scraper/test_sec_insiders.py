@@ -1006,3 +1006,96 @@ class TestForm5InTheInsiderWindow:
              patch.object(sec_client, "_get_text", side_effect=lambda url, params=None: docs[url.rsplit("/", 1)[-1]]):
             execs = sec_insiders.fetch_executives("203596")
         assert sorted(e["name"] for e in execs) == ["Michael J Crawford", "Todd Clossin"]
+
+
+class TestAGrantOnlyFilingStatesNoPosition:
+    """Findings item 160: Valvoline's officers filed Form 4s on 2026-11-25 that
+    grant FY 2027 restricted stock units only — Table II, no share — and the
+    reader took that newest filing as their position: seven holdings stated in
+    their Form 4s of 2026-11-23 were gone from the rebuild of 2026-11-26b."""
+
+    def _xml(self, name, *, common=None, units=None, cik="0001575329"):
+        rows = ""
+        if common is not None:
+            rows += ("<nonDerivativeTable><nonDerivativeTransaction><securityTitle><value>Common Stock</value>"
+                     "</securityTitle><postTransactionAmounts><sharesOwnedFollowingTransaction>"
+                     f"<value>{common}</value></sharesOwnedFollowingTransaction></postTransactionAmounts>"
+                     "</nonDerivativeTransaction></nonDerivativeTable>")
+        if units is not None:
+            rows += ("<derivativeTable><derivativeTransaction><securityTitle><value>FY 2027 Restricted Stock "
+                     "Units</value></securityTitle><postTransactionAmounts><sharesOwnedFollowingTransaction>"
+                     f"<value>{units}</value></sharesOwnedFollowingTransaction></postTransactionAmounts>"
+                     "</derivativeTransaction></derivativeTable>")
+        return (f'<?xml version="1.0"?><ownershipDocument><documentType>4</documentType>'
+                f'<periodOfReport>2026-11-21</periodOfReport><issuer><issuerCik>0001674910</issuerCik></issuer>'
+                f'<reportingOwner><reportingOwnerId><rptOwnerCik>{cik}</rptOwnerCik>'
+                f'<rptOwnerName>{name}</rptOwnerName></reportingOwnerId><reportingOwnerRelationship>'
+                f'<isDirector>0</isDirector><isOfficer>1</isOfficer><officerTitle>CFO</officerTitle>'
+                f'</reportingOwnerRelationship></reportingOwner>{rows}</ownershipDocument>')
+
+    def _run(self, docs, dates):
+        from app.scraper import sec_client, sec_insiders
+        n = len(docs)
+        submissions = {"filings": {"recent": {
+            "form": ["4"] * n, "accessionNumber": [f"0001575329-26-{i:06d}" for i in range(n)],
+            "primaryDocument": [f"d{i}.xml" for i in range(n)], "filingDate": dates}}}
+        served = {f"d{i}.xml": d for i, d in enumerate(docs)}
+        with patch.object(sec_client, "_get", return_value=submissions), \
+             patch.object(sec_client, "_get_text", side_effect=lambda url, params=None: served[url.split("/")[-1]]):
+            return sec_insiders.fetch_executives("1674910")
+
+    def test_the_holding_comes_from_the_newest_filing_that_states_one(self):
+        execs = self._run([self._xml("Willis J Kevin", units=14460), self._xml("Willis J Kevin", common=36433),
+                           self._xml("Willis J Kevin", common=30000)],
+                          ["2026-11-25", "2026-06-03", "2026-03-01"])
+        assert len(execs) == 1
+        ex = execs[0]
+        assert ex["shares_owned"] == 36433.0 and ex["share_class"] == "Common Stock"
+        # the role is the newest filing's, the holding where it was stated
+        assert ex["source_date"] == "2026-11-25" and ex["holding_date"] == "2026-06-03"
+        assert ex["holding_url"].endswith("0001575329-26-000001-index.htm")
+
+    def test_a_filing_that_sells_out_is_a_position_of_none(self):
+        execs = self._run([self._xml("Willis J Kevin", common=0), self._xml("Willis J Kevin", common=36433)],
+                          ["2026-11-25", "2026-06-03"])
+        assert execs[0]["shares_owned"] is None and execs[0].get("holding_date") is None
+
+    def test_a_newest_filing_that_states_one_is_kept(self):
+        execs = self._run([self._xml("Willis J Kevin", common=40000, units=14460),
+                           self._xml("Willis J Kevin", common=36433)], ["2026-11-25", "2026-06-03"])
+        assert execs[0]["shares_owned"] == 40000.0 and execs[0].get("holding_date") is None
+
+    def test_where_a_holding_was_stated(self):
+        from app.scraper.sec_insiders import holding_source
+        assert holding_source({"source_url": "n", "source_date": "2026-11-25"}) == ("n", "2026-11-25")
+        assert holding_source({"source_url": "n", "source_date": "2026-11-25", "holding_url": "o",
+                               "holding_date": "2026-06-03"}) == ("o", "2026-06-03")
+
+
+def test_fetch_insider_holding_passes_a_grant_only_form_4():
+    # the person-centric reader too (findings item 160): its newest Form 4 about
+    # the issuer grants units only; the one before states the shares
+    from app.scraper.sec_insiders import fetch_insider_holding
+    grant = ("<x><issuerCik>0001364742</issuerCik><derivativeTable><derivativeTransaction><securityTitle>"
+             "<value>Restricted Stock Units</value></securityTitle><postTransactionAmounts>"
+             "<sharesOwnedFollowingTransaction><value>500</value></sharesOwnedFollowingTransaction>"
+             "</postTransactionAmounts></derivativeTransaction></derivativeTable></x>")
+    subs = {"filings": {"recent": {"form": ["4", "4"], "accessionNumber": ["0001059245-26-000002", "0001059245-26-000001"],
+                                   "primaryDocument": ["a.xml", "b.xml"], "filingDate": ["2026-11-25", "2026-06-03"]}}}
+    served = {"a.xml": grant, "b.xml": _form4("0001364742", "2000")}
+    with patch("app.scraper.sec_client._get", return_value=subs), \
+         patch("app.scraper.sec_client._get_text", side_effect=lambda url: served[url.split("/")[-1]]), \
+         patch("time.sleep"):
+        out = fetch_insider_holding("Larry Fink", "0001364742", person_cik="1059245")
+    assert out["shares_owned"] == 2000.0 and out["source_date"] == "2026-06-03"
+
+
+def test_fetch_insider_holding_stops_at_a_sold_out_form_4():
+    from app.scraper.sec_insiders import fetch_insider_holding
+    subs = {"filings": {"recent": {"form": ["4", "4"], "accessionNumber": ["0001059245-26-000002", "0001059245-26-000001"],
+                                   "primaryDocument": ["a.xml", "b.xml"], "filingDate": ["2026-11-25", "2026-06-03"]}}}
+    served = {"a.xml": _form4("0001364742", "0"), "b.xml": _form4("0001364742", "2000")}
+    with patch("app.scraper.sec_client._get", return_value=subs), \
+         patch("app.scraper.sec_client._get_text", side_effect=lambda url: served[url.split("/")[-1]]), \
+         patch("time.sleep"):
+        assert fetch_insider_holding("Larry Fink", "0001364742", person_cik="1059245") is None

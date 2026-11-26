@@ -14,6 +14,7 @@ it did while this code was part of runner.py (until 2026-11-25).
 from datetime import datetime, timezone
 
 from app.scraper import runner
+from app.scraper.sec_insiders import holding_source
 
 
 def _vertex_holding_cik(cik: str | None) -> str | None:
@@ -630,7 +631,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                     owner_id=ent_id, owned_id=target_id, source_id=source_id,
                     ownership_type=(runner.derive_ownership_type(stake) if stake is not None
                                     else "minority"),
-                    file_date=exec_rec.get("source_date"), stake_percent=stake,
+                    file_date=holding_source(exec_rec)[1], stake_percent=stake,
                     # the class the count is of, and the count of THAT class it
                     # was measured against (none when the classes did not match)
                     shares=shares, share_class=exec_rec.get("share_class"),
@@ -640,7 +641,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                     # a Form 3/4 states what is held AS OF the report, not since
                     # when: its date written as a start hid an insider's older
                     # holding before their latest trade
-                    filing_dates_the_stake=False, source_url=exec_rec.get("source_url"),
+                    filing_dates_the_stake=False, source_url=holding_source(exec_rec)[0],
                     owner_label="Entity")
                 scraped.append({"type": "owns", "name": name, "role": "insider owner"})
             continue
@@ -704,7 +705,9 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                 owned_id=target_id,
                 source_id=source_id,
                 ownership_type=(runner.derive_ownership_type(stake) if stake is not None else "minority"),
-                file_date=exec_rec.get("source_date"),
+                # the filing that states the holding: an older one when the
+                # newest is a grant of units only (findings item 160)
+                file_date=holding_source(exec_rec)[1],
                 stake_percent=stake, read_from=runner.READ_FIELD,
                 # Form 4 states the holding exactly; until now it decided
                 # whether to write an edge and was then thrown away.
@@ -721,7 +724,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                 # when: its date written as a start hid an insider's older
                 # holding before their latest trade
                 filing_dates_the_stake=False,
-                source_url=exec_rec.get("source_url"),
+                source_url=holding_source(exec_rec)[0],
                 owner_label="Person",
             )
             scraped.append({"type": "owns", "name": name, "role": "insider owner"})
