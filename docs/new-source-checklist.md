@@ -1809,6 +1809,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       24 of 150 issuers: the count of requests lost to the network is kept inside the
       layer the tape replaces. What is counted below the tape is not compared.) And a
       change planted on purpose must fail the replay before its silence counts.
+- [ ] **A document read on two paths yields the same fields on both.** A 13D/G is read
+      from the issuer's list (who owns it) and from the filer's list (what it owns):
+      the same document, two readers, two sets of writers. The issuer side stored the
+      class a percentage is of; the filer side did not, for years — the question
+      "does this filing state its class?" was answered "no" from an edge that only
+      shows which reader wrote it (findings item 157: a quarter of the 13D/G edges
+      class-less, Mobileye at 101.4 %). When a field is added to one reader, grep the
+      other for it; when a field is missing on an edge, open the filing before
+      concluding the source does not state it.
 - [ ] **A step after a load goes into the one list, `app/finishing.py`.** What the
       finished graph needs (merge across sources, close what a dissolution ended, mark
       shortcuts, search index, geocode, the passes after a batch of scrapes) is a

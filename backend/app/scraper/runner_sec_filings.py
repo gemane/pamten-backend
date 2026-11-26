@@ -1034,6 +1034,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
             ownership_type="minority", file_date=h.get("file_date"),
             stake_percent=h.get("stake_percent"), source_url=h.get("source_url"),
             voting_power_pct=h.get("voting_power_pct"), until=h.get("until"),
+            share_class=h.get("share_class"),     # the class the percentage is of (item 157)
             filing_type=h.get("filing_type"), event_date=h.get("event_date"),
             since_date=h.get("since"), since_basis=h.get("since_basis"),
             final_report=h.get("final_report"),     # the filer's last report (item 35)
