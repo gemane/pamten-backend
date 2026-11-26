@@ -337,7 +337,8 @@ def _holding(inv: dict, st: "_Statement", since: str | None, since_basis: str | 
 
 
 def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
-                            limit: int = 20, entries=None, exits: list | None = None) -> list:
+                            limit: int = 20, entries=None, exits: list | None = None,
+                            exit_days: list | None = None) -> list:
     """
     Find SC 13D/13G large-shareholder filings where this company is the issuer.
     Uses EDGAR's company browse Atom feed (keyed by CIK), which is more reliable
@@ -352,6 +353,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
     that reports no position — the caller that reads only the newest filings
     never reaches the older holding an exit closes, and must still know who
     left.
+    ``exit_days``: the same, each with the statement's filing date, as
+    (name, "YYYY-MM-DD") — for the ownership table step, which weighs an exit
+    by its age (`sec_writer.recent_exits`, findings item 159).
     """
     if not company_cik:
         log.warning("SEC EDGAR: CIK required for ownership search; skipping %r", company_name)
@@ -478,6 +482,8 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             closed_since[inv["investor_cik"]] = st.event_date or inv["file_date"]
             if exits is not None:
                 exits.extend(st.names or [inv["investor_name"]])
+            if exit_days is not None:
+                exit_days.extend((n, str(inv["file_date"])[:10]) for n in st.names or [inv["investor_name"]])
             if st.passive:
                 group_closed.append((sec_13dg_text._co_filer_names(st.names, inv["investor_name"]),
                                      st.event_date or inv["file_date"]))

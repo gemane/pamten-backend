@@ -101,7 +101,10 @@ def _scrape_company(company_name: str, holdings_limit: int, cik: str | None) -> 
     cik          = company.get("cik")
     former_names = sec_filer.fetch_former_names(cik) if cik else []
     lei          = sec_filer.fetch_company_lei(cik) if cik else None
-    ownership    = sec_13dg.fetch_ownership_filings(company_name, company_cik=cik)
+    # who reported no position, and when: the ownership table step leaves
+    # them out (findings item 159)
+    ownership_exits: list = []
+    ownership    = sec_13dg.fetch_ownership_filings(company_name, company_cik=cik, exit_days=ownership_exits)
     executives   = sec_insiders.fetch_executives(cik) if cik else []
     if cik:
         # the directors and officers the proxy names whom the insider window
@@ -138,6 +141,7 @@ def _scrape_company(company_name: str, holdings_limit: int, cik: str | None) -> 
         "lei":                lei,
         "former_names":       former_names,
         "ownership_filings":  ownership,
+        "ownership_exits":    list(dict.fromkeys(ownership_exits)),
         "holdings":           holdings,
         "ads_cusips":         ads.get("cusips") or [],
         "ads_cusip_url":      ads.get("source_url"),

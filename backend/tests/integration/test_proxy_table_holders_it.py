@@ -335,6 +335,22 @@ def test_the_pass_writes_who_reported_since_the_table_and_not_who_left(it_db):
     assert (res["written"]["written"], res["written"]["exited"]) == (1, 1)
 
 
+def test_an_older_exit_found_through_the_index_does_not_stop_the_row(it_db, filer_index):
+    from pathlib import Path
+    from app.scraper import sec_13dg_xml
+    table, subs = _newmark(it_db)
+    table["rows"] = [_row("The Vanguard Group", 5.0)]
+    it_db.run_command("CREATE (:Entity {id: 'lei:vg', name: 'VANGUARD GROUP INC', type: 'company', "
+                      "name_normalized: 'vanguard group', sec_cik: '0000102909'})")
+    fixtures = Path(__file__).parent.parent / "scraper" / "fixtures"
+    exit_xml = {**sec_13dg_xml._parse_13dg_xml((fixtures / "13ga_vanguard_exit.xml").read_text()),
+                "issuer_cik": NEWMARK, "issuer_name": "Newmark Group, Inc."}
+    filer_index.return_value = [_index_entry(day="2021-02-10", name="VANGUARD GROUP INC", cik="0000102909",
+                                             accession=VANGUARD_EXIT)]
+    res, _ = _read_newmark(table, subs, persons=(), statement=exit_xml)
+    assert res["older"]["exited"] == [] and _newmark_edges(it_db) == [("VANGUARD GROUP INC", "DEF 14A", None)]
+
+
 def test_the_issuers_own_scrape_does_not_read_the_statements_again(it_db):
     from app.scraper import sec_client
     from app.scraper.sec_writer import read_table_and_close
@@ -366,13 +382,13 @@ def test_a_registered_funds_statements_are_not_read(it_db):
 
 # ── A scrape that lost its 13D/G owners (findings item 156) ──────────────────
 
-def _scrape(table, failed_sections, browse=None):
+def _scrape(table, failed_sections, browse=None, exits=None):
     """The issuer's own SEC scrape written to the graph, its table given and
     its 13D/G owners read (`[]`: none filed) or lost to the network."""
     from app.scraper import runner_sec
     subs = {"cik": "2041610", "filings": {"recent": {"form": ["10-K", "10-K/A"]}}}
     data = {"name": "Skydance Corp", "cik": "0002041610", "ownership_filings": [], "executives": [],
-            "holdings": [], "failed_sections": failed_sections}
+            "holdings": [], "failed_sections": failed_sections, "ownership_exits": exits or []}
     with patch("app.scraper.sec_filer.fetch_filer_headquarters", return_value=None), \
          patch("app.scraper.sec_filer.fetch_filer_website", return_value=None), \
          patch("app.scraper.sec_filer.fetch_filer_sic", return_value=None), \
@@ -413,6 +429,26 @@ def test_a_scrape_that_lost_another_section_applies_its_table(it_db):
     table = {"as_of": "2026-04-17", "rows": [_row("Harbor Lights Entertainment, Inc.", 100.0, "Class A")]}
     assert _scrape(table, ["insiders"])["status"] == "partial"
     assert set(_edges(it_db)) == {HARBOR}
+
+
+def test_the_issuers_own_scrape_leaves_out_a_holder_whose_statement_reports_no_position(it_db):
+    # Sirius XM, rebuild 2026-11-26b: the scrape read The Vanguard Group's 13G/A
+    # exit of 2026-03 and closed its holding, then its DEF 14A of 2026-04-10 —
+    # quoting an older 13G — wrote "VANGUARD GROUP INC 5.4 %" (findings item 159)
+    _seed(it_db)
+    table = {"as_of": "2026-04-02", "rows": [_row("BlackRock, Inc.", 5.4),
+                                             _row("Harbor Lights Entertainment, Inc.", 100.0, "Class A")]}
+    _scrape(table, [], exits=[("BLACKROCK INC", "2026-03-13")])
+    assert set(_edges(it_db)) == {HARBOR}
+
+
+def test_an_exit_years_before_the_table_does_not_stop_its_row(it_db):
+    # Anson Funds on Genius Brands: its exit of 2021-02-10 is the newest statement
+    # EDGAR's index lists, but the proxy of 2026 quotes its 13G of 2026-02-17
+    _seed(it_db)
+    table = {"as_of": "2026-04-02", "rows": [_row("BlackRock, Inc.", 9.9)]}
+    _scrape(table, [], exits=[("BLACKROCK INC", "2021-02-10")])
+    assert set(_edges(it_db)) == {BLK}
 
 
 # ── A holder's name search lost to the network (findings item 155) ───────────
@@ -571,14 +607,15 @@ def _index_entry(day="2025-10-06", name="CANTOR FITZGERALD, L. P.", cik="0001024
             "index_url": sec_client._filing_index_url(NEWMARK, accession)}
 
 
-def _read_newmark(table, subs, persons=("CF Group Management, Inc.", "Brandon G. Lutnick"), statements_for="Newmark Group Inc"):
+def _read_newmark(table, subs, persons=("CF Group Management, Inc.", "Brandon G. Lutnick"), statements_for="Newmark Group Inc",
+                  statement=None):
     from app.scraper import sec_13dg_xml, sec_client, sec_filer, sec_lookup
     from app.scraper.sec_writer import read_table_and_close
     opened = []
 
     def xml(cik, accession):
         opened.append(accession)
-        return _cantor_statement()
+        return statement or _cantor_statement()
     with patch.object(sec_client, "_submissions", return_value=subs), \
          patch.object(sec_client, "_get_text", return_value="<html></html>"), \
          patch.object(sec_13dg_xml, "_fetch_13dg_xml", side_effect=xml), \
@@ -610,7 +647,7 @@ def test_a_table_holder_is_written_from_its_own_older_statement(it_db, filer_ind
                                 _index_entry(name="VANGUARD GROUP INC", cik="0000102909", accession="0000102909-25-000077")]
     res, opened = _read_newmark(table, subs)
     assert opened == [CANTOR_13D]                              # the holder the table names — not Vanguard's
-    assert res["older"] == {"written": 1, "asked": True, "lost": False}
+    assert res["older"] == {"written": 1, "asked": True, "lost": False, "exited": []}
     edges = _newmark_edges(it_db)
     assert ("BlackRock, Inc.", "DEF 14A", "Class A") in edges  # no statement of its own: from the table, as before
     assert not [e for e in edges if e[1] == "DEF 14A" and e[0] != "BlackRock, Inc."], edges
@@ -622,7 +659,7 @@ def test_without_the_statement_the_rows_are_written_from_the_table(it_db, filer_
     # the index knows no statement of these holders: the table is all there is (item 86)
     table, subs = _newmark(it_db)
     res, opened = _read_newmark(table, subs, persons=())
-    assert opened == [] and res["older"] == {"written": 0, "asked": True, "lost": False}
+    assert opened == [] and res["older"] == {"written": 0, "asked": True, "lost": False, "exited": []}
     assert _newmark_edges(it_db) == [("BlackRock, Inc.", "DEF 14A", "Class A"), ("CF Group Management, Inc.", "DEF 14A", "Class B"),
                                      ("Cantor Fitzgerald, L.P.", "DEF 14A", "Class B")]
 
@@ -650,7 +687,7 @@ def test_the_index_is_not_asked_when_statements_cover_every_row(it_db, filer_ind
                      filing_type="13G/A", source_url="https://www.sec.gov/blk-index.htm")
     res, _ = _read_newmark(table, subs, persons=())
     filer_index.assert_not_called()
-    assert res["older"] == {"written": 0, "asked": False, "lost": False}
+    assert res["older"] == {"written": 0, "asked": False, "lost": False, "exited": []}
 
 
 def test_the_issuers_own_scrape_does_not_ask_the_index(it_db, filer_index):
@@ -666,7 +703,7 @@ def test_an_index_that_did_not_answer_holds_the_table_rows_back(it_db, filer_ind
     table, subs = _newmark(it_db)
     filer_index.return_value = None
     res, _ = _read_newmark(table, subs, persons=())
-    assert res["older"] == {"written": 0, "asked": True, "lost": True}
+    assert res["older"] == {"written": 0, "asked": True, "lost": True, "exited": []}
     assert (res["written"]["written"], res["written"]["lost"]) == (0, 3)
     assert _newmark_edges(it_db) == []
 
@@ -716,3 +753,30 @@ def test_the_pass_reads_the_table_again_when_the_index_answers_later(it_db, file
     assert filer_index.call_count == 2
     assert (res["older"], res["lost"], res["written"]) == (1, 0, 0)
     assert res["lines"][-1].endswith("read again: 0 written, none lost; 1 statement holders written")
+
+
+def test_a_holder_whose_newest_statement_before_the_table_is_an_exit_is_not_written(it_db, filer_index):
+    """Findings item 159: The Vanguard Group's 13G/A of 2026-03-26 reports 0 %
+    (its holdings went to Vanguard Capital Management and Vanguard Portfolio
+    Management); Lexeo's proxy of 2026-04-15 still lists it at 5 %, "based on …
+    a Schedule 13G filed … on January 30, 2026". The exit is filed before the
+    table, so 'the statements since' never read it, and the older-statements
+    pass read it and dropped it: the row was written from the table — 24
+    tables in the rebuild of 2026-11-26b."""
+    from pathlib import Path
+    from app.scraper import sec_13dg_xml
+    table, subs = _newmark(it_db)
+    table["as_of"] = "2026-03-31"
+    table["rows"] = [_row("The Vanguard Group", 5.0), _row("BlackRock, Inc.", 6.6, "Class A")]
+    it_db.run_command("CREATE (:Entity {id: 'lei:vg', name: 'VANGUARD GROUP INC', type: 'company', "
+                      "name_normalized: 'vanguard group', sec_cik: '0000102909'})")
+    fixtures = Path(__file__).parent.parent / "scraper" / "fixtures"
+    exit_xml = {**sec_13dg_xml._parse_13dg_xml((fixtures / "13ga_vanguard_exit.xml").read_text()),
+                "issuer_cik": NEWMARK, "issuer_name": "Newmark Group, Inc."}    # the real one is on GCI Liberty
+    filer_index.return_value = [_index_entry(day="2026-03-26", name="VANGUARD GROUP INC", cik="0000102909",
+                                             accession=VANGUARD_EXIT)]
+    res, opened = _read_newmark(table, subs, persons=(), statement=exit_xml)
+    assert opened == [VANGUARD_EXIT]
+    assert res["older"]["written"] == 0 and "The Vanguard Group" in res["older"]["exited"]
+    assert _newmark_edges(it_db) == [("BlackRock, Inc.", "DEF 14A", "Class A")]
+    assert (res["written"]["written"], res["written"]["exited"]) == (1, 1)

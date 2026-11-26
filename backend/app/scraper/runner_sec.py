@@ -591,7 +591,10 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                 runner.log.warning("SEC EDGAR: %r's ownership table not applied — its 13D/G owners were lost "
                                    "to the network, so no holder could be told covered", data["name"])
             else:
-                table = read_table_and_close(target_id, data["cik"], subs, write=True, source_id=source_id)
+                # the holders whose statements just read report no position
+                # are not written from the table (findings item 159)
+                table = read_table_and_close(target_id, data["cik"], subs, write=True, source_id=source_id,
+                                             exited=data.get("ownership_exits"))
                 if table.get("written"):
                     runner.log.info("SEC EDGAR: %r's ownership table: %s", data["name"], table["written"])
                 # a holder's name search lost to the network: the holder is not
