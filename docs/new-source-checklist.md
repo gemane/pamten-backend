@@ -1831,6 +1831,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       source is silent, open the source; and before paying for a full read (an
       issuer's 13D/G feed: 80 requests), look for the index that lists the answer in
       one (`efts search-index?ciks=…&forms=…`).
+- [ ] **A handler that classifies a failure must survive the failure it did not
+      expect.** `objectstore.get` absorbs every error and tells a missing key from an
+      outage by reading `exc.response["Error"]["Code"]` — `getattr(exc, "response",
+      {})` assumed an exception either has a dict there or none at all. botocore's
+      read timeout has the attribute, set to `None`; the classifier raised, the
+      best-effort cache crashed the import's geocoding, and the rebuild of 2026-11-26
+      stopped in step 3. Test the handler with the real exception classes of the
+      library (a timeout, a connection error, an error without its body), not only
+      with a `RuntimeError` and the one answer you expect.
 - [ ] **A step after a load goes into the one list, `app/finishing.py`.** What the
       finished graph needs (merge across sources, close what a dissolution ended, mark
       shortcuts, search index, geocode, the passes after a batch of scrapes) is a

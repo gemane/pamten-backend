@@ -134,5 +134,13 @@ def summary(prefix: str) -> dict:
 
 
 def _is_missing(exc: Exception) -> bool:
-    code = getattr(exc, "response", {}).get("Error", {}).get("Code", "") if hasattr(exc, "response") else ""
-    return code in ("NoSuchKey", "404", "NotFound")
+    """Did the store answer "no such object"? Only a ClientError carries the
+    store's answer (`response["Error"]["Code"]`). A read timeout carries a
+    `response` too — None, inherited from requests' exceptions — and reading a
+    code off it raised inside `get`'s own handler: a slow bucket answer crashed
+    the import's geocoding and with it a rebuild (2026-11-26), where an outage
+    is meant to be a miss."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    return (response.get("Error") or {}).get("Code", "") in ("NoSuchKey", "404", "NotFound")
