@@ -709,7 +709,12 @@ node**, with `name_credibility` beside it: SEC 98, Companies House 97, GLEIF 92
 writer replaces a name only of lower or equal credibility; the SEC scrape gives the
 filer EDGAR's own name for its CIK on the same rule and keeps the replaced name in
 `aliases`, so search still finds it. A name another filing spells (a 13D party, an
-Exhibit 21 row) never renames a node. Until 2026-10-28 the SEC writer never renamed,
+Exhibit 21 row) never renames a node. GLEIF's own writers — the full import and the
+nightly delta — follow the rule too since 2026-11-28 (`gleif_lei_cdf.keep_better_name`,
+findings item 165): a more credible name stays, GLEIF's legal name joins `aliases` and
+the search text. Before, they wrote what they read, and a filer's name went back to
+GLEIF's with the next delta that touched its record ("Sony Group Corp" →
+"ソニーグループ株式会社") until the next scrape changed it again. Until 2026-10-28 the SEC writer never renamed,
 so 23 filers showed the Wikidata label of whichever source ran first: Molson Coors
 showed its pre-2020 "Molson Coors Brewing Company".
 
