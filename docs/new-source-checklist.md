@@ -1868,6 +1868,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       value alone and all together once and check that the totals add up — and
       compare the result with a second list of the same thing (the issuer's own
       submissions named 37 statements the index did not).
+- [ ] **A cache in front of a rate-limited source is not rate-limited itself.** The
+      geocoder asks Nominatim once a second, and read its own cache at the same
+      one-at-a-time pace: 4,010 addresses, all answered from the shared bucket at
+      ~180 ms a read, took 16 minutes of every rebuild for six real requests. Read
+      what you already hold several at a time and keep the source's pace for what
+      is left (`geo_cache.warm`). Before parallelising, measure which hop is slow
+      (the bucket 180 ms, the database 15), run only READS side by side, and read
+      ahead exactly what the sequential code would ask — no more.
 - [ ] **A handler that classifies a failure must survive the failure it did not
       expect.** `objectstore.get` absorbs every error and tells a missing key from an
       outage by reading `exc.response["Error"]["Code"]` — `getattr(exc, "response",

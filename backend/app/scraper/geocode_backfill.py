@@ -30,7 +30,8 @@ import logging
 
 from app.db.arcadedb import run_query, run_command
 from app import addresses
-from app.scraper.geocode import geocode_address, geocode_full
+from app.scraper import geo_cache
+from app.scraper.geocode import address_cache_key, geocode_address, geocode_full
 
 log = logging.getLogger(__name__)
 
@@ -79,19 +80,57 @@ def _run_pass(name: str, limit: int | None, ids: list[str] | None = None) -> dic
 
     rows = run_query(query)
     geocoded = 0
-    for r in rows:
-        coord, precision = _locate(r, coarse_country=bool(f["country"]))
-        if not coord:
-            continue
-        lat, lng = coord
-        run_command(
-            f"MATCH (e:Entity {{id: $id}}) SET e.{f['lat']} = $lat, e.{f['lng']} = $lng, "
-            f"e.{f['precision']} = $prec",
-            {"id": r["id"], "lat": lat, "lng": lng, "prec": precision},
-        )
-        geocoded += 1
+    _read_ahead(rows, coarse_country=bool(f["country"]))
+    try:
+        for r in rows:
+            coord, precision = _locate(r, coarse_country=bool(f["country"]))
+            if not coord:
+                continue
+            lat, lng = coord
+            run_command(
+                f"MATCH (e:Entity {{id: $id}}) SET e.{f['lat']} = $lat, e.{f['lng']} = $lng, "
+                f"e.{f['precision']} = $prec",
+                {"id": r["id"], "lat": lat, "lng": lng, "prec": precision},
+            )
+            geocoded += 1
+    finally:
+        geo_cache.cool()
 
     return {"total": len(rows), "geocoded": geocoded}
+
+
+def _structured(row: dict) -> dict:
+    return {"street": row.get("street"), "city": row.get("city"),
+            "zip": row.get("postcode"), "country": row.get("country")}
+
+
+def _coarse(row: dict) -> dict:
+    return {"city": row.get("city"), "country": row.get("country")}
+
+
+def _read_ahead(rows: list[dict], *, coarse_country: bool) -> None:
+    """Read the cached answers the pass is about to ask for, several at a time
+    (`geo_cache.warm`): after an import nearly every address is known and only
+    the reading is slow. In `_locate`'s own order and no further — a row's
+    assembled string is read only when its parts gave no place, its city and
+    country only when the string gave none — so the cache is asked for exactly
+    what the pass would ask it one by one. What is found nowhere is left to
+    `_locate`, which asks Nominatim at one request a second."""
+    from app.config import settings
+    if not settings.GEOCODING_ENABLED or len(rows) < 2:
+        return
+
+    def placed(key: str | None) -> bool:
+        answer = geo_cache.warmed(key)
+        return bool(answer and answer[0])
+
+    parts = {r["id"]: address_cache_key(_structured(r)) for r in rows if r.get("street") or r.get("postcode")}
+    geo_cache.warm(parts.values())
+    rest = [r for r in rows if not placed(parts.get(r["id"]))]
+    geo_cache.warm((r.get("full") or "").strip() for r in rest)
+    if coarse_country:
+        rest = [r for r in rest if not placed((r.get("full") or "").strip())]
+        geo_cache.warm(address_cache_key(_coarse(r)) for r in rest if r.get("city") or r.get("country"))
 
 
 def _locate(row: dict, *, coarse_country: bool) -> tuple[tuple[float, float] | None, str | None]:
@@ -107,8 +146,7 @@ def _locate(row: dict, *, coarse_country: bool) -> tuple[tuple[float, float] | N
        registered pass does not, because a bare country is a centroid.
     """
     if row.get("street") or row.get("postcode"):
-        coord = geocode_address({"street": row.get("street"), "city": row.get("city"),
-                                 "zip": row.get("postcode"), "country": row.get("country")})
+        coord = geocode_address(_structured(row))
         if coord:
             # Structured queries carry no place_rank in the same way; a street
             # given in full is a street-level answer.
@@ -120,7 +158,7 @@ def _locate(row: dict, *, coarse_country: bool) -> tuple[tuple[float, float] | N
             return hit
 
     if coarse_country and (row.get("city") or row.get("country")):
-        coord = geocode_address({"city": row.get("city"), "country": row.get("country")})
+        coord = geocode_address(_coarse(row))
         if coord:
             return coord, "approx"
 

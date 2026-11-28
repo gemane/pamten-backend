@@ -271,3 +271,96 @@ class TestForget:
 
     def test_forgetting_an_unknown_address_is_quiet(self, store, shared):
         assert geo_cache.forget("NOWHERE") == {"rows": 0, "object": True}
+
+
+class TestWarm:
+    """`warm` reads many cached answers ahead, several at a time (the user,
+    2026-11-28): a pass after an import asks for thousands of addresses whose
+    answers are all in the bucket, at ~180 ms a read — 16 minutes of the
+    2026-11-27 rebuild's step 3 for 4,010 addresses and six Nominatim requests."""
+
+    @pytest.fixture(autouse=True)
+    def _cool(self):
+        geo_cache.cool()
+        yield
+        geo_cache.cool()
+
+    @staticmethod
+    def _obj(query, lat=51.5, lng=-0.1, checked=None):
+        import json
+        return json.dumps({"query": query, "lat": lat, "lng": lng, "precision": "exact" if lat else None,
+                           "checked_at": checked or datetime.now(timezone.utc).isoformat()}).encode()
+
+    def _bucket(self, objects):
+        got = []
+
+        def get(key):
+            got.append(key)
+            return objects.get(key)
+        return got, patch.multiple(geo_cache.objectstore, enabled=lambda: True, get=get)
+
+    def test_the_lookups_after_it_ask_nothing(self, store):
+        geo_cache.store("in the table", (48.2, 16.4), "exact")
+        got, bucket = self._bucket({geo_cache.s3_key("in the bucket"): self._obj("in the bucket")})
+        with bucket:
+            assert geo_cache.warm(["in the table", "in the bucket", "nowhere", "in the bucket", ""]) == 2
+            # each once, the table's own not at all
+            assert sorted(got) == sorted([geo_cache.s3_key("in the bucket"), geo_cache.s3_key("nowhere")])
+            with patch.object(geo_cache, "run_query", side_effect=AssertionError("asked the table")), \
+                 patch.object(geo_cache.objectstore, "get", side_effect=AssertionError("asked the bucket")):
+                assert geo_cache.lookup("in the table") == ((48.2, 16.4), "exact")
+                assert geo_cache.lookup("in the bucket") == ((51.5, -0.1), "exact")
+        assert geo_cache.warmed("nowhere") is None and geo_cache.warmed(None) is None
+
+    def test_an_answer_from_the_bucket_refills_the_table_with_one_request(self, store):
+        commands = []
+        _, bucket = self._bucket({geo_cache.s3_key("q"): self._obj("q")})
+        real = geo_cache.run_command.side_effect
+        with bucket, patch.object(geo_cache, "run_command", side_effect=lambda s, p=None: (commands.append(s), real(s, p))[1]):
+            geo_cache.warm(["q"])
+        assert len(commands) == 1 and commands[0].lstrip().startswith("CREATE")
+        assert [(r["query"], r["lat"]) for r in store] == [("q", 51.5)]
+
+    def test_what_is_found_nowhere_is_left_to_the_caller(self, store):
+        _, bucket = self._bucket({})
+        with bucket:
+            assert geo_cache.warm(["nowhere"]) == 0
+            assert geo_cache.lookup("nowhere") is None       # "not cached": Nominatim's turn
+        assert store == []
+
+    def test_a_fresh_miss_is_an_answer_and_a_stale_one_is_not(self, store):
+        old = (datetime.now(timezone.utc) - timedelta(days=geo_cache._MISS_TTL_DAYS + 1)).isoformat()
+        _, bucket = self._bucket({geo_cache.s3_key("fresh"): self._obj("fresh", None, None),
+                                  geo_cache.s3_key("stale"): self._obj("stale", None, None, old)})
+        with bucket:
+            assert geo_cache.warm(["fresh", "stale"]) == 1
+        assert geo_cache.warmed("fresh") == (None, None) and geo_cache.warmed("stale") is None
+        assert [r["query"] for r in store] == ["fresh"]      # a stale miss is not copied back
+
+    def test_a_newer_answer_replaces_the_one_read_ahead(self, store):
+        geo_cache.store("q", None, None)
+        geo_cache.warm(["q"])
+        assert geo_cache.warmed("q") == (None, None)
+        geo_cache.store("q", (1.0, 2.0), "exact")
+        assert geo_cache.lookup("q") == ((1.0, 2.0), "exact")
+
+    def test_cool_drops_what_was_read(self, store):
+        geo_cache.store("q", (1.0, 2.0), "exact")
+        geo_cache.warm(["q"])
+        geo_cache.cool()
+        assert geo_cache.warmed("q") is None
+
+    def test_the_reads_run_side_by_side(self, store):
+        import threading
+        together = threading.Barrier(3, timeout=5)        # three reads must be in flight at once
+
+        def get(key):
+            together.wait()
+            return None
+        with patch.multiple(geo_cache.objectstore, enabled=lambda: True, get=get):
+            assert geo_cache.warm(["a", "b", "c"]) == 0     # a sequential reader would time out
+
+    def test_an_unreachable_database_is_still_said(self):
+        with patch.object(geo_cache, "run_query", side_effect=ConnectionError("down")), \
+             pytest.raises(ConnectionError):
+            geo_cache.warm(["a", "b"])

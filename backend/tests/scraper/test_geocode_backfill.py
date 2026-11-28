@@ -223,3 +223,65 @@ class TestStructuredFirst:
         # No street, no postcode, and the registered pass allows no coarse
         # country — so nothing is asked and nothing is written.
         assert structured == [] and result["geocoded"] == 0
+
+
+class TestReadsAhead:
+    """The pass reads its cached answers ahead, several at a time
+    (`geo_cache.warm`) — in `_locate`'s own order and no further, so the cache
+    is asked for exactly what the pass would ask it one by one."""
+
+    A = {"id": "a", "street": "1 High St", "city": "London", "postcode": None, "country": "GB", "full": "1 High St, London"}
+    B = {"id": "b", "street": "9 Nowhere", "city": "Graz", "postcode": None, "country": "AT", "full": "9 Nowhere, Graz"}
+    C = {"id": "c", "street": None, "city": "Linz", "postcode": None, "country": "AT", "full": None}
+
+    def _run(self, rows, placed, *, target="hq", enabled=True, boom=False):
+        from app.config import settings
+        from app.scraper.geocode import address_cache_key
+        self.key = address_cache_key
+        calls, cooled = [], []
+        locate = (lambda r, **kw: (_ for _ in ()).throw(RuntimeError("boom"))) if boom else (lambda r, **kw: (None, None))
+        with patch.object(settings, "GEOCODING_ENABLED", enabled), \
+             patch.object(geocode_backfill, "run_query", return_value=rows), \
+             patch.object(geocode_backfill, "run_command"), \
+             patch.object(geocode_backfill, "_locate", side_effect=locate), \
+             patch.object(geocode_backfill.geo_cache, "warm", side_effect=lambda qs: calls.append(sorted(q for q in qs if q))), \
+             patch.object(geocode_backfill.geo_cache, "warmed",
+                          side_effect=lambda q: ((1.0, 2.0), "exact") if q in placed else None), \
+             patch.object(geocode_backfill.geo_cache, "cool", side_effect=lambda: cooled.append(1)):
+            try:
+                geocode_backfill.backfill(target=target)
+            except RuntimeError:
+                pass
+        return calls, cooled
+
+    def _parts(self, row):
+        return self.key({"street": row["street"], "city": row["city"], "zip": row["postcode"], "country": row["country"]})
+
+    def test_the_string_is_read_only_where_the_parts_gave_no_place(self):
+        from app.scraper.geocode import address_cache_key
+        a_parts = address_cache_key({"street": "1 High St", "city": "London", "country": "GB"})
+        calls, cooled = self._run([self.A, self.B, self.C], placed={a_parts})
+        parts, strings, coarse = calls
+        assert parts == sorted([a_parts, self._parts(self.B)])        # C has no street: its parts are never asked
+        assert strings == ["9 Nowhere, Graz"]                          # not A's: its parts placed it
+        # city and country, for the rows the string did not place either
+        assert coarse == sorted([address_cache_key({"city": "Graz", "country": "AT"}),
+                                 address_cache_key({"city": "Linz", "country": "AT"})])
+        assert cooled == [1]
+
+    def test_a_row_its_string_placed_is_not_read_coarsely(self):
+        calls, _ = self._run([self.B, self.C], placed={"9 Nowhere, Graz"})
+        from app.scraper.geocode import address_cache_key
+        assert calls[2] == [address_cache_key({"city": "Linz", "country": "AT"})]
+
+    def test_the_registered_pass_reads_no_city_and_country(self):
+        calls, _ = self._run([self.A, self.B], placed=set(), target="registered")
+        assert len(calls) == 2                                         # parts, strings — a bare country is a centroid
+
+    def test_nothing_is_read_ahead_with_geocoding_off_or_for_one_row(self):
+        assert self._run([self.A, self.B], placed=set(), enabled=False)[0] == []
+        assert self._run([self.A], placed=set())[0] == []
+
+    def test_what_was_read_is_dropped_even_when_the_pass_fails(self):
+        _, cooled = self._run([self.A, self.B], placed=set(), boom=True)
+        assert cooled == [1]

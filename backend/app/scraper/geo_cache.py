@@ -29,6 +29,7 @@ refilled), write-through on store. Same pattern as the EDGAR filing cache.
 import hashlib
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from app import objectstore
@@ -43,6 +44,13 @@ Coord = tuple[float, float]
 #: enough that a full pass does not re-ask about everything.
 _MISS_TTL_DAYS = 30
 
+#: How many cached answers `warm` reads at a time. Reads only — of the table
+#: and the bucket; Nominatim is never asked from here, so its one request a
+#: second is untouched.
+WARM_WORKERS = 8
+#: the answers `warm` read ahead, by query; `lookup` serves them, `cool` drops them
+_warm: dict[str, tuple[Coord | None, str | None]] = {}
+
 
 def lookup(query: str) -> tuple[Coord | None, str | None] | None:
     """A cached answer for `query`, or None if we have never (recently) asked.
@@ -52,6 +60,16 @@ def lookup(query: str) -> tuple[Coord | None, str | None] | None:
     """
     if not query:
         return None
+    if query in _warm:
+        return _warm[query]
+    row = _read_table(query)
+    if row is None:
+        return _lookup_shared(query)
+    return _answer(row)
+
+
+def _read_table(query: str) -> dict | None:
+    """The table's row for `query`, or None when it has none."""
     try:
         rows = run_query(
             "MATCH (g:GeoCache {query: $q}) RETURN g.lat AS lat, g.lng AS lng, "
@@ -69,9 +87,7 @@ def lookup(query: str) -> tuple[Coord | None, str | None] | None:
         # returns an empty result, so a database predating GeoCache reads as
         # "not cached" without any special handling.
         raise
-    if not rows:
-        return _lookup_shared(query)
-    return _answer(rows[0])
+    return rows[0] if rows else None
 
 
 def _answer(row: dict) -> tuple[Coord | None, str | None] | None:
@@ -105,6 +121,18 @@ def s3_key(query: str) -> str:
 def _lookup_shared(query: str) -> tuple[Coord | None, str | None] | None:
     """The bucket's answer for an address the table does not have; a hit (or a
     fresh miss) is copied back into the table so the next read is local."""
+    row = _read_shared(query)
+    if row is None:
+        return None
+    answer = _answer(row)
+    if answer is not None:
+        _refill(query, row)
+    return answer
+
+
+def _read_shared(query: str) -> dict | None:
+    """The bucket's object for `query`, decoded; None when there is none (or
+    the store is off). Reads only — safe from a worker thread."""
     if not objectstore.enabled():
         return None
     blob = objectstore.get(s3_key(query))
@@ -117,11 +145,60 @@ def _lookup_shared(query: str) -> tuple[Coord | None, str | None] | None:
     except (ValueError, AttributeError):
         log.warning("geocode cache: undecodable object for %r; ignoring", query[:60])
         return None
-    answer = _answer(row)
-    if answer is not None:
-        _store_table(query, (row["lat"], row["lng"]) if row.get("lat") is not None else None,
-                     row.get("precision"), row.get("checked_at"))
-    return answer
+    return row
+
+
+def _refill(query: str, row: dict, known_absent: bool = False) -> None:
+    _store_table(query, (row["lat"], row["lng"]) if row.get("lat") is not None else None,
+                 row.get("precision"), row.get("checked_at"), known_absent=known_absent)
+
+
+def warm(queries) -> int:
+    """Read the cached answers of many addresses ahead, `WARM_WORKERS` at a
+    time, so the `lookup`s that follow are answered from memory. Returns how
+    many were found.
+
+    A pass over a freshly imported database asks for thousands of addresses
+    whose answers are all in the bucket — the table went with the database —
+    and one bucket read takes about 180 ms: the rebuild of 2026-11-27 spent
+    16 minutes of its step 3 on 4,010 addresses and asked Nominatim six times.
+    Eight at a time, the same reads take about a tenth.
+
+    Only reads run side by side (the table, then the bucket). The table is
+    refilled from here, one row after the other, and Nominatim is not asked at
+    all: an address found nowhere is left for `lookup`'s caller, which asks it
+    at the source's pace. Call `cool` when the pass is over."""
+    todo = [q for q in dict.fromkeys(queries) if q and q not in _warm]
+    if not todo:
+        return 0
+
+    def read(query: str):
+        row = _read_table(query)
+        if row is not None:
+            return query, row, False
+        return query, _read_shared(query), True
+
+    found = 0
+    with ThreadPoolExecutor(max_workers=min(WARM_WORKERS, len(todo))) as pool:
+        for query, row, shared in pool.map(read, todo):
+            answer = _answer(row) if row is not None else None
+            if answer is None:
+                continue                   # never asked, or a miss gone stale: Nominatim's
+            if shared:
+                _refill(query, row, known_absent=True)     # the table had no row a moment ago
+            _warm[query] = answer
+            found += 1
+    return found
+
+
+def warmed(query: str | None) -> tuple[Coord | None, str | None] | None:
+    """What `warm` read for `query` — without asking anything."""
+    return _warm.get(query) if query else None
+
+
+def cool() -> None:
+    """Drop what `warm` read: its answers are a pass's, not the process's."""
+    _warm.clear()
 
 
 def _store_shared(query: str, lat, lng, precision: str | None, now: str) -> None:
@@ -137,24 +214,30 @@ def store(query: str, coord: Coord | None, precision: str | None) -> None:
         return
     now = datetime.now(timezone.utc).isoformat()
     lat, lng = coord if coord else (None, None)
+    _warm.pop(query, None)                 # a newer answer than the one read ahead
     _store_table(query, coord, precision, now)
     if objectstore.enabled():
         _store_shared(query, lat, lng, precision, now)
 
 
-def _store_table(query: str, coord: Coord | None, precision: str | None, now: str) -> None:
+def _store_table(query: str, coord: Coord | None, precision: str | None, now: str,
+                 known_absent: bool = False) -> None:
+    """``known_absent``: the caller has just read the table and found no row —
+    one request (the CREATE) where the upsert takes three."""
     lat, lng = coord if coord else (None, None)
     try:
-        run_command(
-            "MATCH (g:GeoCache {query: $q}) SET g.lat = $lat, g.lng = $lng, "
-            "g.precision = $prec, g.checked_at = $now",
-            {"q": query, "lat": lat, "lng": lng, "prec": precision, "now": now},
-        )
-        # Upsert without MERGE: ArcadeDB's Cypher MERGE on a non-indexed property
-        # has bitten this codebase before, and a duplicate row here is harmless —
-        # lookup takes the first.
-        existing = run_query("MATCH (g:GeoCache {query: $q}) RETURN g.query AS q LIMIT 1",
-                             {"q": query})
+        existing = None
+        if not known_absent:
+            run_command(
+                "MATCH (g:GeoCache {query: $q}) SET g.lat = $lat, g.lng = $lng, "
+                "g.precision = $prec, g.checked_at = $now",
+                {"q": query, "lat": lat, "lng": lng, "prec": precision, "now": now},
+            )
+            # Upsert without MERGE: ArcadeDB's Cypher MERGE on a non-indexed property
+            # has bitten this codebase before, and a duplicate row here is harmless —
+            # lookup takes the first.
+            existing = run_query("MATCH (g:GeoCache {query: $q}) RETURN g.query AS q LIMIT 1",
+                                 {"q": query})
         if not existing:
             run_command(
                 "CREATE (:GeoCache {query: $q, lat: $lat, lng: $lng, "
