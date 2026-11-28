@@ -297,9 +297,37 @@ def test_the_delta_skips_a_duplicate_registration_and_counts_it():
     with patch.object(gi, "_open_json", return_value=(io.BytesIO(b""), 0)), \
          patch.object(gi, "_iter_lei_records", return_value=iter([dup, live])), \
          patch.object(gi, "joined_filers", return_value={}), \
+         patch.object(gi, "better_names", return_value={}), \
          patch.object(gi._BatchWriter, "entity", side_effect=lambda self_, i, p: written.append(i), autospec=True), \
          patch.object(gi._BatchWriter, "flush", autospec=True), \
          patch.object(gi, "run_sql", return_value=[]):
         counts = gi.import_lei_cdf_delta("delta.json", "gleif", 92)
     assert counts["not_an_entity"] == 1 and counts["updated"] == 1
     assert written == ["lei:549300ITS31QK8VRBQ14"]
+
+
+def test_the_delta_keeps_a_name_a_more_credible_source_gave():
+    # findings item 165: the 04:30 delta of 2026-11-27 put GLEIF's legal name back
+    # on 46 EDGAR filers — the scrape's rule (a register's name replaces one of
+    # at most its credibility) now holds for GLEIF's writes too
+    import io
+    from unittest.mock import patch
+    from app.scraper import gleif_incremental as gi
+    sony = {"LEI": {"$": "529900R5WX9N2OI2N910"}, "Entity": {"LegalName": {"$": "ソニーグループ株式会社"}},
+            "Registration": {"RegistrationStatus": {"$": "ISSUED"}}}
+    other = {"LEI": {"$": "549300ITS31QK8VRBQ14"}, "Entity": {"LegalName": {"$": "NEWS CORP"}},
+             "Registration": {"RegistrationStatus": {"$": "ISSUED"}}}
+    held = {"lei:529900R5WX9N2OI2N910": {"name": "Sony Group Corp", "cred": 98, "aliases": ["Sony Corp"]}}
+    written = {}
+    with patch.object(gi, "_open_json", return_value=(io.BytesIO(b""), 0)), \
+         patch.object(gi, "_iter_lei_records", return_value=iter([sony, other])), \
+         patch.object(gi, "joined_filers", return_value={}), \
+         patch.object(gi, "better_names", return_value=held) as asked, \
+         patch.object(gi._BatchWriter, "entity", side_effect=lambda self_, i, p: written.update({i: p}), autospec=True), \
+         patch.object(gi._BatchWriter, "flush", autospec=True), \
+         patch.object(gi, "run_sql", return_value=[]):
+        counts = gi.import_lei_cdf_delta("delta.json", "gleif", 92)
+    asked.assert_called_once_with(92)
+    assert counts["names_kept"] == 1 and counts["updated"] == 2
+    assert written["lei:529900R5WX9N2OI2N910"]["name"] == "Sony Group Corp"
+    assert written["lei:549300ITS31QK8VRBQ14"]["name"] == "NEWS CORP"
