@@ -78,16 +78,8 @@ def geocode_address(address: dict) -> Coord | None:
     if not settings.GEOCODING_ENABLED:
         return None
 
-    params = {
-        "street":     (address.get("street") or "").strip(),
-        "city":       (address.get("city") or "").strip(),
-        "state":      (address.get("state") or "").strip(),
-        "postalcode": (address.get("zip") or "").strip(),
-        "country":    (address.get("country") or "").strip(),
-    }
-    params = {k: v for k, v in params.items() if v}
-    # Need at least a city or country to have any chance of a useful result.
-    if not (params.get("city") or params.get("country")):
+    params = _structured_params(address)
+    if params is None:
         return None
 
     key = tuple(sorted(params.items()))
@@ -112,6 +104,30 @@ def geocode_address(address: dict) -> Coord | None:
         geo_cache.store(ckey, result, "structured" if result else None)
     _cache[key] = result
     return result
+
+
+def _structured_params(address: dict) -> dict | None:
+    """The parts of an address as Nominatim is asked for them, or None when
+    they are too sparse to ask."""
+    params = {
+        "street":     (address.get("street") or "").strip(),
+        "city":       (address.get("city") or "").strip(),
+        "state":      (address.get("state") or "").strip(),
+        "postalcode": (address.get("zip") or "").strip(),
+        "country":    (address.get("country") or "").strip(),
+    }
+    params = {k: v for k, v in params.items() if v}
+    # Need at least a city or country to have any chance of a useful result.
+    if not (params.get("city") or params.get("country")):
+        return None
+    return params
+
+
+def address_cache_key(address: dict) -> str | None:
+    """The durable-cache key `geocode_address` reads for `address` — for a pass
+    that reads its answers ahead (`geo_cache.warm`); None when it asks nothing."""
+    params = _structured_params(address)
+    return structured_cache_key(params) if params else None
 
 
 def structured_cache_key(params: dict) -> str:
