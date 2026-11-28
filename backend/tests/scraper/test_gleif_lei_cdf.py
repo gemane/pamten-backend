@@ -416,6 +416,7 @@ class TestTheEndOnAFilersNode:
         written = {}
         monkeypatch.setattr(bulk_import._BatchWriter, "entity", lambda self, nid, props: written.update({nid: props}))
         monkeypatch.setattr(bulk_import._BatchWriter, "flush", lambda self: None)
+        monkeypatch.setattr(gleif_lei_cdf, "better_names", lambda c: {})
         monkeypatch.setattr(gleif_lei_cdf, "joined_filers", lambda: {self.OKE: "0001039684"})
         self._edgar(monkeypatch, "2026-10-28")
         records = [_ended("2T3D6M0JSY48PSZI1Q41", "ONEOK, INC.", "INACTIVE", _event("DISSOLUTION", "2026-08-13")),
@@ -578,6 +579,7 @@ class TestOnlyLeis:
         monkeypatch.setattr(bulk_import._BatchWriter, "entity",
                             lambda self, nid, props: written.append(nid))
         monkeypatch.setattr(bulk_import._BatchWriter, "flush", lambda self: None)
+        monkeypatch.setattr(gleif_lei_cdf, "better_names", lambda c: {})
         monkeypatch.setattr(gleif_lei_cdf, "joined_filers", lambda: {})     # no database here
 
         z = _lei_zip(tmp_path, [LEI_A, LEI_B, LEI_C])
@@ -592,6 +594,7 @@ class TestOnlyLeis:
         monkeypatch.setattr(bulk_import._BatchWriter, "entity",
                             lambda self, nid, props: written.append(nid))
         monkeypatch.setattr(bulk_import._BatchWriter, "flush", lambda self: None)
+        monkeypatch.setattr(gleif_lei_cdf, "better_names", lambda c: {})
         monkeypatch.setattr(gleif_lei_cdf, "joined_filers", lambda: {})
 
         z = _lei_zip(tmp_path, [LEI_A, LEI_B])
@@ -781,9 +784,76 @@ class TestADuplicateRegistrationIsNoEntity:
         written = []
         with patch.object(gleif_lei_cdf, "_iter_lei_records", return_value=iter(records)), \
              patch.object(gleif_lei_cdf, "joined_filers", return_value={}), \
+             patch.object(gleif_lei_cdf, "better_names", return_value={}), \
              patch.object(gleif_lei_cdf._BatchWriter, "entity",
                           side_effect=lambda self_, i, p: written.append(i), autospec=True), \
              patch.object(gleif_lei_cdf._BatchWriter, "flush", autospec=True):
             counts = gleif_lei_cdf.import_lei_cdf_entities(str(path), "gleif", 92)
         assert counts["not_an_entity"] == 1 and counts["entities"] == 1
         assert written == ["lei:549300ITS31QK8VRBQ14"]
+
+
+class TestKeepBetterName:
+    """`keep_better_name` (findings item 165): GLEIF's writes follow the scrape's
+    rule — a register's name replaces a node's name only when it is at least as
+    credible. The nightly delta renamed 46 EDGAR filers on 2026-11-27."""
+    SONY = "lei:529900R5WX9N2OI2N910"
+
+    def _props(self, cred=92):
+        return {"name": "ソニーグループ株式会社", "name_normalized": "ソニーグループ株式会社", "name_credibility": cred,
+                "search_text": "ソニーグループ株式会社 Sony Group Corporation 0104-01-045521", "is_nominee": False}
+
+    def _held(self, cred=98, name="Sony Group Corp"):
+        return {self.SONY: {"name": name, "cred": cred, "aliases": ["Sony Corp"]}}
+
+    def test_the_more_credible_name_stays_and_gleif_s_becomes_an_alias(self):
+        from app.scraper.gleif_lei_cdf import keep_better_name
+        props = self._props()
+        assert keep_better_name(self.SONY, props, self._held()) is True
+        from app.scraper.mapper import normalize_entity_name
+        assert (props["name"], props["name_credibility"]) == ("Sony Group Corp", 98)
+        assert props["name_normalized"] == normalize_entity_name("Sony Group Corp")
+        assert props["aliases"] == ["Sony Corp", "ソニーグループ株式会社"]
+        # both names, the old aliases and GLEIF's own tokens stay findable
+        for token in ("Sony Group Corp", "Sony Corp", "ソニーグループ株式会社", "0104-01-045521"):
+            assert token in props["search_text"]
+
+    def test_a_name_of_the_same_credibility_is_replaced_as_a_scrape_would(self):
+        from app.scraper.gleif_lei_cdf import keep_better_name
+        props = self._props(cred=92)
+        assert keep_better_name(self.SONY, props, self._held(cred=92)) is False
+        assert props["name"] == "ソニーグループ株式会社" and "aliases" not in props
+
+    def test_an_unchecked_gleif_record_does_not_beat_a_name_gleif_itself_would(self):
+        # ENTITY_SUPPLIED_ONLY scores 82: a held GLEIF-grade name (92) stays
+        from app.scraper.gleif_lei_cdf import keep_better_name
+        props = self._props(cred=82)
+        assert keep_better_name(self.SONY, props, self._held(cred=92)) is True
+        assert props["name"] == "Sony Group Corp"
+
+    def test_the_same_name_and_an_unknown_node_are_left_alone(self):
+        from app.scraper.gleif_lei_cdf import keep_better_name
+        props = self._props()
+        assert keep_better_name(self.SONY, props, self._held(name="ソニーグループ株式会社")) is False
+        assert keep_better_name("lei:OTHER", props, self._held()) is False
+        assert "aliases" not in props and props["name_credibility"] == 92
+
+    def test_the_full_import_applies_it_too(self, tmp_path):
+        # the sibling path: a re-import over a populated database writes names as the delta does
+        import json
+        from unittest.mock import patch
+        from app.scraper import gleif_lei_cdf
+        records = [_rec("529900R5WX9N2OI2N910", "ソニーグループ株式会社"), _rec("549300ITS31QK8VRBQ14", "NEWS CORP")]
+        path = tmp_path / "golden.json"
+        path.write_text(json.dumps({"records": records}))
+        written = {}
+        with patch.object(gleif_lei_cdf, "_iter_lei_records", return_value=iter(records)), \
+             patch.object(gleif_lei_cdf, "joined_filers", return_value={}), \
+             patch.object(gleif_lei_cdf, "better_names", return_value=self._held()) as asked, \
+             patch.object(gleif_lei_cdf._BatchWriter, "entity",
+                          side_effect=lambda self_, i, p: written.update({i: p}), autospec=True), \
+             patch.object(gleif_lei_cdf._BatchWriter, "flush", autospec=True):
+            gleif_lei_cdf.import_lei_cdf_entities(str(path), "gleif", 92)
+        asked.assert_called_once_with(92)
+        assert written[self.SONY]["name"] == "Sony Group Corp"
+        assert written["lei:549300ITS31QK8VRBQ14"]["name"] == "NEWS CORP"

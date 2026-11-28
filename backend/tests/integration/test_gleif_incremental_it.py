@@ -817,3 +817,30 @@ def test_on_a_folded_pair_the_direct_records_checking_wins(it_db, tmp_path):
     _apply(tmp_path, "rr-cf3.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE,
                                                checked=("FULLY_CORROBORATED", "ACCOUNTS_FILING"))])
     assert _checked(it_db) == [("ENTITY_SUPPLIED_ONLY", None)]   # the ultimate one does not override
+
+
+def test_a_delta_keeps_the_name_a_more_credible_source_gave(it_db, tmp_path):
+    """Findings item 165 (the user, 2026-11-28: the scrape's rule for the delta
+    too): an EDGAR scrape (98) named the node; GLEIF's record (92) refreshes
+    everything else, its legal name joins the aliases and the search text —
+    and a node GLEIF named itself takes the record's new name as before."""
+    from app.scraper.gleif_incremental import import_lei_cdf_delta
+    sony, fendi = "529900R5WX9N2OI2N910", "5299001K9O0QHEOJ5035"
+    it_db.run_command("CREATE (:Entity {id:$id, name:'Sony Group Corp', name_normalized:'sony group', lei_id:$lei, "
+                      "sec_cik:'0000313838', name_credibility:98, aliases:['Sony Corp'], source_id:'sec-src', "
+                      "active:true})", {"id": f"lei:{sony}", "lei": sony})
+    it_db.run_command("CREATE (:Entity {id:$id, name:'FENDI SA', name_normalized:'fendi', lei_id:$lei, "
+                      "name_credibility:92, active:true})", {"id": f"lei:{fendi}", "lei": fendi})
+    lei_zip = _zip(tmp_path, "lei.json.zip", "records",
+                   [_entity(sony, "ソニーグループ株式会社"), _entity(fendi, "FENDI S.R.L.")])
+    for _ in range(2):                                   # the second night changes nothing
+        counts = import_lei_cdf_delta(lei_zip, "gleif-src", 92)
+        assert counts["updated"] == 2 and counts["names_kept"] == 1
+        [s] = it_db.run_sql("SELECT name, name_credibility, aliases, search_text, gleif_registration_status FROM Entity WHERE id = :i",
+                            {"i": f"lei:{sony}"})
+        assert (s["name"], s["name_credibility"]) == ("Sony Group Corp", 98)
+        assert list(s["aliases"]) == ["Sony Corp", "ソニーグループ株式会社"]
+        assert "Sony Group Corp" in s["search_text"] and "ソニーグループ株式会社" in s["search_text"]
+        assert s["gleif_registration_status"] == "ISSUED"   # the record's other fields are written
+        [f] = it_db.run_sql("SELECT name, name_credibility FROM Entity WHERE id = :i", {"i": f"lei:{fendi}"})
+        assert (f["name"], f["name_credibility"]) == ("FENDI S.R.L.", 92)

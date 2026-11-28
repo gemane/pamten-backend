@@ -592,6 +592,40 @@ def joined_filers() -> dict[str, str]:
         "SELECT id, sec_cik FROM Entity WHERE sec_cik IS NOT NULL AND id LIKE 'lei:%'") or []}
 
 
+def better_names(credibility_score: int) -> dict[str, dict]:
+    """{node id: {name, cred, aliases}} of the nodes whose name a source more
+    credible than GLEIF gave — read once per import, for `keep_better_name`.
+    A handful: the EDGAR filers and Companies House companies that carry an LEI."""
+    from app.db.arcadedb import run_sql
+    return {r["id"]: {"name": r["name"], "cred": r["name_credibility"], "aliases": r.get("aliases") or []}
+            for r in run_sql("SELECT id, name, name_credibility, aliases FROM Entity "
+                             "WHERE lei_id IS NOT NULL AND name_credibility > :c", {"c": credibility_score}) or []
+            if r.get("name")}
+
+
+def keep_better_name(node_id: str, props: dict, held: dict[str, dict]) -> bool:
+    """The scrape's rule for a name, applied to GLEIF's own writes (findings
+    item 165, the user 2026-11-28): a register's name replaces a node's name
+    only when it is at least as credible (`graph_writer._take_register_name`).
+    An EDGAR scrape (98) names a company GLEIF (92) created — and the nightly
+    delta, which writes what it reads, put GLEIF's legal name back: after one
+    night "Sony Group Corp" read "ソニーグループ株式会社" and 45 more filers had
+    changed names, until their next scrape changed them again. The more
+    credible name stays; GLEIF's legal name joins the aliases, and both stay
+    searchable. ``props`` is changed in place; True when the name was kept."""
+    was = held.get(node_id)
+    if not was or was["name"] == props.get("name") or (was["cred"] or 0) <= (props.get("name_credibility") or 0):
+        return False
+    from app.scraper.graph_writer import _merge_aliases
+    legal = props["name"]
+    props["aliases"] = _merge_aliases(was["aliases"], [legal], was["name"])
+    props["search_text"] = " ".join(p for p in (was["name"], *was["aliases"], props.get("search_text")) if p)
+    props["name"], props["name_normalized"], props["name_credibility"] = (
+        was["name"], normalize_entity_name(was["name"]), was["cred"])
+    props["is_nominee"] = is_nominee_name(was["name"])
+    return True
+
+
 def hold_end_of_live_filer(node_id: str, props: dict, filers: dict[str, str] | None = None) -> str | None:
     """A dead entity files nothing — the sibling of `legal_identity`'s veto
     (findings items 84 and 85a). The join refuses a ceased GLEIF record to a
@@ -676,6 +710,8 @@ def import_lei_cdf_entities(
     # before the indexes go: the GLEIF nodes that are EDGAR filers too, whose
     # end this load may not write while they keep filing (findings item 85a)
     filers = joined_filers()
+    # … and the nodes a more credible source named, whose name it keeps (item 165)
+    named = better_names(credibility_score)
     if bulk_load:
         _drop_secondary_indexes()
     batch = _BatchWriter()
@@ -703,6 +739,7 @@ def import_lei_cdf_entities(
                 continue
             if hold_end_of_live_filer(node_id, props, filers):
                 counts["ends_held"] += 1
+            keep_better_name(node_id, props, named)
             batch.entity(node_id, props)
             counts["entities"] += 1
             if props.get("active") is False:
