@@ -274,7 +274,9 @@ still to set up on the production box):
      filer's submissions, the 13D/G feed, a company's reporting owners (the insider page, asked
      five times two seconds apart, each of which must answer: on 2026-11-24 it served SEC.gov's
      maintenance page to three requests of four while everything else answered, findings item
-     153) and the full-text search; a GLEIF record and a parent
+     153), the full-text search and its list of the 13D/G statements about a company (which must
+     hold originals and amendments both — given a form and its "/A" the index returned the
+     amendments alone, findings item 164); a GLEIF record and a parent
      relationship; a Wikidata item by a stated id, by name and its labels;
      a company's officers at Companies House (only with its key). Each goes
      through the scraper's own function, so the parameters probed are the

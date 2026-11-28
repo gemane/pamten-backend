@@ -95,6 +95,11 @@ CASES = [
     (sc._sec_full_text, (sec_client, "_get"),
      {"hits": {"hits": [{"_source": {"ciks": ["320193"]}}]}},
      [{}, {"hits": {"hits": []}}, {"hits": {"hits": [{"_source": {}}]}}]),
+    (sc._sec_statement_index, (sec_client, "_get"),
+     {"hits": {"hits": [{"_source": {"form": "SC 13G"}}, {"_source": {"form": "SCHEDULE 13G/A"}}]}},
+     [{}, {"hits": {"hits": []}},
+      {"hits": {"hits": [{"_source": {"form": "SC 13G/A"}}, {"_source": {"form": "SCHEDULE 13G/A"}}]}},   # item 164
+      {"hits": {"hits": [{"_source": {"form": "SC 13G"}}]}}]),
     (sc._gleif_relationship, (legal_identity, "_gleif_get"),
      None, [{"errors": []}]),
     (sc._wikidata_by_statement, (wikidata, "search_by_statement"),
