@@ -2233,6 +2233,13 @@ An index that does not answer is not "nobody filed": the rows are held back
 search. Cost, measured: 409 index requests for the 336 companies and about two
 per statement read — roughly 1,500 requests a rebuild.
 
+**The row's name ends where its address begins (findings item 164).** A table's name cell
+often carries the holder's address. It is cut from the first number of a run — "717 5 th
+Avenue", the ordinal's "th" set apart by a superscript, was cut at " 5 th" and left "Slate
+Path Capital LP 717" — and from "P.O. Box", whose number follows the words (`_ADDRESS_RE`).
+A name with such a tail matched no statement filer and no EDGAR registrant, so the row was
+not written at all: 11 of the 723 tables read on dev (2026-11-28) had one.
+
 **A holder whose newest statement is an exit is not written from the table
 (findings item 159).** A proxy's 5 % row quotes the holder's own statement. The
 Vanguard Group's 13G/As of 2026-03-26 and -27 report 0 % — its holdings went to

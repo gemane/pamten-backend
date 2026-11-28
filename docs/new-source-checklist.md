@@ -1838,6 +1838,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       their grants (findings item 160). When a reader keeps one document per key,
       check that the document it keeps can answer every field it is kept for — and
       tell "no rows" from "a row of zero".
+- [ ] **A name the cleaner left dirty fails silently at every exact match after
+      it.** The table reader cut a holder's address at the first "number, then a
+      letter"; "717 5 th Avenue" gave "Slate Path Capital LP 717", "P.O. Box 897"
+      gave "… P.O. Box". Both matchers downstream are strict on purpose (the whole
+      name against a statement filer, an EDGAR registrant of exactly that name), so
+      an 11.7 % holder was written nowhere and nothing was logged (findings item
+      164). When a strict match follows a cleaner, list what the cleaner let through
+      on real data — every name that still ends in a digit or an address word —
+      before trusting the match's silence.
 - [ ] **A reader that drops an answer it did not want must say so to the step
       after it.** The older-statements pass read a holder's newest 13D/G, found it
       reported no position, wrote nothing — and told nobody, so the table step wrote
