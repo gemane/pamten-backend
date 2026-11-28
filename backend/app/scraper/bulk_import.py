@@ -314,6 +314,15 @@ class _BatchWriter:
                     params[f"{name}_default__{k}"] = _DEFAULTED_FIELDS[name]
                     sets.append(f"{name} = COALESCE(:{pk}, {name}, :{name}_default__{k})")
                     continue
+                if name == "source_id":
+                    # Who wrote the record first — the scrape's rule
+                    # (`graph_writer`: COALESCE(e.source_id, …)), which a bulk
+                    # write follows too (the user, 2026-11-28): GLEIF's import
+                    # stamped itself on a company EDGAR had created, every time.
+                    pk = f"{name}__{k}"
+                    params[pk] = val
+                    sets.append(f"{name} = COALESCE({name}, :{pk})")
+                    continue
                 pk = f"{name}__{k}"
                 params[pk] = val
                 sets.append(f"{name} = :{pk}")
