@@ -67,3 +67,30 @@ def test_a_person_merge_keeps_the_earlier_birth(it_db):
                           "created_at:$born})", {"id": pid, "born": born})
     merge_person_records(keep="keep-1", dup="dup-1")
     assert _created_at(it_db, "Person", "keep-1") == "2025-01-01T00:00:00+00:00"
+
+
+def test_a_bulk_write_keeps_the_source_that_wrote_the_record_first(it_db):
+    """`source_id` follows the scrape's rule on the bulk paths too (the user,
+    2026-11-28): GLEIF's import over a company EDGAR created leaves EDGAR's stamp."""
+    from app.scraper.bulk_import import _BatchWriter
+    from app.scraper.gleif_incremental import _ensure_lei_node
+
+    def source(node_id):
+        return it_db.run_sql(f"SELECT source_id FROM Entity WHERE id = '{node_id}'")[0].get("source_id")
+
+    b = _BatchWriter(batch_size=10)
+    b.entity("lei:STAMP000000000000001", {"name": "Acme Corp", "source_id": "sec-edgar"})
+    b.entity("lei:STAMP000000000000002", {"name": "Unstamped"})
+    b.flush()
+    b = _BatchWriter(batch_size=10)
+    b.entity("lei:STAMP000000000000001", {"name": "ACME CORPORATION", "source_id": "gleif"})
+    b.entity("lei:STAMP000000000000002", {"name": "Unstamped", "source_id": "gleif"})
+    b.entity("lei:STAMP000000000000003", {"name": "New", "source_id": "gleif"})
+    b.flush()
+    assert source("lei:STAMP000000000000001") == "sec-edgar"        # kept
+    assert source("lei:STAMP000000000000002") == "gleif"            # filled where empty
+    assert source("lei:STAMP000000000000003") == "gleif"            # a new record is its writer's
+    assert it_db.run_sql("SELECT name FROM Entity WHERE id = 'lei:STAMP000000000000001'")[0]["name"] == "ACME CORPORATION"
+
+    assert _ensure_lei_node("STAMP000000000000001", "gleif") == "lei:STAMP000000000000001"
+    assert source("lei:STAMP000000000000001") == "sec-edgar"        # the delta's placeholder keeps it too

@@ -790,6 +790,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       A batch writer cannot read each node; read the exceptions once (the nodes a more
       credible source named are a handful) and correct the row before it is queued. When
       you add a rule to one writer, grep for every other `SET` of that property.
+      The record's own `source_id` was the same case: the scrapes fill it only where it is
+      empty, the bulk writer overwrote it, so GLEIF's import stamped itself on every company
+      EDGAR had created. The bulk writer now applies the rule to the field itself
+      (`_BatchWriter._flush_nodes`), which covers every importer that uses it.
 - [ ] **Read by the id the database already holds before searching by name.** A per-company
       reader resolves the query to its node first and, when the node carries the source's id,
       fetches by that id; the name search is the fallback. The SEC scrape searched by name
