@@ -2216,8 +2216,12 @@ while Cantor's 13D/A of 2025-10-06 names CF Group Management as its co-filer.
 
 So before the table's rows are written, `write_older_statements` asks **who has
 filed a 13D/G about the issuer** — one request to EDGAR's full-text index
-(`_statement_filers`: `efts search-index?ciks=<issuer>&forms=SC 13D,…`), which
-lists each filing with every party's CIK and name; the 13D/G feed names no
+(`_statement_filers`: `efts search-index?ciks=<issuer>&forms=SC 13D,SC 13G,SCHEDULE 13D,SCHEDULE 13G`), which
+lists each filing with every party's CIK and name — asked for the base forms
+only: the index answers a form with its amendments, and a list naming `SC 13G/A`
+beside `SC 13G` returns the amendments alone, so every holder whose newest
+statement is an original 13G was missed until 2026-11-28 (findings item 164:
+Slate Path Capital's 11.7 % of Wolfspeed; 105 of 154 table-written holders); the 13D/G feed names no
 filer, and reading an issuer's whole feed costs about 80 requests. Each holder
 the table names that is found there (by its whole name, `_same_holder`) has its
 newest statement read and written as a scrape of the issuer would; the row is

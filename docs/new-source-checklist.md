@@ -1848,6 +1848,17 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       count of "holders with a statement of their own" (item 157's 501 of 525)
       proves nothing until it says what those statements state: the rebuild found
       168 left, 145 of them with no statement on that issuer in EDGAR's index.
+- [ ] **A filter you send is a guess until its counts add up.** The index of an
+      issuer's 13D/G filers was asked for eight form names, each schedule and its
+      "/A"; EDGAR's full-text index answers a form WITH its amendments, and given
+      both it returns the amendments alone — Wolfspeed: "SCHEDULE 13G" 50 hits,
+      "SCHEDULE 13G/A" 28, the two together 28. No original 13G ever came back, and
+      105 of 154 holders were written from a proxy table that had a statement of
+      their own (findings item 164). The unit test asserted the list we sent, not
+      what the source does with it. For every filter of a source's search, ask each
+      value alone and all together once and check that the totals add up — and
+      compare the result with a second list of the same thing (the issuer's own
+      submissions named 37 statements the index did not).
 - [ ] **A handler that classifies a failure must survive the failure it did not
       expect.** `objectstore.get` absorbs every error and tells a missing key from an
       outage by reading `exc.response["Error"]["Code"]` — `getattr(exc, "response",
