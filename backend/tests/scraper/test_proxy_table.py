@@ -29,6 +29,14 @@ def _rows(name):
     ("The Vanguard Group (2)", "The Vanguard Group"),
     ("Dodge & Cox", "Dodge & Cox"),
     ("3M Company", "3M Company"),
+    # findings item 164: the address is cut from its first number, and from "P.O. Box"
+    ("Slate Path Capital LP (3) 717 5 th Avenue, 16 th Fl. New York, New York 10022", "Slate Path Capital LP"),
+    ("T. Rowe Price Associates, Inc. (4) 1307 Point Street Baltimore, Maryland 21231", "T. Rowe Price Associates, Inc."),
+    ("Capital Ventures International (7) P.O. Box 897, Windward 1, Grand Cayman", "Capital Ventures International"),
+    ("Claire H. Bristow P. O. Box 1234", "Claire H. Bristow"),
+    ("Walter Maquire, Sr., PO Box 129, Keller, VA 23401", "Walter Maquire, Sr."),
+    ("Wells Fargo Bank NA For Blandin Trust PO Box 1533", "Wells Fargo Bank NA For Blandin Trust"),
+    ("Poboxer Holdings LLC", "Poboxer Holdings LLC"),
 ])
 def test_holder_name(cell, name):
     assert ps.holder_name(cell) == name

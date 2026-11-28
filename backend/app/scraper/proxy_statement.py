@@ -205,8 +205,14 @@ _NOT_AN_OWNER = re.compile(
     r"|^directors\b|^neos?\b|\b5\s*% (share|stock|security)holders|^other\b",
     re.IGNORECASE)
 
-# Street address appended to a person/entity name in some filings (e.g. Amazon)
-_ADDRESS_RE = re.compile(r"\s+\d+\s+[A-Za-z]")
+# Street address appended to a person/entity name in some filings (e.g. Amazon).
+# Cut from the FIRST number of a run — "717 5 th Avenue" (the ordinal's "th"
+# set apart by a superscript tag) was cut at " 5 th" and left "Slate Path
+# Capital LP 717", a name no statement and no registrant matched, so the 11.7 %
+# holder of Wolfspeed was not written at all — and from "P.O. Box", whose
+# number came after the words: "Capital Ventures International P.O. Box"
+# (findings item 164)
+_ADDRESS_RE = re.compile(r"\s+(?:\d+(?:\s+\d+)*\s+[A-Za-z]|(?i:P\.?\s?O\.?\s+Box)\b)")
 # Footnote references like (1), (2), and superscript ones
 _FOOTNOTE_RE = re.compile(r"\s*\(\d+\)|[" + _SUPERSCRIPTS + r"]+")
 
