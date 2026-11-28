@@ -48,7 +48,10 @@ def test_each_filer_with_its_newest_statement_newest_first():
     # one request, by the issuer's CIK, for both namings of the schedule
     [(url, params)] = asked
     assert url == sec_client.SEARCH_URL and params["ciks"] == NEWMARK and params["from"] == 0
-    assert {"SC 13D", "SC 13G/A", "SCHEDULE 13D/A", "SCHEDULE 13G"} <= set(params["forms"].split(","))
+    # the base forms only: the index answers a form with its amendments, and
+    # one that is asked for "X/A" beside "X" returns the amendments alone — no
+    # original 13G (findings item 164, Slate Path Capital on Wolfspeed)
+    assert sorted(params["forms"].split(",")) == ["SC 13D", "SC 13G", "SCHEDULE 13D", "SCHEDULE 13G"]
 
 
 def test_the_issuer_itself_is_no_filer_of_its_statements():

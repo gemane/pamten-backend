@@ -143,6 +143,20 @@ def _sec_full_text() -> None:
             f"the full-text search gave no hit with a filer number (keys {sorted(data or {})[:5]})")
 
 
+def _sec_statement_index() -> None:
+    """The full-text index asked for the 13D/G statements about one company
+    (`sec_writer._statement_filers`): a form must come back WITH its
+    amendments. The index returned the amendments alone while the list named
+    them beside their forms, and no original 13G reached the table pass for
+    two days of rebuilds (findings item 164) — every hit was a good one, so
+    only the missing kind tells."""
+    from app.scraper import sec_client, sec_writer
+    data = sec_client._get(sec_client.SEARCH_URL, {"ciks": APPLE_CIK, "forms": sec_writer._STATEMENT_FORMS})
+    forms = {(h.get("_source") or {}).get("form") or "" for h in ((data or {}).get("hits") or {}).get("hits") or []}
+    _expect(any(f.endswith("/A") for f in forms) and any(f and not f.endswith("/A") for f in forms),
+            f"the 13D/G statements about Apple do not list originals and amendments both (forms {sorted(forms)})")
+
+
 # ── GLEIF ────────────────────────────────────────────────────────────────────
 
 def _gleif_record() -> None:
@@ -224,6 +238,7 @@ def probes() -> list[Probe]:
         Probe("sec-edgar", "13D/G feed about a company", _sec(_sec_holder_feed), "filing-feed"),
         Probe("sec-edgar", "a company's reporting owners", _sec(_sec_insider_page), "insider-page"),
         Probe("sec-edgar", "full-text search", _sec(_sec_full_text), "full-text"),
+        Probe("sec-edgar", "13D/G statements about a company", _sec(_sec_statement_index), "full-text"),
         Probe("gleif", "an LEI record", _gleif_record),
         Probe("gleif", "an LEI's parent relationship", _gleif_relationship),
         Probe("wikidata", "item by a stated id", _wikidata_by_statement),

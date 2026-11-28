@@ -1317,8 +1317,14 @@ def _statements_held(owned_id: str, day: str) -> list[dict]:
 
 
 #: Schedule 13D/G under both of its names (the December-2024 rename), as
-#: EDGAR's full-text index filters by form
-_STATEMENT_FORMS = "SC 13D,SC 13D/A,SC 13G,SC 13G/A,SCHEDULE 13D,SCHEDULE 13D/A,SCHEDULE 13G,SCHEDULE 13G/A"
+#: EDGAR's full-text index filters by form — the BASE forms only: the index
+#: answers a form with its amendments ("SCHEDULE 13G" lists the 13G/As too),
+#: and a list that names the amendment beside its form gets the amendments
+#: ALONE. With all eight names the index returned no original statement:
+#: Wolfspeed's 155 hits against 206, Slate Path Capital's 13G of 2026-05-15
+#: (11.7 %) not among them, and 105 of the 154 holders the 2026-11-27 rebuild
+#: wrote from a proxy table had an original 13G/13D there (findings item 164)
+_STATEMENT_FORMS = "SC 13D,SC 13G,SCHEDULE 13D,SCHEDULE 13G"
 #: filings of one issuer the index is read for, at most (100 a page)
 STATEMENT_INDEX_MAX = 300
 
