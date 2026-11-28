@@ -169,3 +169,20 @@ def test_the_rebuild_never_loads_former_officers():
     from app import finishing
     assert "uk-officers" in finishing.known_order("after-scrapes")
     assert "--history" not in "\n".join(ln for ln in SCRIPT.splitlines() if not ln.lstrip().startswith("#"))
+
+
+def test_the_rebuild_holds_the_import_lock_until_the_scrapes_are_finished():
+    # findings item 165: released after step 4, the lock let the 04:30
+    # `gleif-update` cron write into step 7 of the 2026-11-27 rebuild — a month
+    # of GLEIF changes, 46 entities renamed, in a diff meant to show the code's
+    assert 'python3 manage.py import-lock acquire --holder rebuild || die "import lock"' in SCRIPT
+    code = [ln.strip() for ln in SCRIPT.splitlines() if not ln.lstrip().startswith("#")]
+    released = [i for i, ln in enumerate(code) if ln == "python3 manage.py import-lock release"]
+    step8 = code.index('t "8 checks (read-only)"')
+    assert released and all(code.index('t "7 finishing what the scrapes added"') < i < step8 for i in released)
+    # taken anew before each long stretch: a lock of six hours is stolen as abandoned
+    for step in ('t "2a ', 't "6 ', 't "7 '):
+        [at] = [i for i, ln in enumerate(code) if ln.startswith(step)]
+        assert code[at + 1] == "hold_lock", step
+    # the guarded commands of the later steps must not refuse the rebuild's own lock
+    assert SCRIPT.index("export IMPORT_ORCHESTRATED=1") < SCRIPT.index('t "6 replaying the scrapes"')

@@ -33,6 +33,17 @@ close_step() {
 }
 t() { close_step; STEP="$*"; STEP_T0=$(date +%s); echo; echo "######## $* ($(date +%H:%M:%S))"; }
 die() { echo "❌ FAILED: $*"; python3 manage.py import-lock release >/dev/null 2>&1; exit 1; }
+# The rebuild holds the import lock from the import to the end of step 7, so the
+# nightly `gleif-update` cron (04:30) skips instead of writing into a database
+# that is being built: on 2026-11-27 it ran inside step 7, applied a month of
+# GLEIF changes (the rebuild had dropped its checkpoint) and renamed 46 entities
+# — differences the verify had to tell from the code's (findings item 165).
+# Taken anew before the long steps: a lock older than six hours counts as
+# abandoned (import_lock.STALE_AFTER_SEC) and a rebuild runs five.
+hold_lock() {
+  python3 manage.py import-lock release >/dev/null 2>&1
+  python3 manage.py import-lock acquire --holder rebuild || die "import lock"
+}
 api() {
   local out
   out=$(curl -sS -u "root:$ARCADEDB_PASSWORD" -X POST "$ARCADEDB_URL/api/v1/server" \
@@ -52,7 +63,7 @@ api "create database $ARCADEDB_DATABASE" || die "create"
 python3 manage.py init-schema || die "schema"
 
 t "2a bulk import: GLEIF (curated subset)"
-python3 manage.py import-lock acquire --holder new-database || die "import lock"
+hold_lock
 export IMPORT_ORCHESTRATED=1
 bash /home/administrator/scripts/steps/lei-cdf-import-test.sh || die "GLEIF test import"
 t "2b bulk import: UK PSC (curated subset)"
@@ -61,15 +72,16 @@ t "3 finishing the import"
 REBUILD_SEARCH=1 bash /home/administrator/scripts/steps/finish-import.sh || die "finish-import"
 t "4 GLEIF history from the kept intervals file"
 python3 manage.py gleif-rr-history --intervals "$DATA/gleif-rr-history.jsonl.gz" || echo "  ! history apply failed (continuing)"
-python3 manage.py import-lock release
 
 t "5 accounts and sessions back"
 python3 "$R/restore_accounts.py" || echo "  ! account restore failed — the saved file is $R/accounts.json"
 
 t "6 replaying the scrapes"
+hold_lock
 python3 "$R/replay_scrapes.py" || echo "  ! replay ended with an error (see above)"
 
 t "7 finishing what the scrapes added"
+hold_lock
 # The steps, their order and which of them read EDGAR with the scraper flags on
 # are the backend's `after-scrapes` profile (app/finishing.py; `manage.py finish
 # --profile after-scrapes --dry-run` prints the commands): one list, shared with
@@ -106,6 +118,7 @@ while IFS=$'\t' read -r name label; do
   calls "7 $label"
   if [ "$name" = securities-bridge ]; then successions_after_the_replay; fi
 done <<< "$FINISHING"
+python3 manage.py import-lock release
 
 t "8 checks (read-only)"
 python3 manage.py schema-audit 2>&1 | grep -v "^WARNING\|^INFO" | tail -5

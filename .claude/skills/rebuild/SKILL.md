@@ -25,6 +25,14 @@ not the user's word.
 - **Never `tmux` / `new-database.sh` from the agent**: its tmux session dies with the tool
   shell and leaves an empty, dropped database (2026-10-05). Run `rebuild.sh` as a
   `run_in_background` Bash job.
+- **The rebuild holds the import lock from the import to the end of step 7** (`hold_lock`,
+  holder `rebuild`, taken anew before steps 6 and 7 — a lock of six hours counts as
+  abandoned), so the 04:30 `gleif-update` cron skips, and its finishing steps with it
+  (`cron-gleif-update.sh`), instead of writing into a database being built: on 2026-11-27 it
+  ran inside step 7 and renamed 46 entities (findings item 165). A job that died leaves the
+  lock: `python3 manage.py import-lock release`. The night AFTER a rebuild the cron applies a
+  month of GLEIF changes (the rebuild dropped its checkpoint) — that is the difference
+  between the next `before.json` and this `after.json`.
 - Host has 3.9 GB RAM: `arcadedb-it` stopped, no unit suite during the replay. Never
   `pkill -f`; no Render deploy.
 
